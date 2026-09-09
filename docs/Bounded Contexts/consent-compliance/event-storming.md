@@ -43,7 +43,7 @@ flowchart LR
         CEC --> COORD[CoordinateRevocation]
         COORD --> RC1[RevocationCoordinated<br/>per owning context]
         RC1 --> CONF{Each owner<br/>confirms}
-        CONF -->|all confirm| DONE[ErasureComplete]
+        CONF -->|all confirm| DONE[ErasureCompleted]
         CONF -->|pending| WAIT[ErasureAwaitingConfirmations]
     end
 
@@ -73,7 +73,7 @@ flowchart TB
         E5((ErasureConfirmed))
         E6((RevocationCoordinated))
         E7((RevocationConfirmed))
-        E8((ErasureComplete))
+        E8((ErasureCompleted))
 
         P1{No grant, no processing:<br/>scoped consent gates use}
         P2{Confirmed erasure<br/>coordinates revocation<br/>in every owning context}
@@ -131,7 +131,7 @@ flowchart TB
 | 5 | `ErasureConfirmed` | The request is valid and in force; coordination begins |
 | 6 | `RevocationCoordinated` | One owning context asked to revoke for this person (one fact per owner) |
 | 7 | `RevocationConfirmed` | One owning context confirmed it revoked (one fact per owner) |
-| 8 | `ErasureComplete` | Every owning context confirmed; the request closes. History stays auditable |
+| 8 | `ErasureCompleted` | Every owning context confirmed; the request closes. History stays auditable |
 
 ## Policies (Whenever / Then)
 

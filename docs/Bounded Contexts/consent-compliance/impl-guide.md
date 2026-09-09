@@ -49,7 +49,10 @@ src/consent-compliance/
 │       │   └── revocation-confirmed.handler.ts
 │       └── outboundservices/acl/
 │           ├── external-iam.service.ts
-│           └── external-owner.service.ts    # partnership R12 fan-out
+│           ├── external-biometric.service.ts   # → BIOMETRIC_CONTEXT_FACADE
+│           ├── external-wallet.service.ts      # → WALLET_CONTEXT_FACADE
+│           ├── external-membership.service.ts  # → MEMBERSHIP_CONTEXT_FACADE
+│           └── external-notifications.service.ts  # → NOTIFICATION_CONTEXT_FACADE
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/
@@ -123,7 +126,7 @@ export interface RequestLifecycle {
   recordConfirmation(owner: string): void;
   complete(): void;
 }
-export enum ErasureStanding { REQUESTED = 'REQUESTED', CONFIRMED = 'CONFIRMED', COORDINATED = 'COORDINATED', AWAITING_CONFIRMATIONS = 'AWAITING_CONFIRMATIONS', COMPLETE = 'COMPLETE' }
+export enum ErasureStanding { REQUESTED = 'REQUESTED', CONFIRMED = 'CONFIRMED', COORDINATED = 'COORDINATED', AWAITING_CONFIRMATIONS = 'AWAITING_CONFIRMATIONS', COMPLETED = 'COMPLETED' }
 export class DataSubjectRequest extends AggregateRoot implements RequestLifecycle {
   private constructor(
     private readonly _id: DataSubjectRequestId,
@@ -151,8 +154,9 @@ export class DataSubjectRequest extends AggregateRoot implements RequestLifecycl
   coordinateRevocation(owners: string[]): void {
     this.requireStanding(ErasureStanding.CONFIRMED);
     this._confirmations.askOwners(owners);
-    this.moveTo(ErasureStanding.AWAITING_CONFIRMATIONS);
+    this.moveTo(ErasureStanding.COORDINATED); // la coordinación queda registrada antes de esperar
     for (const o of owners) this.registerEvent(new RevocationCoordinated(this._id, this._personId, o));
+    this.moveTo(ErasureStanding.AWAITING_CONFIRMATIONS);
   }
   recordConfirmation(owner: string): void {
     if (!this._confirmations.isAsked(owner)) throw new UnknownOwnerConfirmationError(`owner never coordinated: ${owner}`);
@@ -160,8 +164,8 @@ export class DataSubjectRequest extends AggregateRoot implements RequestLifecycl
   }
   complete(): void {
     if (!this._confirmations.allConfirmed()) throw new ErasureIncompleteError('every coordinated owner must confirm first');
-    this._standing = ErasureStanding.COMPLETE;
-    this.registerEvent(new ErasureComplete(this._id, this._personId));
+    this._standing = ErasureStanding.COMPLETED;
+    this.registerEvent(new ErasureCompleted(this._id, this._personId));
   }
   answerStanding(): { standing: ErasureStanding; pending: string[]; confirmed: string[] } {
     return { standing: this._standing, pending: this._confirmations.pending(), confirmed: this._confirmations.confirmed() };
@@ -188,9 +192,9 @@ export class RetentionPolicy extends AggregateRoot {
 
 ### 2.4 Value Objects, Commands, Queries, Events
 
-VOs (immutable, `of()`/`generate()` + `equals()`): `ConsentRecordId`, `DataSubjectRequestId`, `RetentionPolicyId`, `PersonId`, `ConsentScope` (`BIOMETRIC_PROCESSING`, `EMAIL_NOTIFICATIONS`), `PolicyVersion`, `DataCategory`, `RetentionTerms`, `RevocationConfirmations`. Commands: `GrantConsent`, `RevokeConsent`, `SubmitErasureRequest`, `ConfirmErasureRequest`, `RecordRevocationConfirmation`, `DefineRetentionPolicy`. Queries: `GetConsentState`, `GetErasureStanding`, `GetRetentionTerms`.
+VOs (immutable, `of()`/`generate()` + `equals()`): `ConsentRecordId`, `DataSubjectRequestId`, `RetentionPolicyId`, `PersonId`, `ConsentScope` (`BIOMETRIC_PROCESSING`, `EMAIL_NOTIFICATIONS`), `PolicyVersion`, `DataCategory`, `RetentionTerms`, `RevocationConfirmations`. Commands: `GrantConsentCommand`, `RevokeConsentCommand`, `SubmitErasureRequestCommand`, `ConfirmErasureRequestCommand`, `RecordRevocationConfirmationCommand`, `DefineRetentionPolicyCommand`. Queries: `GetConsentStateByPersonAndScopeQuery`, `GetErasureStandingByPersonQuery`, `GetRetentionTermsByCategoryQuery` (+ `GetAuditTrailByPersonQuery`, scrutiny).
 
-8 events (past tense, `DomainEvent` + static `eventName`, VOs in payload): `ConsentGranted`, `ConsentRevoked`, `RetentionPolicyDefined`, `ErasureRequested`, `ErasureConfirmed`, `RevocationCoordinated`, `RevocationConfirmed`, `ErasureComplete`.
+8 events (past tense, `DomainEvent` + static `eventName`, VOs in payload): `ConsentGranted`, `ConsentRevoked`, `RetentionPolicyDefined`, `ErasureRequested`, `ErasureConfirmed`, `RevocationCoordinated`, `RevocationConfirmed`, `ErasureCompleted`.
 
 Exceptions: `ConsentAlreadyGrantedError`, `ConsentNotGrantedError`, `ErasureAlreadyOpenError`, `ErasureNotConfirmedError`, `UnknownOwnerConfirmationError`, `ErasureIncompleteError`, `RequestNotFoundError` (all `Error` subclasses + `Object.setPrototypeOf`).
 
@@ -200,7 +204,34 @@ Exceptions: `ConsentAlreadyGrantedError`, `ConsentNotGrantedError`, `ErasureAlre
 
 ## 3. Application Layer
 
-Ports in `domain/services/` with tokens (`CONSENT_COMMAND_SERVICE`, `ERASURE_COMMAND_SERVICE`, `CONSENT_QUERY_SERVICE`).
+Ports in `domain/services/` with tokens (`CONSENT_COMMAND_SERVICE`, `ERASURE_COMMAND_SERVICE`, `RETENTION_COMMAND_SERVICE`, `CONSENT_QUERY_SERVICE`, `ERASURE_QUERY_SERVICE`):
+
+```typescript
+export const CONSENT_COMMAND_SERVICE = Symbol('CONSENT_COMMAND_SERVICE');
+export interface ConsentCommandService {
+  handleGrant(cmd: GrantConsentCommand): Promise<ConsentRecordId>;
+  handleRevoke(cmd: RevokeConsentCommand): Promise<void>;
+}
+export const ERASURE_COMMAND_SERVICE = Symbol('ERASURE_COMMAND_SERVICE');
+export interface ErasureCommandService {
+  submit(cmd: SubmitErasureRequestCommand): Promise<DataSubjectRequestId>;
+  confirm(cmd: ConfirmErasureRequestCommand): Promise<void>;
+  recordConfirmation(cmd: RecordRevocationConfirmationCommand): Promise<void>;
+}
+export const RETENTION_COMMAND_SERVICE = Symbol('RETENTION_COMMAND_SERVICE');
+export interface RetentionCommandService {
+  define(cmd: DefineRetentionPolicyCommand): Promise<RetentionPolicyId>;
+}
+export const CONSENT_QUERY_SERVICE = Symbol('CONSENT_QUERY_SERVICE');
+export interface ConsentQueryService {
+  getState(q: GetConsentStateByPersonAndScopeQuery): Promise<ConsentStateAnswer>;
+}
+export const ERASURE_QUERY_SERVICE = Symbol('ERASURE_QUERY_SERVICE');
+export interface ErasureQueryService {
+  getStanding(q: GetErasureStandingByPersonQuery): Promise<ErasureStandingAnswer>;
+  getRetentionTerms(q: GetRetentionTermsByCategoryQuery): Promise<RetentionTermsAnswer>;
+}
+```
 
 ```typescript
 @Injectable()
@@ -224,22 +255,33 @@ export class ConsentCommandServiceImpl implements ConsentCommandService {
 }
 ```
 
-Erasure service follows the same UoW + after-commit publish shape: `submit` rejects open requests; `confirm` then `coordinateRevocation(owners)`; `recordConfirmation` then auto-`complete()` when all confirmed; publish only after `uow.run()` resolves.
+Erasure service follows the same UoW + after-commit publish shape: `submit` rejects open requests; `confirm` then `coordinateRevocation(owners)`; `recordConfirmation` then always `try complete()` catching `ErasureIncompleteError` while owners remain (no `if allConfirmed` duplication in application — the aggregate owns the rule); publish only after `uow.run()` resolves.
 
 In-module `@OnEvent` handlers (never subscribed cross-module) call `External<Bc>Service` facades (partnership R12):
 
 ```typescript
 @Injectable()
 export class ErasureConfirmedHandler {
-  constructor(private readonly owners: ExternalOwnerService) {}
+  constructor(
+    private readonly biometric: ExternalBiometricService,
+    private readonly wallet: ExternalWalletService,
+    private readonly membership: ExternalMembershipService,
+    private readonly notifications: ExternalNotificationsService,
+  ) {}
   @OnEvent(ErasureConfirmed.eventName, { async: true })
   async handle(event: ErasureConfirmed): Promise<void> {
-    await this.owners.askEveryOwnerToRevoke(event.personId.value, event.requestId.value);
+    const personId = event.personId.value, requestId = event.requestId.value;
+    await this.biometric.askOwnerToRevoke(personId, requestId);
+    await this.wallet.askOwnerToRevoke(personId, requestId);
+    await this.membership.askOwnerToRevoke(personId, requestId);
+    await this.notifications.askOwnerToRevoke(personId, requestId);
   }
 }
 ```
 
-`ExternalOwnerService` (in `outboundservices/acl/`) injects each owning facade token and fans out one `revokeOwnData(personId)` call per owner; `ExternalIamService` answers person-existence for UC1/UC4. Fan-out de eventos: `ConsentGranted` / `ConsentRevoked` → gates de Biometric, Notifications, OTP y OCR vía `mayProcessNow()` / `mayContactNow()` (cada BC decide en su borde); `RevocationCoordinated` (×N, uno por BC propietario) → Biometric, Wallet, Membership, Notifications; `ErasureComplete` → Notifications (aviso a la persona) + lectura de scrutiny. Coordinar ≠ ejecutar: este BC nunca borra datos ajenos.
+`RevocationConfirmedHandler` (`revocation-confirmed.handler.ts`, in-module): ante cada `RevocationConfirmed` recarga el standing vía `ERASURE_QUERY_SERVICE.getStanding()` (scrutiny/observabilidad del avance por owner); el cierre lo decide el servicio con `try complete()` — nunca el handler.
+
+Un `External{X}Service` por contexto propietario (`ExternalBiometricService`, `ExternalWalletService`, `ExternalMembershipService`, `ExternalNotificationsService` en `outboundservices/acl/`), cada uno inyectando su facade token y exponiendo `askOwnerToRevoke(personId, requestId)` en primitivas; `ExternalIamService` answers person-existence for UC1/UC4. Fan-out de eventos: `ConsentGranted` / `ConsentRevoked` → gates de Biometric, Notifications, OTP y OCR vía `mayProcessNow()` / `mayContactNow()` (cada BC decide en su borde); `RevocationCoordinated` (×N, uno por BC propietario) → Biometric, Wallet, Membership, Notifications; `ErasureCompleted` → Notifications (aviso a la persona) + lectura de scrutiny. Coordinar ≠ ejecutar: este BC nunca borra datos ajenos.
 
 ---
 
@@ -269,7 +311,7 @@ export class ErasureRequestOrmEntity extends AuditableOrmEntity {
 }
 ```
 
-Assemblers (`consent/erasure-persistence.assembler.ts`) parse via `parseConsentStanding()` / `parseErasureStanding()` + `ConsentScope.of()` — never `as`-cast. Adapters read `TransactionContext.current ?? this.orm` so writes join the UoW; registered with `TypeOrmModule.forFeature([...])` + repository tokens. Fan-out a propietarios vía ports (`ExternalOwnerService` → un `revokeOwnData(personId)` por facade propietaria, partnership R12): no hay Strategy de algoritmos — los propietarios no son variantes intercambiables de un mismo algoritmo sino puertos ACL independientes; añadir un owner = registrar un facade más, sin cambiar el dominio.
+Assemblers (`consent/erasure-persistence.assembler.ts`) parse via `parseConsentStanding()` / `parseErasureStanding()` + `ConsentScope.of()` — never `as`-cast. Adapters read `TransactionContext.current ?? this.orm` so writes join the UoW; registered with `TypeOrmModule.forFeature([...])` + repository tokens. Fan-out a propietarios vía ACL independientes (un `External{X}Service` por facade propietaria, partnership R12): no hay Strategy de algoritmos — los propietarios no son variantes intercambiables de un mismo algoritmo sino puertos ACL independientes; añadir un owner = añadir un `External{X}Service`, sin cambiar el dominio.
 
 ---
 
@@ -284,7 +326,7 @@ export class ConsentController {
   constructor(@Inject(CONSENT_COMMAND_SERVICE) private readonly commands: ConsentCommandService, @Inject(CONSENT_QUERY_SERVICE) private readonly queries: ConsentQueryService) {}
   @Post() async grant(@Body() r: GrantConsentResource): Promise<ConsentStateResource> { /* assembler -> handleGrant -> re-query */ }
   @Post(':scope/revoke') async revoke(@Param('scope') scope: string, @Body() r: RevokeConsentResource): Promise<void> { /* ... */ }
-  @Get('state') async state(@Query('personId') p: string, @Query('scope') s: string): Promise<ConsentStateResource> { return this.queries.getState(new GetConsentStateQuery(PersonId.of(p), ConsentScope.of(s))); }
+  @Get('state') async state(@Query('personId') p: string, @Query('scope') s: string): Promise<ConsentStateResource> { return this.queries.getState(new GetConsentStateByPersonAndScopeQuery(PersonId.of(p), ConsentScope.of(s))); }
 }
 ```
 
@@ -296,7 +338,7 @@ export class ConsentController {
 | `POST` | `/api/v1/erasure-requests/:id/confirm` | `ConfirmErasureRequestCommand` (UC5) |
 | `POST` | `/api/v1/erasure-requests/:id/confirmations` | `RecordRevocationConfirmationCommand` (UC6) |
 | `POST` | `/api/v1/retention-policies` | `DefineRetentionPolicyCommand` (UC3) |
-| `GET` | `/api/v1/retention-policies/:category` | `GetRetentionTermsQuery` |
+| `GET` | `/api/v1/retention-policies/:category` | `GetRetentionTermsByCategoryQuery` |
 
 Resources use `class-validator`; assemblers translate resource ⇄ command. ACL published:
 
@@ -338,7 +380,7 @@ CREATE TABLE consent.policies (
 CREATE INDEX ix_policies_category ON consent.policies (category);
 ```
 
-Partial unique index enforces invariant 2 (at most one live `GRANTED` per person+scope). Partial-unique `uq_requests_open(person_id) WHERE standing NOT IN ('COMPLETE')` enforces at most one open erasure per person at storage level (guarda de aplicación `submit` + red de seguridad en DB; colisión → 409).
+Partial unique index enforces invariant 2 (at most one live `GRANTED` per person+scope). Partial-unique `uq_requests_open(person_id) WHERE standing NOT IN ('COMPLETED')` enforces at most one open erasure per person at storage level (guarda de aplicación `submit` + red de seguridad en DB; colisión → 409).
 
 ---
 
@@ -370,11 +412,11 @@ POST /consents/:scope/revoke -> RevokeConsentCommand
 ```
 SubmitErasureRequestCommand -> submit() [rechaza si hay open: uq_requests_open -> 409] -> emit(ErasureRequested) -> 202
 ConfirmErasureRequestCommand -> confirm() -> emit(ErasureConfirmed)
-  + after-commit @OnEvent(ErasureConfirmed) -> ExternalOwnerService.askEveryOwnerToRevoke()
+  + after-commit @OnEvent(ErasureConfirmed) -> External{Biometric,Wallet,Membership,Notifications}Service.askOwnerToRevoke()
     -> one RevocationCoordinated per owner (Biometric, Wallet, Membership, Notifications; standing=AWAITING_CONFIRMATIONS)
     -> each owner deletes own data -> POST .../confirmations (RecordRevocationConfirmationCommand)
       -> recordConfirmation() -> emit(RevocationConfirmed) per owner
-      -> when allConfirmed() -> complete() -> emit(ErasureComplete) -> Notifications (person notice) + scrutiny read
+      -> tras cada confirmación: try complete() (cierra solo cuando el agregado lo permite; si no, ErasureIncompleteError) -> emit(ErasureCompleted) -> Notifications (person notice) + scrutiny read
   Gates reactivos: ConsentGranted/ConsentRevoked no se emiten a owners — Biometric/Notifications/OTP/OCR consultan mayProcessNow()/mayContactNow() en su borde.
 ```
 
@@ -394,8 +436,8 @@ R12 partnership/coordination: this BC coordinates, never executes. `RevocationCo
 
 | Direction | Mechanism | Detail |
 |---|---|---|
-| Consumes IAM | `ExternalIamService` → `IAM_FACADE` | `assertPersonExists(personId)` (UC1, UC4) |
-| Consumes owners | `ExternalOwnerService` → owner facades | `revokeOwnData(personId)` fan-out, partnership R12 |
+| Consumes IAM | `ExternalIamService` → `IAM_CONTEXT_FACADE` | `assertPersonExists(personId)` (UC1, UC4) |
+| Consumes owners | `External{Biometric,Wallet,Membership,Notifications}Service` → owner facades | `askOwnerToRevoke(personId, requestId)` per owner, partnership R12 |
 | Publishes ACL | `CONSENT_CONTEXT_FACADE` (`exports`) | `mayProcessNow`, `mayContactNow`, `getErasureStanding` |
 | Events | `EventEmitter2` in-module only | 8 events; `forRoot()` once in `AppModule` |
 | Infra | TypeORM + UoW | `TypeOrmUnitOfWork`, `TransactionContext`; no Redis — expiry/standing judged in domain |

@@ -48,10 +48,11 @@ src/membership/
 │       ├── eventhandlers/
 │       │   └── eligibility-judged.handler.ts # solo dentro del módulo
 │       └── outboundservices/
-│           ├── eligibility-policy.service.ts   # port Strategy judge(status,snapshot)
+│           ├── eligibility/eligibility-policy.service.ts   # port Strategy judge(status,snapshot)
 │           └── acl/
 │               ├── external-iam.service.ts
-│               └── external-community.service.ts
+│               ├── external-community.service.ts
+│               └── external-voting.service.ts    # EligibilityJudged → Voting facade (UC10)
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/membership.aggregate.ts
@@ -67,7 +68,7 @@ src/membership/
 │       ├── entities/membership.orm-entity.ts
 │   ├── assemblers/membership-persistence.assembler.ts
 │   │   └── adapters/membership-repository.impl.ts
-│   └── policy/default-eligibility-policy.service.ts  # Strategy default (ACTIVE); fake en test/fakes
+│   └── eligibility/default/default-eligibility-policy.service.ts  # Strategy default (ACTIVE); fake en test/fakes
 └── membership.module.ts
 ```
 
@@ -79,7 +80,7 @@ Regla de dependencias: `interfaces` → `application` → `domain` ← `infrastr
 
 Un agregado = exactamente un par (persona, comunidad). El roster es una pregunta, no un objeto. Solo `ACTIVE` cuenta al roster. `TERMINATED` es terminal. `EligibilitySnapshot` se congela al instante preguntado; cambios posteriores solo afectan juicios futuros.
 
-Contrato de standing (sin esqueleto): `MembershipStandable` declara `activate / markDelinquent / clear / suspend / reinstate / terminate`. NO hay clase base ni template-method — los guards difieren demasiado por transición (`REQUESTED→ACTIVE` vs `ACTIVE→DELINQUENT` vs `ACTIVE|DELINQUENT→SUSPENDED` vs `SUSPENDED→ACTIVE`), así que solo se comparte el helper `requireStanding()` (assert de precondición + mensaje). Cada método mantiene su propio guard + evento.
+Contrato de standing (sin esqueleto): `MembershipStandable` declara `activate / markDelinquent / clearDelinquency / suspend / reinstate / terminate`. NO hay clase base ni template-method — los guards difieren demasiado por transición (`REQUESTED→ACTIVE` vs `ACTIVE→DELINQUENT` vs `ACTIVE|DELINQUENT→SUSPENDED` vs `SUSPENDED→ACTIVE`), así que solo se comparte el helper `assertNotTerminated()`. Cada método mantiene su propio guard + evento.
 
 ```typescript
 // domain/model/aggregates/membership.aggregate.ts — cero imports de framework
@@ -89,11 +90,11 @@ export function parseMembershipStatus(v: string): MembershipStatus {
   return MembershipStatus[v as keyof typeof MembershipStatus];
 }
 
-/** Contrato de standing. Sin esqueleto: solo firma + helper requireStanding(); guards por método. */
+/** Contrato de standing. Sin esqueleto: solo firmas + helper assertNotTerminated(); guards por método. */
 export interface MembershipStandable {
   activate(): void;
   markDelinquent(reason: string): void;
-  clear(): void;   // alias de dominio: clearDelinquency()
+  clearDelinquency(): void;
   suspend(reason: string): void;
   reinstate(): void;
   terminate(reason: string): void;
@@ -160,7 +161,7 @@ export class Membership extends AggregateRoot implements MembershipStandable {
   /** Ancla: siempre responde; congela snapshot; nunca reescribe el pasado.
    *  El veredicto lo juzga la Strategy EligibilityPolicyService (inyectada, ver §4);
    *  aquí solo se congela + registra el hecho. */
-  judgeEligibility(policy: { judge(status: MembershipStatus, snapshot: EligibilitySnapshot): boolean }): EligibilitySnapshot {
+  judgeEligibility(policy: EligibilityPolicyService): EligibilitySnapshot {
     const draft = EligibilitySnapshot.now(this._personId, this._communityId, this._status);
     const eligible = policy.judge(this._status, draft);
     const snap = draft.withVerdict(eligible);
@@ -172,9 +173,6 @@ export class Membership extends AggregateRoot implements MembershipStandable {
   static ghost(p: PersonId, c: CommunityId): Membership {
     return new Membership(MembershipId.generate(), p, c, MembershipStatus.REQUESTED, CommunityRole.owner(), null,
       EligibilitySnapshot.now(p, c, MembershipStatus.REQUESTED).withVerdict(false));
-  }
-  private requireStanding(allowed: MembershipStatus[], msg: string): void {
-    if (!allowed.includes(this._status)) throw new IllegalMembershipTransitionError(msg);
   }
   private assertNotTerminated(): void { if (this._status === MembershipStatus.TERMINATED) throw new TerminationIsTerminalError('TERMINATED es terminal'); }
   get id(): MembershipId { return this._id; } get status(): MembershipStatus { return this._status; }
@@ -246,8 +244,8 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
     @Inject(MEMBERSHIP_REPOSITORY) private readonly repo: MembershipRepository,
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
     private readonly events: EventEmitter2,
-    @Inject(IAM_FACADE) private readonly iam: IamContextFacade,           // vía ExternalIamService en la práctica
-    @Inject(COMMUNITY_FACADE) private readonly communities: CommunityContextFacade,
+    private readonly iam: ExternalIamService,                 // ACL → IAM_CONTEXT_FACADE
+    private readonly communities: ExternalCommunityService,  // ACL → COMMUNITY_CONTEXT_FACADE
     @Inject(ELIGIBILITY_POLICY) private readonly policy: EligibilityPolicyService, // Strategy §4
   ) {}
   async register(c: RegisterMembershipCommand): Promise<MembershipId> {
@@ -262,13 +260,15 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
   }
   async judge(c: JudgeEligibilityCommand): Promise<EligibilitySnapshot> {
     // Contrato fantasma único: Membership.ghost() si no hay viva; save solo si found.
-    const m = await this.uow.run(async () => {
+    let snap!: EligibilitySnapshot;
+    const target = await this.uow.run(async () => {
       const found = await this.repo.findLiveByPersonAndCommunity(c.personId, c.communityId);
-      const target = found ?? Membership.ghost(c.personId, c.communityId); // ausencia → NOT_A_MEMBER, no error
-      const snap = target.judgeEligibility(this.policy);
-      if (found) await this.repo.save(target); return snap; // fantasma nunca persiste
+      const t = found ?? Membership.ghost(c.personId, c.communityId); // ausencia → NOT_A_MEMBER, no error
+      snap = t.judgeEligibility(this.policy);
+      if (found) await this.repo.save(t); return t; // fantasma nunca persiste
     });
-    return m;
+    this.publish(target); // EligibilityJudged tras commit (también del fantasma: el juicio ocurrió)
+    return snap;
   }
   private publish(m: Membership): void { for (const e of m.pullDomainEvents()) this.events.emit(e.eventName, e); }
 }
@@ -282,17 +282,17 @@ Solo lee vía `MembershipRepository` (`getById`, `findLiveByPersonAndCommunity`,
 
 ### 3.4 Puertos ACL de salida — `outboundservices/acl/`
 
-`ExternalIamService.personExists(personId: PersonId): Promise<boolean>` (traduce `string` del facade a VO aquí) y `ExternalCommunityService.acceptsMembers(communityId) / standingAllows(...)`. Firmas del facade en primitivas; la traducción a VO es del consumidor. Libros de la asociación (mora) se observan como verdad externa que UC5/UC6 espejan, nunca se inventan.
+`ExternalIamService.personExists(personId: PersonId): Promise<boolean>` (traduce `string` del facade a VO aquí) y `ExternalCommunityService.acceptsMembers(communityId)`. Firmas del facade en primitivas; la traducción a VO es del consumidor. Libros de la asociación (mora) se observan como verdad externa que UC5/UC6 espejan, nunca se inventan.
 
 ### 3.5 Event handlers
 
-`EligibilityJudgedHandler` con `@OnEvent(EligibilityJudged.eventName)` vive en ESTE módulo y llama al facade de Voting con primitivas (`personId.value`, `communityId.value`, `snapshot.reference`). Ningún otro módulo se suscribe a eventos de Membership (bus único sin aislamiento).
+`EligibilityJudgedHandler` con `@OnEvent(EligibilityJudged.eventName)` vive en ESTE módulo e inyecta `ExternalVotingService` (ACL → facade de Voting) con primitivas (`personId.value`, `communityId.value`, `snapshot.reference`). Ningún otro módulo se suscribe a eventos de Membership (bus único sin aislamiento).
 
 ## 4. Capa de Infraestructura
 
 ### 4.1 Regla de elegibilidad — Strategy `EligibilityPolicyService`
 
-Puerto en `application/internal/outboundservices/eligibility-policy.service.ts` (Strategy, no ACL externa):
+Puerto en `application/internal/outboundservices/eligibility/eligibility-policy.service.ts` (Strategy, no ACL externa):
 
 ```typescript
 export const ELIGIBILITY_POLICY = Symbol('ELIGIBILITY_POLICY');
@@ -301,7 +301,7 @@ export interface EligibilityPolicyService {
 }
 ```
 
-Default en `infrastructure/policy/default-eligibility-policy.service.ts` (`eligible = status === ACTIVE`); fake en `test/fakes/fake-eligibility-policy.service.ts` (veredicto configurable) para unit tests del agregado/servicio. Se inyecta en `MembershipCommandServiceImpl` y se pasa a `target.judgeEligibility(this.policy)` (§3.2). Cambiar la regla no toca el agregado.
+Default en `infrastructure/eligibility/default/default-eligibility-policy.service.ts` (`eligible = status === ACTIVE`); fake en `test/fakes/fake-eligibility-policy.service.ts` (veredicto configurable) para unit tests del agregado/servicio. Se inyecta en `MembershipCommandServiceImpl` y se pasa a `target.judgeEligibility(this.policy)` (§3.2). Cambiar la regla no toca el agregado.
 
 ### 4.2 Persistencia
 
@@ -348,6 +348,8 @@ export interface MembershipContextFacade {
 }
 ```
 
+`membership.module.ts` `exports: [MEMBERSHIP_CONTEXT_FACADE]`.
+
 Resources con `class-validator`; assemblers estáticos (`XxxCommandFromResourceAssembler`, `MembershipResourceFromEntityAssembler`). `MembershipExceptionFilter` mapea los 6 errores (`NotFound` → 404, transiciones/rol/terminal → 409, comunidad cerrada → 422).
 
 ## 6. Esquema de Base de Datos
@@ -384,7 +386,7 @@ CREATE INDEX ix_roster ON membership.memberships (community_id, status) WHERE st
 
 - **R2 → Voting (OHS + ACL):** `EligibilityJudged` + `getRoster` alimentan puerta de autorización y base de participación. Voting congela copia del snapshot; cambios posteriores no reescriben grants (H3).
 - **R8 → Document OCR:** precondición de pertenencia; OCR rechaza con `NoEligibleMembership` cuando la persona no pertenece en ningún lado. OCR nunca juzga elegibilidad.
-- **R13 (avisos/standing):** `MemberMarkedDelinquent`, `MembershipSuspended`, `MembershipReinstated`, … hacia Notifications; roster se recalcula (solo ACTIVE).
+- **R13 (avisos/standing):** `MemberMarkedDelinquent`, `MembershipSuspended`, `MembershipReinstated`, … los consume Notifications vía su propio handler interno (pull del hecho + aviso); el roster se recalcula (solo ACTIVE). Ningún módulo externo se suscribe al bus de Membership.
 - Consumidas: IAM (existencia, UC1), Community (acepta/standing, UC1–UC2), libros (UC5–UC6, verdad observada), Consent (may-process + revocaciones, coordinación).
 
 ## 9. Dependencias Externas

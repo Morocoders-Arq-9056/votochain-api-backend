@@ -173,7 +173,7 @@ stateDiagram-v2
     REQUESTED --> CONFIRMED : confirm()
     CONFIRMED --> COORDINATED : coordinateRevocation()
     COORDINATED --> AWAITING_CONFIRMATIONS : coordinateRevocation()
-    AWAITING_CONFIRMATIONS --> COMPLETE : complete()
+    AWAITING_CONFIRMATIONS --> COMPLETED : complete()
 
     note right of REQUESTED
         Asked, awaiting confirmation.
@@ -191,7 +191,7 @@ stateDiagram-v2
         Visibly waiting, never silent.
     end note
 
-    note right of COMPLETE
+    note right of COMPLETED
         Every coordinated owner
         confirmed. Terminal.
         History stays auditable.
@@ -206,7 +206,7 @@ stateDiagram-v2
 | 2 | Coordination begins only once confirmed. A merely requested erasure asks nothing of owning contexts |
 | 3 | One coordination fact goes to each owning context holding this person's data; one confirmation is recorded per owner |
 | 4 | Completion requires every coordinated owner's confirmation. Partial completion is unrepresentable |
-| 5 | `COMPLETE` is terminal. The grant → revoke → request → coordination → confirmation chain stays as an uneditable audit trail |
+| 5 | `COMPLETED` is terminal. The grant → revoke → request → coordination → confirmation chain stays as an uneditable audit trail |
 | 6 | This aggregate never holds personal data — only the record that revocation was asked and confirmed |
 
 ### Mutating Operations
@@ -217,7 +217,7 @@ stateDiagram-v2
 | `confirm()` | Standing is `REQUESTED`; request is valid and in force | `ErasureConfirmed` |
 | `coordinateRevocation()` | Standing is `CONFIRMED`; owning contexts holding this person's data known | `RevocationCoordinated` (one per owning context) |
 | `recordConfirmation()` | Standing is `COORDINATED` or `AWAITING_CONFIRMATIONS`; confirmation from a coordinated owner not yet recorded | `RevocationConfirmed` (one per owner) |
-| `complete()` | Every coordinated owner confirmed | `ErasureComplete` |
+| `complete()` | Every coordinated owner confirmed | `ErasureCompleted` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -308,7 +308,7 @@ No identity; defined entirely by attributes; immutable; invalid values are unrep
 ### Status Enumerations
 
 - `ConsentStanding` — `GRANTED`, `REVOKED`.
-- `ErasureStanding` — `REQUESTED`, `CONFIRMED`, `COORDINATED`, `AWAITING_CONFIRMATIONS`, `COMPLETE`.
+- `ErasureStanding` — `REQUESTED`, `CONFIRMED`, `COORDINATED`, `AWAITING_CONFIRMATIONS`, `COMPLETED`.
 
 ---
 
@@ -329,7 +329,7 @@ classDiagram
     DomainFact <|-- ErasureConfirmed
     DomainFact <|-- RevocationCoordinated
     DomainFact <|-- RevocationConfirmed
-    DomainFact <|-- ErasureComplete
+    DomainFact <|-- ErasureCompleted
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
@@ -341,7 +341,7 @@ classDiagram
 | `ErasureConfirmed` | request, person | `DataSubjectRequest.confirm()` | Owning contexts (coordination begins), scrutiny record |
 | `RevocationCoordinated` | request, person, owning context | `DataSubjectRequest.coordinateRevocation()` | One owning context (asked to revoke its own data) |
 | `RevocationConfirmed` | request, person, owning context | `DataSubjectRequest.recordConfirmation()` | Request standing (one owner done) |
-| `ErasureComplete` | request, person | `DataSubjectRequest.complete()` | Person notice, scrutiny record |
+| `ErasureCompleted` | request, person | `DataSubjectRequest.complete()` | Person notice, scrutiny record |
 
 ---
 

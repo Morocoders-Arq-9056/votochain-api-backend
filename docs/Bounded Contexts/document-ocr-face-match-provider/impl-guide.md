@@ -14,11 +14,12 @@
 
 ```
 src/document-ocr-face-match-provider/
-├── interfaces/rest/examination.controller.ts
-│   ├── resources/ (request-examination, examination, history)
-│   ├── transform/ (command-from-resource, resource-from-entity)
-│   ├── filters/examination-exception.filter.ts
-│   └── acl/ocr-context.facade.ts (+ standing.result)
+├── interfaces/
+│   ├── rest/examination.controller.ts
+│   │   ├── resources/ (request-examination, examination, history)
+│   │   ├── transform/ (command-from-resource, resource-from-entity)
+│   │   └── filters/examination-exception.filter.ts
+│   └── acl/ocr-context.facade.ts (+ ExaminationStandingResource, ver §5.2)
 ├── application/acl/ocr-context-facade.impl.ts
 ├── application/internal/commandservices/examination-command.service.impl.ts
 ├── application/internal/queryservices/examination-query.service.impl.ts
@@ -31,7 +32,7 @@ src/document-ocr-face-match-provider/
 ├── domain/model/commands/ (request-examination, request-reexamination, expire-examination)
 ├── domain/model/queries/ (get-standing, get-history)
 ├── domain/model/events/ (7: requested, refused, extracted, compared, concluded, expired, reexamination-requested)
-├── domain/services/ + repositories/ + exceptions/ (already-open, no-open, concluded)
+├── domain/services/ + repositories/ + exceptions/ (already-open, no-open, concluded, no-eligible-membership, contact-not-allowed)
 ├── infrastructure/persistence/typeorm/entities/examination.orm-entity.ts
 ├── infrastructure/persistence/typeorm/assemblers/examination-persistence.assembler.ts
 ├── infrastructure/persistence/typeorm/adapters/examination-repository.impl.ts
@@ -58,6 +59,7 @@ export interface Examinable {
   recordExtraction(readable: boolean, reason: UnreadableReason | null): void;
   recordComparison(holds: boolean): void;
   recordVerdict(v: Verdict): void;
+  noteRefused(reason: string): void; // scrutiny sin transición: el rechazo queda en el historial del abierto
   expire(now: Date): void;
 }
 export enum ExaminationStanding { OPEN = 'OPEN', CONCLUDED = 'CONCLUDED', EXPIRED = 'EXPIRED' }
@@ -71,8 +73,8 @@ export class DocumentExamination extends AggregateRoot {
     const e = new DocumentExamination(i.id, i.personId, i.documentRef, ExaminationStanding.OPEN, i.window);
     e.registerEvent(new ExaminationRequested(e._id, e._personId, e._documentRef)); return e;
   }
-  static rehydrate(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; standing: ExaminationStanding; window: ValidityWindow; verdict: Verdict | null; consumed: boolean }): DocumentExamination {
-    return new DocumentExamination(i.id, i.personId, i.documentRef, i.standing, i.window, i.verdict, i.consumed, true, true);
+  static rehydrate(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; standing: ExaminationStanding; window: ValidityWindow; verdict: Verdict | null; consumed: boolean; extracted: boolean; compared: boolean }): DocumentExamination {
+    return new DocumentExamination(i.id, i.personId, i.documentRef, i.standing, i.window, i.verdict, i.consumed, i.extracted, i.compared);
   }
   recordExtraction(readable: boolean, reason: UnreadableReason | null): void {
     this.assertOpen(); this._extracted = true;
@@ -88,6 +90,10 @@ export class DocumentExamination extends AggregateRoot {
     if (!this._extracted) throw new NoOpenExaminationError('verdict without extraction');
     this._verdict = v; this._standing = ExaminationStanding.CONCLUDED;
     this.registerEvent(new ExaminationConcluded(this._id, v));
+  }
+  noteRefused(reason: string): void {
+    this.assertOpen();
+    this.registerEvent(new ExaminationRefused(this._id, this._personId, reason)); // DUPLICATE: historia sin transición
   }
   expire(now: Date): void {
     if (this._standing !== ExaminationStanding.OPEN) return;
@@ -127,6 +133,7 @@ export class ValidityWindow {
   constructor(public readonly requestedAt: Date, public readonly ttlMinutes: number) {
     if (ttlMinutes <= 0) throw new Error('ttl must be positive');
   }
+  static now(ttlMinutes: number): ValidityWindow { return new ValidityWindow(new Date(), ttlMinutes); }
   isElapsed(now: Date): boolean { return now.getTime() > this.requestedAt.getTime() + this.ttlMinutes * 60000; }
   equals(o: ValidityWindow): boolean { return this.requestedAt.getTime() === o.requestedAt.getTime() && this.ttlMinutes === o.ttlMinutes; }
 }
@@ -137,12 +144,13 @@ export class ValidityWindow {
 ```typescript
 export class RequestExaminationCommand { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) { if (!personId || !documentRef) throw new Error('person+document required'); } }
 export class RequestReexaminationCommand { constructor(public readonly priorExaminationId: ExaminationId) {} }
+export class ExamineDocumentCommand { constructor(public readonly examinationId: ExaminationId) { if (!examinationId) throw new Error('examination required'); } }
 export class ExpireExaminationCommand { constructor(public readonly examinationId: ExaminationId, public readonly now: Date) {} }
-export class GetExaminationStandingQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
-export class GetExaminationHistoryQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
+export class GetExaminationStandingByPersonAndDocumentQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
+export class GetExaminationHistoryByPersonAndDocumentQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
 ```
 
-UC2 no expone comandos de dominio (`ExamineDocumentCommand` no existe a propósito): extracción/comparación/veredicto se observan del ejecutor y se aplican vía `record*` en orquestación app-side `examineDocument(id)`. Decisión: introducir comando implicaría fingir intención de usuario donde solo hay observación infra; `record*` observado preserva el límite. Push único `ExaminationConcluded(MATCH)` → Biometric consume single-use + pull de standing. Excepciones puras: `ExaminationAlreadyOpenError`, `NoOpenExaminationError`, `ExaminationConcludedError` (+ `Object.setPrototypeOf`).
+UC2 `examineDocument` viaja en `ExamineDocumentCommand{examinationId}` de primera clase (la dispara el worker tras `request`, sin intención de usuario de por medio — el comando nombra el trabajo pendiente, no una intención humana): extracción/comparación/veredicto se observan del ejecutor y se aplican vía `record*` en orquestación app-side. `record*` observado preserva el límite: el dominio juzga el pipeline, nunca ejecuta vendors. Push único `ExaminationConcluded(MATCH)` → Biometric consume single-use + pull de standing. Excepciones puras: `ExaminationAlreadyOpenError`, `NoOpenExaminationError`, `ExaminationConcludedError`, `NoEligibleMembershipError` (R8, 403), `ContactNotAllowedError` (consent gate, 403) (+ `Object.setPrototypeOf`).
 
 ### 2.6 Eventos (7)
 
@@ -162,12 +170,13 @@ export const EXAMINATION_COMMAND_SERVICE = Symbol('EXAMINATION_COMMAND_SERVICE')
 export interface ExaminationCommandService {
   requestExamination(c: RequestExaminationCommand): Promise<ExaminationId>;
   requestReexamination(c: RequestReexaminationCommand): Promise<ExaminationId>;
+  examineDocument(c: ExamineDocumentCommand): Promise<void>; // UC2 anchor
   expireExamination(c: ExpireExaminationCommand): Promise<void>;
 }
 export const EXAMINATION_QUERY_SERVICE = Symbol('EXAMINATION_QUERY_SERVICE');
 export interface ExaminationQueryService {
-  getStanding(q: GetExaminationStandingQuery): Promise<{ usableMatch: boolean }>;
-  getHistory(q: GetExaminationHistoryQuery): Promise<DocumentExamination[]>;
+  getStanding(q: GetExaminationStandingByPersonAndDocumentQuery): Promise<{ usableMatch: boolean }>;
+  getHistory(q: GetExaminationHistoryByPersonAndDocumentQuery): Promise<DocumentExamination[]>;
 }
 ```
 
@@ -192,21 +201,45 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     @Inject(CONSENT_PORT) private readonly consent: ExternalConsentService,
     @Inject(EXECUTOR_PORT) private readonly executor: DocumentExecutorService) {}
   async requestExamination(cmd: RequestExaminationCommand): Promise<ExaminationId> {
-    if (!(await this.membership.belongsToAnyCommunity(cmd.personId.value))) throw new Error('NoEligibleMembership');
-    if (!(await this.consent.mayProcessNow(cmd.personId.value))) throw new Error('ContactNotAllowed');
+    if (!(await this.membership.belongsToAnyCommunity(cmd.personId.value))) throw new NoEligibleMembershipError('person belongs nowhere');
+    if (!(await this.consent.mayProcessNow(cmd.personId.value))) throw new ContactNotAllowedError('processing not allowed now');
+    const open = await this.exams.findOpenByPersonAndDocument(cmd.personId, cmd.documentRef);
+    if (open) { // el rechazo queda historial ANTES de lanzar: UoW propio para no morir con el throw
+      const noted = await this.uow.run(async () => {
+        open.noteRefused('DUPLICATE'); await this.exams.save(open); return open;
+      });
+      this.publish(noted);
+      throw new ExaminationAlreadyOpenError('already OPEN');
+    }
     const e = await this.uow.run(async () => {
-      if (await this.exams.findOpenByPersonAndDocument(cmd.personId, cmd.documentRef)) throw new ExaminationAlreadyOpenError('already OPEN');
       const x = DocumentExamination.request({ id: ExaminationId.generate(), personId: cmd.personId, documentRef: cmd.documentRef, window: ValidityWindow.now(30) });
       await this.exams.save(x); return x;
     });
     this.publish(e); return e.id;
   }
-  async examineDocument(id: ExaminationId): Promise<void> { // UC2 anchor
+  async examineDocument(cmd: ExamineDocumentCommand): Promise<void> { // UC2 anchor
+    const id = cmd.examinationId;
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(id);
       const ext = await this.executor.observeExtraction(id.value); x.recordExtraction(ext.readable, ext.reason ? UnreadableReason.of(ext.reason) : null);
       if (!ext.readable) x.recordVerdict(Verdict.UNREADABLE);
       else { const cmp = await this.executor.observeComparison(id.value); x.recordComparison(cmp.holds); x.recordVerdict(cmp.holds ? Verdict.MATCH : Verdict.NO_MATCH); }
+      await this.exams.save(x); return x;
+    });
+    this.publish(e);
+  }
+  async requestReexamination(cmd: RequestReexaminationCommand): Promise<ExaminationId> {
+    const created = await this.uow.run(async () => {
+      const prior = await this.exams.findByIdOrThrow(cmd.priorExaminationId); // el reexamen vincula al previo, nunca lo transiciona
+      const x = prior.requestReexamination(ExaminationId.generate(), ValidityWindow.now(30));
+      await this.exams.save(x); return x;
+    });
+    this.publish(created); return created.id;
+  }
+  async expireExamination(cmd: ExpireExaminationCommand): Promise<void> {
+    const e = await this.uow.run(async () => {
+      const x = await this.exams.findByIdOrThrow(cmd.examinationId);
+      x.expire(cmd.now);
       await this.exams.save(x); return x;
     });
     this.publish(e);
@@ -270,6 +303,8 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
     { provide: EXAMINATION_COMMAND_SERVICE, useClass: ExaminationCommandServiceImpl },
     { provide: EXAMINATION_QUERY_SERVICE, useClass: ExaminationQueryServiceImpl },
     { provide: EXECUTOR_PORT, useClass: RekognitionExecutorService },
+    { provide: OCR_CONTEXT_FACADE, useClass: OcrContextFacadeImpl },
+    ExternalMembershipService, ExternalConsentService, // ACL → MEMBERSHIP_CONTEXT_FACADE / CONSENT_CONTEXT_FACADE (módulos importados)
     { provide: UNIT_OF_WORK, useClass: TypeOrmUnitOfWork }],
   exports: [OCR_CONTEXT_FACADE] })
 export class DocumentOcrFaceMatchProviderModule {}
@@ -288,8 +323,8 @@ export class DocumentOcrFaceMatchProviderModule {}
 | `POST` | `/api/v1/examinations` | `RequestExaminationCommand` → 201 + `Location` |
 | `POST` | `/api/v1/examinations/:id/reexaminations` | Nuevo ID vinculado al previo |
 | `POST` | `/api/v1/examinations/:id/examine` | UC2 anchor |
-| `GET` | `/api/v1/examinations/standing?personId=&documentRef=` | `GetExaminationStandingQuery` |
-| `GET` | `/api/v1/examinations/history?personId=&documentRef=` | `GetExaminationHistoryQuery` |
+| `GET` | `/api/v1/examinations/standing?personId=&documentRef=` | `GetExaminationStandingByPersonAndDocumentQuery` |
+| `GET` | `/api/v1/examinations/history?personId=&documentRef=` | `GetExaminationHistoryByPersonAndDocumentQuery` |
 
 Delgado: Resource → assembler → comando (token) → relectura query → Resource. `ValidationPipe` global + `@UseFilters(ExaminationExceptionFilter)`.
 
@@ -303,7 +338,7 @@ export interface OcrContextFacade {
 }
 ```
 
-DTOs con `class-validator` (nunca VOs): `RequestExaminationResource{personId,documentRef}`, `ExaminationResource{id,standing,verdict,consumed}`, `ExaminationHistoryResource{items}`. Assemblers envuelven (`PersonId.of`) / desenvuelven (`.value`). Filtro: `AlreadyOpen→409`, `NoOpen→404`, `Concluded→422`.
+DTOs con `class-validator` (nunca VOs): `RequestExaminationResource{personId,documentRef}`, `ExaminationResource{id,standing,verdict,consumed}`, `ExaminationStandingResource{usableMatch}`, `ExaminationHistoryResource{items}`. Assemblers envuelven (`PersonId.of`) / desenvuelven (`.value`). Filtro: `AlreadyOpen→409`, `NoOpen→404`, `Concluded→422`, `NoEligibleMembership→403`, `ContactNotAllowed→403`.
 
 ---
 
@@ -339,7 +374,7 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 
 ## 7. Flujos CQRS por Caso de Uso
 
-**UC1 Request:** `POST` → `belongsToAnyCommunity?` (R8) + `mayProcessNow?` → `findOpen` (doble → 409) → `request()` → `save` (UoW) → publish post-commit → 201.
+**UC1 Request:** `POST` → `belongsToAnyCommunity?` (R8) + `mayProcessNow?` → `findOpen` (doble → `noteRefused('DUPLICATE')` + publish + 409) → `request()` → `save` (UoW) → publish post-commit → 201.
 **UC2 ExamineDocument (anchor):** `examine(id)` → assert OPEN+ventana → `observeExtraction→recordExtraction` → si ilegible `recordVerdict(UNREADABLE)`; si legible `observeComparison→recordComparison→recordVerdict(MATCH|NO_MATCH)` → `save` → publish → push único `Concluded(MATCH)` consumible vía facade (R7, una vez) + pull `answerUsableMatch/consumeMatch`. Comparar sin lectura limpia o veredicto tardío se rechaza.
 **UC3 Expire / UC4 Reexamen / UC5 Standing:** sweep `findOpenExpired→expire→ExaminationExpired`; reexamen solo si previo terminal (`requestReexamination(newId)` + `ReexaminationRequested` + `ExaminationRequested`); standing = query → `answerStanding()`, sin evento.
 
@@ -370,6 +405,7 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 | Consent | `ExternalConsentService` | Facade Consent |
 | Bus | `EventEmitter2` | `EventEmitterModule.forRoot()` solo en `AppModule` |
 | Persistencia | `ExaminationRepository`, `IUnitOfWork` | `...Impl`, `TypeOrmUnitOfWork` (AsyncLocalStorage) |
+| Ciclos OCR↔Biometric/Membership | `forwardRef(() => ...)` en ambos lados | OCR consume Membership facade y Biometric consume OCR facade (R7); sin forwardRef Nest no arranca |
 
 ---
 

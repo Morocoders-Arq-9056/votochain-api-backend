@@ -12,16 +12,17 @@
 
 ```
 src/biometric-identity-verification/
-├── interfaces/rest/biometric.controller.ts
-│   ├── resources/ (enroll-biometric, start-challenge, complete-liveness, profile, attempt)
-│   ├── transform/ (command-from-resource, resource-from-entity)
-│   ├── filters/biometric-exception.filter.ts
-│   └── acl/biometric-context.facade.ts (+ verified-now.result)
+├── interfaces/
+│   ├── rest/biometric.controller.ts
+│   │   ├── resources/ (enroll-biometric, start-challenge, complete-liveness, profile, attempt)
+│   │   ├── transform/ (command-from-resource, resource-from-entity)
+│   │   └── filters/biometric-exception.filter.ts
+│   └── acl/biometric-context.facade.ts (+ VerifiedNowResource, ver §5.2)
 ├── application/acl/biometric-context-facade.impl.ts
 ├── application/internal/commandservices/ (biometric, attempt)
 ├── application/internal/queryservices/biometric-query.service.impl.ts
 ├── application/internal/eventhandlers/identity-verified.handler.ts
-├── application/internal/outboundservices/acl/ (external-consent, external-ocr)
+├── application/internal/outboundservices/acl/ (external-consent.service.ts, external-ocr.service.ts)
 ├── application/internal/outboundservices/matching/face-matching.service.ts (puerto)
 ├── domain/model/aggregates/biometric-profile.aggregate.ts
 ├── domain/model/aggregates/verification-attempt.aggregate.ts
@@ -32,7 +33,7 @@ src/biometric-identity-verification/
 ├── domain/services/ + repositories/ (profile, attempt) + exceptions/
 ├── infrastructure/persistence/typeorm/entities/ (profile, attempt)
 ├── infrastructure/persistence/typeorm/assemblers/ + adapters/ (profile, attempt)
-├── infrastructure/matching/vendor-a|vendor-b|fake/ (tras FACE_MATCHER; umbral propio del BC)
+├── infrastructure/matching/vendor-a|vendor-b|fake/ (selector = env `FACE_MATCHER`, no token DI; umbral propio del BC)
 └── biometric-identity-verification.module.ts
 ```
 
@@ -164,6 +165,9 @@ export const BIOMETRIC_COMMAND_SERVICE = Symbol('BIOMETRIC_COMMAND_SERVICE');
 export interface BiometricCommandService {
   enroll(cmd: EnrollBiometricCommand): Promise<BiometricProfileId>;
   startChallenge(cmd: StartLivenessChallengeCommand): Promise<VerificationAttemptId>;
+  completeLiveness(attemptId: VerificationAttemptId, present: boolean): Promise<void>;
+  requestComparison(attemptId: VerificationAttemptId): Promise<void>;
+  recordVerdict(attemptId: VerificationAttemptId, now: Date): Promise<void>;
   revokeProfile(cmd: RevokeBiometricProfileCommand): Promise<void>;
 }
 export const BIOMETRIC_QUERY_SERVICE = Symbol('BIOMETRIC_QUERY_SERVICE');
@@ -202,8 +206,9 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     });
     this.publish(p); return p.id;
   }
-  async verifyIdentity(personId: PersonId): Promise<VerificationAttemptId> { // anchor UC2
-    if (!(await this.consent.biometricConsentStands(personId.value))) throw new ConsentRequiredError('consent required');
+  async startChallenge(cmd: StartLivenessChallengeCommand): Promise<VerificationAttemptId> { // anchor UC2
+    if (!(await this.consent.biometricConsentStands(cmd.personId.value))) throw new ConsentRequiredError('consent required');
+    const personId = cmd.personId;
     const attempt = await this.uow.run(async () => {
       const ref = await this.profiles.findLiveByPerson(personId);
       if (!ref) throw new ReferenceRequiredError('no live reference');
@@ -237,6 +242,18 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     this.publish(a);
   }
   private publish(a: AggregateRoot): void { for (const ev of a.pullDomainEvents()) this.emitter.emit(ev.eventName, ev); }
+  async revokeProfile(cmd: RevokeBiometricProfileCommand): Promise<void> { // UC5 erasure
+    const { profile, expired } = await this.uow.run(async () => {
+      const p = (await this.profiles.findById(cmd.profileId)) ?? (() => { throw new ReferenceRequiredError('no profile'); })();
+      p.revoke();
+      const open = await this.attempts.findOpenByProfile(p.id);
+      for (const a of open) { a.expire(FailureReason.REFERENCE_ENDED); }
+      await this.profiles.save(p);
+      for (const a of open) { await this.attempts.save(a); }
+      return { profile: p, expired: open };
+    });
+    this.publish(profile); for (const a of expired) this.publish(a);
+  }
 }
 ```
 
@@ -259,7 +276,7 @@ export interface FaceMatchingService { judgesMatch(attemptId: string): Promise<b
 
 ### 3.4 Handlers + 3.5 Facade ACL
 
-`IdentityVerifiedHandler` (`@OnEvent` in-module) llama al facade de Voting vía ACL (R3) — nunca `@OnEvent` cross-module. `BiometricContextFacadeImpl`: `answerVerifiedNow(personId, now)` (Voting) + confirmación de revocación hacia Consent.
+`IdentityVerifiedHandler` (`@OnEvent` in-module) llama al facade de Voting vía ACL (R3) — nunca `@OnEvent` cross-module. `BiometricContextFacadeImpl`: `answerVerifiedNow(personId, nowIso)` (Voting, primitivas en el borde) + confirmación de revocación hacia Consent.
 
 ---
 
@@ -286,7 +303,7 @@ Adaptadores con `TransactionContext.current ?? orm`; assemblers con parsers (nun
 
 ### 4.2 Adaptador matching + 4.3 Módulo
 
-`infrastructure/matching/vendor-a/` + `vendor-b/` + `fake/` tras `FACE_MATCHER` (`vendor-a|vendor-b|fake`); cada adaptador reporta score y el BC juzga `judgesMatch(): boolean` contra su propio umbral (`FACE_MATCH_THRESHOLD`) — el listón nunca sale del BC. Módulo exporta solo `BIOMETRIC_CONTEXT_FACADE`.
+`infrastructure/matching/vendor-a/` + `vendor-b/` + `fake/` seleccionados por env `FACE_MATCHER` (`vendor-a|vendor-b|fake`, selector de despliegue — el puerto sigue siendo `MATCHING_PORT`); cada adaptador reporta score y el BC juzga `judgesMatch(): boolean` contra su propio umbral (`FACE_MATCH_THRESHOLD`) — el listón nunca sale del BC. Módulo exporta solo `BIOMETRIC_CONTEXT_FACADE`.
 
 ```typescript
 @Module({ imports: [TypeOrmModule.forFeature([ProfileOrmEntity, AttemptOrmEntity])], controllers: [BiometricController],
@@ -296,7 +313,9 @@ Adaptadores con `TransactionContext.current ?? orm`; assemblers con parsers (nun
     { provide: BIOMETRIC_COMMAND_SERVICE, useClass: BiometricCommandServiceImpl },
     { provide: BIOMETRIC_QUERY_SERVICE, useClass: BiometricQueryServiceImpl },
     { provide: MATCHING_PORT, useFactory: matchingFactory }, // FACE_MATCHER: vendor-a|vendor-b|fake
-    { provide: UNIT_OF_WORK, useClass: TypeOrmUnitOfWork }],
+    { provide: UNIT_OF_WORK, useClass: TypeOrmUnitOfWork },
+    { provide: BIOMETRIC_CONTEXT_FACADE, useClass: BiometricContextFacadeImpl },
+    ExternalConsentService, ExternalOcrService], // ACL → CONSENT_CONTEXT_FACADE / OCR_CONTEXT_FACADE (módulos importados)
   exports: [BIOMETRIC_CONTEXT_FACADE] })
 export class BiometricIdentityVerificationModule {}
 ```
@@ -312,7 +331,7 @@ export class BiometricIdentityVerificationModule {}
 |:--|:--|:--|
 | `POST` | `/api/v1/biometric/profiles` | `EnrollBiometricCommand` (consume MATCH R7) → 201 |
 | `DELETE` | `/api/v1/biometric/profiles/:id` | `RevokeBiometricProfileCommand` (erasure UC5) |
-| `GET` | `/api/v1/biometric/profiles/standing?personId=` | `GetReferenceStandingQuery` |
+| `GET` | `/api/v1/biometric/profiles/standing?personId=` | `GetReferenceStandingByPersonQuery` |
 | `POST` | `/api/v1/biometric/attempts` | `StartLivenessChallengeCommand` → 201 |
 | `POST` | `/api/v1/biometric/attempts/:id/liveness` | `completeLiveness` (present/absent) |
 | `POST` | `/api/v1/biometric/attempts/:id/comparison` | `requestComparison` (solo tras liveness) |
@@ -326,11 +345,11 @@ Delgado + `ValidationPipe` global + `@UseFilters(BiometricExceptionFilter)`.
 ```typescript
 export const BIOMETRIC_CONTEXT_FACADE = Symbol('BIOMETRIC_CONTEXT_FACADE');
 export interface BiometricContextFacade {
-  answerVerifiedNow(personId: string, now: Date): Promise<{ verifiedNow: boolean; reason: string | null }>;
+  answerVerifiedNow(personId: string, nowIso: string): Promise<{ verifiedNow: boolean; reason: string | null }>;
 }
 ```
 
-DTOs `class-validator`: `EnrollBiometricResource{personId}`, `StartChallengeResource{personId}`, `CompleteLivenessResource{present}`, `ProfileResource{id,standing}`, `AttemptResource{id,standing,freshness}`. Assemblers envuelven a VOs. Filtro: `ReferenceRequired→404`, `ConsentRequired→403`, `AttemptConcluded→409`, `LivenessRequired/ReferenceEnded→422`.
+DTOs `class-validator`: `EnrollBiometricResource{personId}`, `StartChallengeResource{personId}`, `CompleteLivenessResource{present}`, `ProfileResource{id,standing}`, `AttemptResource{id,standing,freshness}`, `VerifiedNowResource{verifiedNow,reason}`. Assemblers envuelven a VOs. Filtro: `ReferenceRequired→404`, `ConsentRequired→403`, `AttemptConcluded→409`, `LivenessRequired/ReferenceEnded→422`.
 
 ---
 
@@ -389,6 +408,7 @@ CREATE INDEX ix_attempt_person ON biometric.attempts (person_id, standing);
 | Matching vendor | `FaceMatchingService` | `VendorAMatchingService` (score→boolean, umbral BC) |
 | Bus | `EventEmitter2` | `forRoot()` solo en `AppModule` |
 | Persistencia | `ProfileRepository`, `AttemptRepository`, `IUnitOfWork` | Impls + `TypeOrmUnitOfWork` |
+| Ciclo Biometric↔Consent | `forwardRef(() => ConsentModule)` en ambos módulos | Biometric consume Consent facade y Consent coordina revocación hacia Biometric |
 
 ---
 

@@ -39,17 +39,17 @@ src/notifications/
 │       └── notification-exception.filter.ts
 ├── application/
 │   ├── acl/
-│   │   └── notification-context.facade.impl.ts
+│   │   └── notification-context-facade.impl.ts
 │   └── internal/
 │       ├── commandservices/
 │       │   └── notification-dispatch-command.service.impl.ts
 │       ├── queryservices/
 │       │   └── notification-dispatch-query.service.impl.ts
 │       ├── eventhandlers/
-│       │   ├── delivery-requested.handler.ts
-│       │   └── delivery-failed.handler.ts
+│       │   └── delivery-requested.handler.ts  # in-module: instruye al ejecutor tras commit (los fallos vuelven por webhook UC3, no por handler)
 │       └── outboundservices/
 │           ├── email/email-sending.service.ts        # EMAIL_SENDING_SERVICE port
+│           ├── template/template-resolver.service.ts # TEMPLATE_RESOLVER port
 │           └── acl/external-consent.service.ts       # may-contact gate
 ├── domain/
 │   ├── model/
@@ -60,8 +60,12 @@ src/notifications/
 │   ├── repositories/      # NOTIFICATION_DISPATCH_REPOSITORY + token
 │   └── exceptions/
 ├── infrastructure/
-│   ├── persistence/typeorm/entities/ assemblers/ adapters/
-│   └── email/ses/         # SesEmailSendingAdapter (or sendgrid/)
+│   ├── persistence/typeorm/
+│   │   ├── entities/dispatch.orm-entity.ts
+│   │   ├── assemblers/dispatch-persistence.assembler.ts
+│   │   └── adapters/dispatch-repository.impl.ts
+│   ├── email/{ses,sendgrid,logonly}/  # Ses | Sendgrid | LogOnly adapters (swap una línea)
+│   └── template/catalog/              # TemplateResolverAdapter (catálogo de plantillas)
 └── notifications.module.ts
 ```
 
@@ -80,7 +84,6 @@ Single aggregate; history belongs to the dispatch. Email-only; retries append on
 ```typescript
 import { AggregateRoot } from '../../../shared/domain/model/aggregate-root';
 export enum DispatchStanding { REQUESTED = 'REQUESTED', REFUSED = 'REFUSED', CONFIRMED = 'CONFIRMED', FAILED = 'FAILED' }
-export type DispatchStatus = DispatchStanding; // alias de lectura del ciclo confirm/fail/retry
 export function parseDispatchStanding(v: string): DispatchStanding {
   if (!(v in DispatchStanding)) throw new Error(`invalid dispatch standing: ${v}`);
   return DispatchStanding[v as keyof typeof DispatchStanding];
@@ -153,7 +156,7 @@ export class NotificationDispatch extends AggregateRoot implements Dispatchable 
 
 ### 2.2 Value Objects, Commands, Queries, Events
 
-VOs (immutable + `equals()`): `DispatchId`, `IdempotencyKey` (requester-supplied), `DeliveryAddress` (email shape), `ResolvedTemplate` (unknown keys rejected), `RefusalReason` (`DUPLICATE` | `CONTACT_NOT_ALLOWED`), `FailureReason`, `DeliveryAttempt` (append-only). Commands: `RequestDelivery`, `ConfirmDelivery`, `RecordDeliveryFailure`, `RetryDelivery`. Queries: `GetDeliveryStandingByDispatch`, `GetDeliveryStandingByKey`, `GetDeliveryHistory`.
+VOs (immutable + `equals()`): `DispatchId`, `IdempotencyKey` (requester-supplied), `DeliveryAddress` (email shape), `ResolvedTemplate` (unknown keys rejected), `RefusalReason` (`DUPLICATE` | `CONTACT_NOT_ALLOWED`), `FailureReason`, `DeliveryAttempt` (append-only). Commands: `RequestDeliveryCommand`, `ConfirmDeliveryCommand`, `RecordDeliveryFailureCommand`, `RetryDeliveryCommand`. Queries: `GetDeliveryStandingByDispatchQuery`, `GetDeliveryStandingByKeyQuery`, `GetDeliveryHistoryQuery`.
 
 5 events: `DeliveryRequested`, `DeliveryRefused`, `DeliveryConfirmed`, `DeliveryFailed`, `DeliveryRetried` (all `DomainEvent` + static `eventName`; payloads carry dispatch id, key, template/address/reason — never person identity).
 
@@ -174,6 +177,7 @@ export class NotificationDispatchCommandServiceImpl implements NotificationDispa
     @Inject(NOTIFICATION_DISPATCH_REPOSITORY) private readonly dispatches: NotificationDispatchRepository,
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
     @Inject(EMAIL_SENDING_SERVICE) private readonly sender: EmailSendingService,
+    @Inject(TEMPLATE_RESOLVER) private readonly templates: TemplateResolverService,
     private readonly consent: ExternalConsentService,
     private readonly events: EventEmitter2,
   ) {}
@@ -181,14 +185,14 @@ export class NotificationDispatchCommandServiceImpl implements NotificationDispa
     const seen = await this.dispatches.findByKey(cmd.key);
     if (seen) {
       const refused = await this.uow.run(async () => {
-        const r = NotificationDispatch.refuse({ id: DispatchId.generate(), key: cmd.key, address: cmd.address, template: ResolvedTemplate.of(cmd.templateKey, cmd.templateValues), reason: new RefusalReason('DUPLICATE') });
+        const r = NotificationDispatch.refuse({ id: DispatchId.generate(), key: cmd.key, address: cmd.address, template: await this.templates.resolve(cmd.templateKey, cmd.templateValues), reason: new RefusalReason('DUPLICATE') });
         await this.dispatches.save(r);
         return r;
       });
       for (const e of refused.pullDomainEvents()) this.events.emit(e.eventName, e);
       throw new DuplicateIntentError('idempotency key already seen');
     }
-    const template = ResolvedTemplate.of(cmd.templateKey, cmd.templateValues); // throws TemplateUnknownError
+    const template = await this.templates.resolve(cmd.templateKey, cmd.templateValues); // throws TemplateUnknownError
     const allowed = await this.consent.mayContactNow(cmd.address.value);
     if (!allowed) {
       const refused = await this.uow.run(async () => {
@@ -251,7 +255,7 @@ export class DispatchOrmEntity extends AuditableOrmEntity {
 }
 ```
 
-Assembler parses standing via `parseDispatchStanding()` and rebuilds VOs (`DispatchId.of()`, `IdempotencyKey.of()`, `DeliveryAddress.of()`); adapter uses `TransactionContext.current ?? this.orm` for UoW participation and exposes `findByKey()`, `findById()`, `save()`. `EmailSendingService` es familia Strategy (port en `domain/services/` + token `EMAIL_SENDING_SERVICE`): `SesEmailSendingAdapter` | `SendgridEmailSendingAdapter` | `LogOnlyEmailSendingAdapter` (tests/local); el handler solo conoce el port. `TemplateResolver` port (`TEMPLATE_RESOLVER`, `resolve(key, values): ResolvedTemplate`) aísla el catálogo de plantillas del agregado. Gate `ExternalConsentService.mayContactNow()` → `CONSENT_CONTEXT_FACADE` se juzga antes de `requestDelivery()` (ver §3):
+Assembler parses standing via `parseDispatchStanding()` and rebuilds VOs (`DispatchId.of()`, `IdempotencyKey.of()`, `DeliveryAddress.of()`); adapter uses `TransactionContext.current ?? this.orm` for UoW participation and exposes `findByKey()`, `findById()`, `save()`. `EmailSendingService` es familia Strategy (port en `application/internal/outboundservices/email/` + token `EMAIL_SENDING_SERVICE`): `SesEmailSendingAdapter` | `SendgridEmailSendingAdapter` | `LogOnlyEmailSendingAdapter` (tests/local); el handler solo conoce el port. `TemplateResolverService` port en `application/internal/outboundservices/template/` (`TEMPLATE_RESOLVER`, `resolve(key, values): ResolvedTemplate`) aísla el catálogo de plantillas del agregado y del service (ver §3). Gate `ExternalConsentService.mayContactNow()` → `CONSENT_CONTEXT_FACADE` se juzga antes de `requestDelivery()` (ver §3):
 
 ```typescript
 @Injectable()
@@ -320,7 +324,7 @@ CREATE TABLE notifications.dispatches (
   id VARCHAR PRIMARY KEY,
   idempotency_key VARCHAR NOT NULL UNIQUE,
   address VARCHAR NOT NULL,
-  channel VARCHAR NOT NULL DEFAULT 'EMAIL',
+  channel VARCHAR NOT NULL DEFAULT 'EMAIL' CHECK (channel = 'EMAIL'), -- email-only MVP (decisión); segundo canal = nuevo concepto
   template_key VARCHAR NOT NULL,
   template_values JSONB NOT NULL DEFAULT '{}',
   reason VARCHAR NOT NULL,
@@ -346,7 +350,7 @@ CREATE INDEX ix_dispatches_standing ON notifications.dispatches (standing);
 ```
 POST /dispatches -> RequestDeliveryCommandFromResourceAssembler.toCommand()
  -> handleRequest(): findByKey() (duplicate -> refuse DUPLICATE, 409)
-    -> ResolvedTemplate.of() (unknown -> 422) + DeliveryAddress.of() (malformed -> 400)
+     -> templates.resolve() (unknown -> 422) + DeliveryAddress.of() (malformed -> 400)
     -> ExternalConsentService.mayContactNow() (refused -> persist REFUSED, 403, still history)
     -> [UoW] requestDelivery() -> save() -> commit -> emit(DeliveryRequested)
  -> @OnEvent(DeliveryRequested, async) -> EmailSendingService.send() (outside)

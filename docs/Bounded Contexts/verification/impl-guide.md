@@ -48,10 +48,10 @@ src/verification/
 │       │   └── challenge-confirmed.handler.ts   # solo dentro del módulo → facade IAM
 │       └── outboundservices/
 │           ├── codecompare/code-compare.service.ts      # port ejecutor (hash+matches)
-│           ├── notify/challenge-notification.service.ts # port instrucción → Notifications
 │           └── acl/
 │               ├── external-consent.service.ts          # gate may-contact
-│               └── external-iam.service.ts              # existencia de persona
+│               ├── external-iam.service.ts              # existencia de persona + markVerified (R9)
+│               └── external-notifications.service.ts    # ACL → Notifications facade (sendCode sync)
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/verification-challenge.aggregate.ts
@@ -71,7 +71,6 @@ src/verification/
 │   │   ├── hmac/hmac-code-compare.service.ts         # real por defecto (OTP_HASHER=hmac)
 │   │   ├── bcrypt/bcrypt-code-compare.service.ts     # alternativa (OTP_HASHER=bcrypt)
 │   │   └── fake/fake-code-compare.service.ts         # solo tests (OTP_HASHER=fake)
-│   └── notify/challenge-notification.impl.ts            # adapter → NotificationsContextFacade
 └── verification.module.ts
 ```
 
@@ -203,9 +202,9 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
     private readonly events: EventEmitter2,
     @Inject(CODE_COMPARE_SERVICE) private readonly compare: CodeCompareService,   // port ejecutor
-    @Inject(CHALLENGE_NOTIFY_SERVICE) private readonly notify: ChallengeNotificationService,
+    private readonly notifications: ExternalNotificationsService, // ACL → Notifications facade
     private readonly consent: ExternalConsentService,   // gate may-contact
-    private readonly iam: ExternalIamService,           // existencia
+    private readonly iam: ExternalIamService,           // existencia + markVerified (R9)
   ) {}
   async requestChallenge(c: RequestChallengeCommand): Promise<ChallengeId> {
     let plain: string; // vive solo en este método; jamás persiste ni viaja en eventos
@@ -221,7 +220,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     });
     this.publish(created);
     try {
-      await this.notify.sendCode(created!.personId.value, plain!, created!.purpose.value); // sync ACL, fuera de eventos; fallo no revierte commit
+      await this.notifications.sendCode(created!.personId.value, plain!, created!.purpose.value); // sync ACL, fuera de eventos; fallo no revierte commit
     } catch (err) { this.logger.warn(`notify falló para ${created!.id.value}: ${String(err)}`); }
     return created!.id;
   }
@@ -234,7 +233,6 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
       await this.repo.save(found); return found;
     });
     this.publish(ch);   // ChallengeConfirmed lo consume el handler interno → IAM (R9)
-    if (!ch) throw new AttemptNotHeldError('código no válido');
   }
   private publish(ch: VerificationChallenge): void { for (const e of ch.pullDomainEvents()) this.events.emit(e.eventName, e); }
 }
@@ -247,11 +245,9 @@ Concurrencia: dos `answer` en carrera serializan por intento; el que confirma co
 ```typescript
 export const CODE_COMPARE_SERVICE = Symbol('CODE_COMPARE_SERVICE');
 export interface CodeCompareService { hash(plain: string): Promise<string>; matches(plain: string, hash: string): Promise<boolean>; }
-export const CHALLENGE_NOTIFY_SERVICE = Symbol('CHALLENGE_NOTIFY_SERVICE');
-export interface ChallengeNotificationService { sendCode(personId: string, plainCode: string, purpose: string): Promise<void>; }
 ```
 
-`ExternalConsentService.mayContactNow(personId: string): Promise<boolean>` (Consent & Compliance juzga opt-in; UC1 lo exige) y `ExternalIamService.personExists(...)`. Generación/comparación/entrega se ejecutan fuera: este contexto juzga standing y posee el historial.
+`ExternalNotificationsService.sendCode(personId: string, plainCode: string, purpose: string): Promise<void>` — ACL en `application/internal/outboundservices/acl/external-notifications.service.ts` que inyecta `NOTIFICATIONS_CONTEXT_FACADE` (el código viaja por ACL, nunca por eventos). `ExternalConsentService.mayContactNow(personId: string): Promise<boolean>` (Consent & Compliance juzga opt-in; UC1 lo exige) y `ExternalIamService { personExists(personId: string): Promise<boolean>; markVerified(personId: string, purpose: string): Promise<void> }` (existencia + R9). Generación/comparación/entrega se ejecutan fuera: este contexto juzga standing y posee el historial.
 
 ### 3.4 Event handlers (`{ async: true }` + `forRoot()` una vez)
 
@@ -266,7 +262,7 @@ export class ChallengeConfirmedHandler {
 }
 ```
 
-`EventEmitterModule.forRoot()` solo una vez en `AppModule`; aquí solo se inyecta `EventEmitter2`. `ChallengeConfirmed` → IAM (R9: email verificado / 2FA / reset permitido, solo el hecho, jamás el secreto); la entrega del código es instrucción sync a Notifications (`ChallengeNotificationService.sendCode`, nunca por eventos). Ningún módulo externo se suscribe a estos eventos (misma regla anti-acoplamiento que Membership).
+`EventEmitterModule.forRoot()` solo una vez en `AppModule`; aquí solo se inyecta `EventEmitter2`. `ChallengeConfirmed` → IAM (R9: email verificado / 2FA / reset permitido, solo el hecho, jamás el secreto); la entrega del código es instrucción sync a Notifications (`ExternalNotificationsService.sendCode`, nunca por eventos). Ningún módulo externo se suscribe a estos eventos (misma regla anti-acoplamiento que Membership).
 
 ## 4. Capa de Infraestructura
 
@@ -288,7 +284,7 @@ export class HmacCodeCompareService implements CodeCompareService {
 }
 ```
 
-**Notificación (sync ACL).** `ChallengeNotificationServiceImpl` consume `NotificationsContextFacade` (instrucción de entrega; el código viaja por ACL, nunca por eventos). Trade-off registrado: Verification deja de ser hoja.
+**Notificación (sync ACL).** `ExternalNotificationsService` (en `application/internal/outboundservices/acl/`) inyecta `NOTIFICATIONS_CONTEXT_FACADE` — instrucción de entrega; el código viaja por ACL, nunca por eventos. Trade-off registrado: Verification deja de ser hoja.
 **Persistencia.** ORM entity = forma de persistencia; `purpose`/`standing` columnas reales (finders filtran sobre ellas).
 
 ```typescript
@@ -318,7 +314,7 @@ POST /api/v1/verifications/challenges        { "personId": "per-uuid", "purpose"
 POST /api/v1/verifications/challenges/:id/answer  { "code": "482913" }  → 200 { "standing": "CONFIRMED" } | 409 { "standing": "OPEN", "remaining": 3 } | 410 gone
 ```
 
-ACL publicada (primitivas): `VerificationContextFacade { requestChallenge(personId, purpose): Promise<string>; answerChallenge(challengeId, code): Promise<{ standing: string; remaining: number }>; getStanding(personId, purpose): Promise<{ usable: boolean; remaining: number }>; }` + impl en `application/acl/`. Resources con `class-validator`; assemblers estáticos. `VerificationExceptionFilter` mapea los 5 errores (404 usable, 409 respondido/agotado, 422 propósito/contacto).
+ACL publicada (primitivas): `export const VERIFICATION_CONTEXT_FACADE = Symbol('VERIFICATION_CONTEXT_FACADE'); export interface VerificationContextFacade { requestChallenge(personId, purpose): Promise<string>; answerChallenge(challengeId, code): Promise<{ standing: string; remaining: number }>; getStanding(personId, purpose): Promise<{ usable: boolean; remaining: number }>; }` + impl en `application/acl/`; `verification.module.ts` `exports: [VERIFICATION_CONTEXT_FACADE]`. Resources con `class-validator`; assemblers estáticos. `VerificationExceptionFilter` mapea los 5 errores (404 usable, 409 respondido/agotado, 422 propósito/contacto).
 
 ## 6. Esquema de Base de Datos
 
@@ -352,7 +348,7 @@ CREATE INDEX ix_standing ON verification.challenges (person_id, purpose, standin
 
 ## 8. Integración con otros BCs
 
-- **R9 → IAM (OHS + ACL):** `ChallengeConfirmed` es el único hecho que IAM consume (email verificado / segundo factor / reset permitido). IAM juzga standing, jamás re-juzga el código.
+- **R9 → IAM (OHS + ACL):** el handler interno `ChallengeConfirmedHandler` (este módulo) llama a la facade IAM vía `ExternalIamService.markVerified` — IAM consume así el hecho (email verificado / segundo factor / reset permitido). IAM juzga standing, jamás re-juzga el código.
 - **→ Notifications (instrucción):** "persona invitada a confirmar"; entrega del código como intención, propiedad de Notifications.
 - **↔ Consent & Compliance:** `may-contact-now?` en UC1; denegado bloquea sin hechos.
 - IAM → Verification: existencia de persona (referencia de identidad). Sin Redis; `Purpose` cerrado en tres (autorización de voto vive en Voting).
@@ -362,11 +358,11 @@ CREATE INDEX ix_standing ON verification.challenges (person_id, purpose, standin
 | Dirección | Tipo | Detalle |
 |:--|:--|:--|
 | Verification → Shared Kernel | Legítima | `AggregateRoot`, `DomainEvent`, `IUnitOfWork`, `AuditableOrmEntity` |
-| Verification → Notifications | ACL consumida sync | `ChallengeNotificationService` → `NotificationsContextFacade` (código por ACL, no por bus) |
+| Verification → Notifications | ACL consumida sync | `ExternalNotificationsService` → `NOTIFICATIONS_CONTEXT_FACADE` (código por ACL, no por bus) |
 | Verification → Consent / IAM | ACL consumida | gates `mayContactNow` / `personExists` (primitivas en el borde, VO dentro) |
 | Verification → IAM (R9) | ACL publicada (hecho) | handler interno `ChallengeConfirmed` → facade IAM; consumidores actúan sobre el hecho, nunca el secreto |
 
 ## 10. Auditoría y Preguntas Abiertas
 
-Decisiones espejo de impl-guide: HMAC-SHA256 real por defecto, bcrypt/fake por flag `OTP_HASHER` (§4.2 impl-guide #9); sin `plainCode` en eventos, entrega por `ChallengeNotificationService` sync con try/catch (#8, #11); `Purpose` como enum cerrado (aquí 3: sin `CHECK_IN` genérico); multicanal queda en Notifications (sin `channel` en este BC); optimistic handling vía serialización por intento + supersede atómico en UoW (análogo a `@Version`); rate-limit en `request` (análogo a `@RateLimiter`); `personId` string alfanumérico (#10); validación de entrada en resources + `ValidationPipe` global (#4); 201 con `Location` (#5). **Sin Composite**: `AttemptCount`/`ValidityWindow` son VOs contados/juzgados dentro del challenge (H2), no partes componibles; el historial es query, no árbol.
+Decisiones espejo de impl-guide: HMAC-SHA256 real por defecto, bcrypt/fake por flag `OTP_HASHER` (§4.2 impl-guide #9); sin `plainCode` en eventos, entrega por `ExternalNotificationsService` sync con try/catch (#8, #11); `Purpose` como enum cerrado (aquí 3: sin `CHECK_IN` genérico); multicanal queda en Notifications (sin `channel` en este BC); optimistic handling vía serialización por intento + supersede atómico en UoW (análogo a `@Version`); rate-limit en `request` (análogo a `@RateLimiter`); `personId` string alfanumérico (#10); validación de entrada en resources + `ValidationPipe` global (#4); 201 con `Location` (#5). **Sin Composite**: `AttemptCount`/`ValidityWindow` son VOs contados/juzgados dentro del challenge (H2), no partes componibles; el historial es query, no árbol.
 Abiertas (de `domain-model.md`): supersede vs rechazar (#1), ventana/intentos/longitud (#2), throttling como regla vs guardia (#3), canales futuros (#4), qué flujos IAM consumen primero (#5).

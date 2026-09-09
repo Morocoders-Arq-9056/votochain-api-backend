@@ -43,7 +43,7 @@ whenever the criteria need declaring.
 | UC3 | DefineRetentionPolicy | Compliance steward request | `RetentionPolicy` | — | `RetentionPolicyDefinedEvent` (supersedes the previous) |
 | UC4 | SubmitErasureRequest | Person request (Law 29733) | `DataSubjectRequest` | IAM (person existence) | `ErasureRequestedEvent` |
 | UC5 | ConfirmErasureRequest | Compliance steward confirms validity | `DataSubjectRequest` | — | `ErasureConfirmedEvent` |
-| UC6 | **CoordinateErasure** (anchor) | Follows confirmation: ask every owner → collect confirmations → complete | `DataSubjectRequest` | Every owning context holding this person's data (Biometric, Wallet, Membership, Notifications, …) | `RevocationCoordinatedEvent` (one per owner), `RevocationConfirmedEvent` (one per owner), `ErasureCompleteEvent` |
+| UC6 | **CoordinateErasure** (anchor) | Follows confirmation: ask every owner → collect confirmations → complete | `DataSubjectRequest` | Every owning context holding this person's data (Biometric, Wallet, Membership, Notifications, …) | `RevocationCoordinatedEvent` (one per owner), `RevocationConfirmedEvent` (one per owner), `ErasureCompletedEvent` |
 | UC7 | AnswerConsentState | Biometric / Notifications / OTP / OCR gate check | `ConsentRecord` (answering operation only) | — | — (synchronous answer, no fact) |
 
 UC6 is detailed fully below because the coordinate-every-owner → complete-only-when-all-confirm
@@ -115,7 +115,7 @@ sequenceDiagram
         CON->>CON: recordConfirmation() → RevocationConfirmedEvent
     end
     CON->>CON: every coordinated owner confirmed? → complete()
-    CON->>CON: ErasureCompleteEvent (terminal; audit trail stays)
+    CON->>CON: ErasureCompletedEvent (terminal; audit trail stays)
     CON-->>Flow: person notice via Notifications
 ```
 
@@ -127,7 +127,7 @@ sequenceDiagram
 | 2 | `coordinateRevocation()` — one coordination fact per owning context holding this person's data | `RevocationCoordinatedEvent` per owner; the request now visibly waits (`AWAITING_CONFIRMATIONS`) |
 | 3 | Each owner ends use and deletes its own data, then confirms back | `RecordRevocationConfirmationCommand` per owner → `RevocationConfirmedEvent` |
 | 4 | Confirmations from contexts never coordinated for this request are refused | `UnknownOwnerConfirmation` — only asked owners can answer |
-| 5 | `complete()` — only when every coordinated owner confirmed | `ErasureCompleteEvent`; partial completion is unrepresentable (`ErasureIncomplete` otherwise) |
+| 5 | `complete()` — only when every coordinated owner confirmed | `ErasureCompletedEvent`; partial completion is unrepresentable (`ErasureIncomplete` otherwise) |
 | 6 | The grant → revoke → request → coordination → confirmation chain stays as an uneditable audit trail | History never rewritten — completion closes the request, never the past |
 
 ### What This Use Case Does *Not* Do
@@ -188,7 +188,7 @@ moment — past runs under a standing grant are never retroactively tainted.
 |---|---|---|
 | Consent-state answer (`answerState()`, UC7) | Biometric, Notifications, OTP, OCR (`may-process-now?` / `may-contact-now?`) | Granted or not, under which version, since when — fact only, no personal data |
 | Revocation-asked (`RevocationCoordinatedEvent`) | Each owning context | One fact per owner — each deletes its own data |
-| Erasure completion (`ErasureCompleteEvent`) | Person notice via Notifications; scrutiny | Terminal; audit trail stays |
+| Erasure completion (`ErasureCompletedEvent`) | Person notice via Notifications; scrutiny | Terminal; audit trail stays |
 | Retention terms answer (`answerTerms()`) | Compliance steward | How long kept, under what terms, per category |
 
 ## 6. ACL Consumed (What This BC Depends On)

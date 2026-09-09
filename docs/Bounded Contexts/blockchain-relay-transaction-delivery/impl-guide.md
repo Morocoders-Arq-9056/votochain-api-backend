@@ -36,8 +36,10 @@ src/blockchain-relay-transaction-delivery/
 │       ├── queryservices/delivery-query.service.impl.ts
 │       ├── eventhandlers/ (delivery-confirmed.handler.ts, delivery-event.logger.ts)
 │       └── outboundservices/
-│           ├── ledger/ledger-gateway.service.ts  # Port: hand-over + observe outcome
+│           ├── ledger/ledger.service.ts  # Port LedgerGatewayService: hand-over + observe outcome
 │           ├── queue/delivery-queue.service.ts   # Port: orden de envio (BullMQ)
+│           ├── retry/retry-policy.service.ts     # Port + token RETRY_POLICY
+│           ├── fees/fee-policy.service.ts        # Port + token FEE_POLICY
 │           └── acl/external-voting.service.ts    # notifyConfirmed/Failed/Abandoned
 ├── domain/
 │   ├── model/
@@ -49,7 +51,7 @@ src/blockchain-relay-transaction-delivery/
 │   │   └── events/ (7 hechos)
 │   ├── services/ (delivery-command, delivery-query + tokens)
 │   ├── repositories/delivery-order.repository.ts
-│   └── exceptions/ (unsigned-content-refused, order-already-accepted, illegal-delivery-state)
+│   └── exceptions/ (unsigned-content-refused, order-already-accepted, order-not-found, overtaking-refused, order-concluded, illegal-delivery-state)
 ├── infrastructure/
 │   ├── persistence/typeorm/ (entities/, assemblers/, adapters/)
 │   ├── ledger/polygon-amoy/polygon-amoy-ledger-gateway.ts  # Adapter RPC Amoy
@@ -104,7 +106,7 @@ export class DeliveryOrder extends AggregateRoot {
   }
   recordSending(): void {
     if (this._standing !== DeliveryStanding.ORDERED) throw new IllegalDeliveryStateError('send only from ORDERED');
-    this._attempts.push(new SendingAttempt(this._attempts.length + 1, 'SENT'));
+    this._attempts.push(SendingAttempt.createSent(this._attempts.length + 1));
     this._standing = DeliveryStanding.SENT;
     this.registerEvent(new SendingRecorded(this._id, this._attempts.length));
   }
@@ -115,7 +117,7 @@ export class DeliveryOrder extends AggregateRoot {
   }
   recordFailure(reason: FailureReason): void {
     if (this._standing !== DeliveryStanding.SENT) throw new IllegalDeliveryStateError('fail only from SENT');
-    this._attempts.push(new SendingAttempt(this._attempts.length + 1, 'FAILED', reason));
+    this._attempts.push(SendingAttempt.createFailed(this._attempts.length + 1, reason));
     this._standing = DeliveryStanding.FAILED;
     this.registerEvent(new DeliveryFailed(this._id, reason));
   }
@@ -131,6 +133,14 @@ export class DeliveryOrder extends AggregateRoot {
     this._standing = DeliveryStanding.ABANDONED;
     this.registerEvent(new DeliveryAbandoned(this._id, reason));
   }
+  /** Unica que decide el destino tras observar el ledger: confirma, o falla y deriva a abandonar/reintentar. El servicio traduce el outcome a primitivos y delega — nunca decide aqui. */
+  observeOutcome(confirmed: boolean, reason: FailureReason | null, retryable: boolean, retries: RetryPolicy, fees: FeePolicy): void {
+    if (confirmed) { this.recordConfirmation(); return; }
+    this.recordFailure(reason ?? FailureReason.of('LEDGER_REJECTED'));
+    if (!fees.canAfford({ payerRef: this._payerRef })) { this.abandon(FailureReason.of('COST_EXHAUSTED')); return; }
+    if (!retryable) { this.abandon(this.lastReason() ?? FailureReason.of('LEDGER_REJECTED')); return; }
+    try { this.retry(retries); } catch { this.abandon(FailureReason.of('RETRY_LIMIT_REACHED')); }
+  }
   answerDeliveryStanding(): { standing: DeliveryStanding; reason: string | null } {
     const last = [...this._attempts].reverse().find((a) => a.reason !== null);
     return { standing: this._standing, reason: last?.reason?.value ?? null };
@@ -143,7 +153,20 @@ export class DeliveryOrder extends AggregateRoot {
 
 ### 2.2 Value Objects / Entidad interna
 
-`DeliveryOrderId` (`dlo-uuid`), `SignedContentRef`, `PayerRef`: `of()` + `equals()`, nunca intercambiables. `SendingOrderPosition`: entero `>= 0`, denso por payer (rephrase del sequence counter). `SendingAttempt` (entidad interna): `{ nro, outcome: SENT|FAILED, reason? }`, inmutable, append-only. `FailureReason`: `LEDGER_REJECTED | COST_EXHAUSTED | RETRY_LIMIT_REACHED | ORDER_SUPERSEDED`, con `isRetryable()`.
+`DeliveryOrderId` (`dlo-uuid`), `SignedContentRef`, `PayerRef`: `of()` + `equals()`, nunca intercambiables. `SendingOrderPosition`: entero `>= 0`, denso por payer (rephrase del sequence counter). `SendingAttempt` (entidad interna, solo construible por sus create-methods — el root nunca hace `new` directo): `{ nro, outcome: AttemptOutcome, reason? }`, inmutable, append-only. `AttemptOutcome`: `SENT | FAILED` (nunca string pelado). `FailureReason`: `LEDGER_REJECTED | COST_EXHAUSTED | RETRY_LIMIT_REACHED | ORDER_SUPERSEDED`, con `isRetryable()`.
+
+```typescript
+export enum AttemptOutcome { SENT = 'SENT', FAILED = 'FAILED' }
+export class SendingAttempt {
+  private constructor(public readonly nro: number, public readonly outcome: AttemptOutcome, public readonly reason: FailureReason | null) {}
+  static createSent(nro: number): SendingAttempt { return new SendingAttempt(nro, AttemptOutcome.SENT, null); }
+  static createFailed(nro: number, reason: FailureReason): SendingAttempt { return new SendingAttempt(nro, AttemptOutcome.FAILED, reason); }
+}
+```
+
+### 2.4 Excepciones de dominio (`domain/exceptions/`, `Error` + `Object.setPrototypeOf`)
+
+`UnsignedContentRefusedError` (intake sin firma), `OrderAlreadyAcceptedError` (carrera accept: la gana el `UNIQUE` parcial — el adapter traduce 23505 a 409), `OrderNotFoundError` (id desconocido → 404), `OvertakingRefusedError` (posicion que adelantaria), `OrderConcludedError` (mutacion sobre `CONFIRMED`/`ABANDONED`), `IllegalDeliveryStateError` (guards de standing, con causa: `RetryAfterConfirmationRefused`, `RetryLimitReached`). Filtro: `OrderNotFound → 404`, `OrderAlreadyAccepted → 409`, resto de guards → 409/422 según §5.
 
 ### 2.3 Events (7) y puertos
 
@@ -161,11 +184,10 @@ export class DeliveryOrder extends AggregateRoot {
 @Injectable()
 export class DeliveryCommandServiceImpl implements DeliveryCommandService {
   constructor(@Inject(DELIVERY_ORDER_REPOSITORY) private readonly orders: DeliveryOrderRepository, @Inject(LEDGER_GATEWAY) private readonly ledger: LedgerGatewayService, @Inject(DELIVERY_QUEUE) private readonly queue: DeliveryQueueService, @Inject(RETRY_POLICY) private readonly retries: RetryPolicy, @Inject(FEE_POLICY) private readonly fees: FeePolicy, @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork, private readonly events: EventEmitter2) {}
-  async accept(cmd: AcceptForDeliveryCommand): Promise<DeliveryOrderId> { // cmd trae idempotencyKey: reintento HTTP reusa la orden abierta
+  async accept(cmd: AcceptForDeliveryCommand): Promise<DeliveryOrderId> {
     const order = await this.uow.run(async () => {
       const open = await this.orders.findOpenByContent(cmd.contentRef);
-      if (open) return open; // idempotente por contentRef abierto + idempotencyKey
-      if (await this.orders.findOpenByContent(cmd.contentRef)) throw new OrderAlreadyAcceptedError('OrderAlreadyAccepted');
+      if (open) return open; // idempotente por contentRef abierto (uq_orders_open_content)
       const pos = await this.orders.nextPositionForPayer(cmd.payerRef);
       const o = DeliveryOrder.accept(DeliveryOrderId.generate(), cmd.contentRef, cmd.payerRef, pos, cmd.signedProof);
       await this.orders.save(o);
@@ -189,13 +211,7 @@ export class DeliveryCommandServiceImpl implements DeliveryCommandService {
     const outcome = await this.ledger.submit(sent.id.value); // fuera de la tx
     const closed = await this.uow.run(async () => {
       const o = (await this.orders.findById(orderId))!;
-      if (outcome.confirmed) o.recordConfirmation();
-      else {
-        o.recordFailure(FailureReason.of(outcome.reason));
-        if (!this.fees.canAfford(o)) o.abandon(FailureReason.of('COST_EXHAUSTED'));
-        else if (outcome.retryable) { try { o.retry(this.retries); } catch { o.abandon(FailureReason.of('RETRY_LIMIT_REACHED')); } }
-        else o.abandon(FailureReason.of(outcome.reason));
-      }
+      o.observeOutcome(outcome.confirmed, outcome.reason ? FailureReason.of(outcome.reason) : null, outcome.retryable, this.retries, this.fees);
       await this.orders.save(o); return o;
     });
     this.publish(closed); // el handler interno avisa a Voting (R5)
@@ -221,7 +237,7 @@ Confirmacion y reintento en carrera se resuelven por standing: si `recordConfirm
 ### 4.1 Persistencia — padre + tabla hija
 
 ```typescript
-@Entity('orders')
+@Entity('orders', { schema: 'relay' })
 export class DeliveryOrderOrmEntity extends AuditableOrmEntity {
   @PrimaryColumn() id: string;
   @Column() contentRef: string;
@@ -248,10 +264,14 @@ Hija en tabla propia (no `jsonb`): los intentos tienen identidad y se consultan 
 
 `bullmq-delivery-queue.ts`: `enqueue()` publica `{ orderId }` al topic `delivery.send`; un worker del modulo consume y llama `deliver()`. Reintentos de transporte (BullMQ) != reintentos de dominio (`retry()`): la cola re-ejecuta, el agregado decide el efecto at-most-once. `polygon-amoy-ledger-gateway.ts`: envia la transaccion firmada via RPC Amoy y observa confirmacion/fallo; solo traduce outcome, el significado lo decide Voting.
 
-### 4.3 Strategy: `RetryPolicy` + `FeePolicy` (ports de dominio, sin hardcode)
+### 4.3 Strategy: `RetryPolicy` + `FeePolicy` (puertos application, sin hardcode)
+
+Puertos en `application/internal/outboundservices/retry/retry-policy.service.ts` y `application/internal/outboundservices/fees/fee-policy.service.ts` (el agregado los consume como parametros — nunca los implementa):
 
 ```typescript
+export const RETRY_POLICY = Symbol('RETRY_POLICY');
 export interface RetryPolicy { shouldRetry(attempts: number, reason: FailureReason | null): boolean; }
+export const FEE_POLICY = Symbol('FEE_POLICY');
 export interface FeePolicy { canAfford(order: { payerRef: PayerRef }): boolean; }
 ```
 
@@ -287,7 +307,7 @@ Unico Template fuera de agregados. `PolygonAmoyGateway extends BaseLedgerGateway
 | `GET` | `/api/v1/deliveries?payer=` | sending order por pagador |
 | `GET` | `/api/v1/deliveries/:id/attempts` | historial de intentos |
 
-`RelayContextFacade.answerStanding(orderId)` en primitivos (Voting traduce). Filtro: `OrderNotFound → 404`, `UnsignedContentRefused → 422`, `IllegalDeliveryState → 409`.
+`RelayContextFacade.answerStanding(orderId)` en primitivos (Voting traduce). `export const RELAY_CONTEXT_FACADE = Symbol('RELAY_CONTEXT_FACADE')`; `blockchain-relay-transaction-delivery.module.ts` `exports: [RELAY_CONTEXT_FACADE]`. Filtro: `OrderNotFound → 404`, `UnsignedContentRefused → 422`, `IllegalDeliveryState → 409`.
 
 ---
 
@@ -303,9 +323,8 @@ CREATE TABLE relay.orders (
   id TEXT PRIMARY KEY, content_ref TEXT NOT NULL, payer_ref TEXT NOT NULL,
   order_position INT NOT NULL, standing TEXT NOT NULL
     CHECK (standing IN ('ACCEPTED','ORDERED','SENT','CONFIRMED','FAILED','RETRIED','ABANDONED')),
-  idempotency_key TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (payer_ref, order_position), UNIQUE (idempotency_key)
+  UNIQUE (payer_ref, order_position)
 );
 CREATE UNIQUE INDEX uq_orders_open_content ON relay.orders (content_ref) WHERE standing NOT IN ('CONFIRMED','ABANDONED');
 CREATE TABLE relay.sending_attempts (
@@ -317,7 +336,7 @@ CREATE TABLE relay.sending_attempts (
 CREATE INDEX idx_orders_payer ON relay.orders (payer_ref, order_position);
 ```
 
-`UNIQUE(payer, position)` = no-overtaking estructural; `content_ref` ya NO es `UNIQUE` total sino parcial sobre no-terminales (`uq_orders_open_content`) — reintentar tras terminal no choca. `AcceptForDeliveryCommand` trae `idempotencyKey` (`UNIQUE(idempotency_key)`): reintento HTTP del mismo intake retorna la orden existente. `SendingCost` no es columna en MVP: costo incobrable = `recordFailure(COST_EXHAUSTED)` via `FeePolicy`.
+`UNIQUE(payer, position)` = no-overtaking estructural; `content_ref` ya NO es `UNIQUE` total sino parcial sobre no-terminales (`uq_orders_open_content`) — reintentar tras terminal no choca. Reintento HTTP del intake no lleva clave de dominio: la idempotencia de accept es por `contentRef` abierto (`findOpenByContent`); una clave `Idempotency-Key` de transporte, si se adopta, se resuelve en la capa interfaces (request log sin agregado), nunca en `AcceptForDeliveryCommand`. `SendingCost` no es columna en MVP: costo incobrable = `recordFailure(COST_EXHAUSTED)` via `FeePolicy`.
 
 ---
 
@@ -329,7 +348,8 @@ CREATE INDEX idx_orders_payer ON relay.orders (payer_ref, order_position);
 
 ```
 POST /api/v1/deliveries { contentRef, payerRef, signedProof }
- -> accept() [uow]: findOpenByContent (OrderAlreadyAccepted) -> nextPositionForPayer
+  -> accept() [uow]: findOpenByContent (abierta → se reusa) -> nextPositionForPayer
+  -> carrera accept concurrente la gana el UNIQUE parcial (adapter: 23505 → OrderAlreadyAccepted, 409)
  -> DeliveryOrder.accept (rechaza si !signedProof) -> save -> publish -> queue.enqueue
  -> 202 + Location
 ```

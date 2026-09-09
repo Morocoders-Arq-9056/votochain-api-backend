@@ -36,8 +36,12 @@ src/cryptographic-wallet-custody/
 │       ├── queryservices/wallet-query.service.impl.ts
 │       ├── eventhandlers/wallet-event.logger.ts  # Solo @OnEvent interno (log)
 │       └── outboundservices/
-│           ├── kms/key-custody.service.ts      # Port: custodia + derivacion HD
-│           └── acl/external-iam.service.ts     # personExists(personId)
+│           ├── kms/key-custody.service.ts                # Port: custodia + firma transitoria
+│           ├── key-derivation/key-derivation.service.ts  # Port + WALLET_DERIVATION_STRATEGY
+│           ├── signing-policy/signing-policy.service.ts  # Port + WALLET_SIGNING_POLICY
+│           └── acl/
+│               ├── external-iam.service.ts               # personExists(personId)
+│               └── external-consent.service.ts           # notifyRetired() → CONSENT_CONTEXT_FACADE (§3.4)
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/user-wallet.aggregate.ts
@@ -50,7 +54,9 @@ src/cryptographic-wallet-custody/
 │   └── exceptions/ (capability-already-exists, capability-not-found, illegal-wallet-state)
 ├── infrastructure/
 │   ├── persistence/typeorm/ (entities/, assemblers/, adapters/)
-│   └── kms/hd-wallet/hd-key-custody.service.ts  # BIP-32, solo memoria (ver 4.2)
+│   ├── kms/hd-wallet/hd-key-custody.service.ts  # BIP-32, solo memoria (ver 4.2)
+│   ├── kms/derivation/{hd,test}/                # HdKeyDerivation | TestKeyDerivation
+│   └── kms/signing/{hsm,memory}/                 # HsmSigningPolicy | MemorySigningPolicy
 └── cryptographic-wallet-custody.module.ts
 ```
 
@@ -65,8 +71,8 @@ src/cryptographic-wallet-custody/
 ### 2.0 Interfaces de capacidad (sin esqueleto)
 
 ```typescript
-export interface Signable { reconstructForSigning(contentRef: string): void; forget(): void; }
-export interface CustodyStandable { rotate(newPosition: DerivationPosition): void; suspend(reason: string): void; retire(): void; }
+export interface Signable { reconstructForSigning(contentRef: SignedContentRef): void; forget(): void; }
+export interface CustodyStandable { rotate(newPosition: DerivationPosition): UserWallet; suspend(reason: string): void; retire(): void; }
 ```
 
 `UserWallet implements Signable, CustodyStandable`. Sin esqueleto: el par transitorio (`reconstructForSigning`/`forget`) es unico — abre un solo `openFor` y lo cierra; el resto es trivialmente distinto (cada metodo cambia `standing`/`position` y registra su hecho). `WalletStanding` (`PROVISIONED | SIGNING_OPEN | ROTATED | SUSPENDED | RETIRED`) vive en dominio con `parseWalletStanding()`.
@@ -92,21 +98,20 @@ export function parseWalletStanding(v: string): WalletStanding {
   return WalletStanding[v as keyof typeof WalletStanding];
 }
 export class UserWallet extends AggregateRoot {
-  private constructor(private readonly _id: UserWalletId, private readonly _personId: PersonId, private _position: DerivationPosition, private _standing: WalletStanding, private _openFor: string | null) { super(); }
+  private constructor(private readonly _id: UserWalletId, private readonly _personId: PersonId, private _position: DerivationPosition, private _standing: WalletStanding, private _openFor: SignedContentRef | null) { super(); }
   static provision(id: UserWalletId, personId: PersonId, position: DerivationPosition): UserWallet {
     const w = new UserWallet(id, personId, position, WalletStanding.PROVISIONED, null);
     w.registerEvent(new WalletProvisioned(id, personId, position));
     return w;
   }
-  static rehydrate(id: UserWalletId, personId: PersonId, position: DerivationPosition, standing: WalletStanding, openFor: string | null): UserWallet {
+  static rehydrate(id: UserWalletId, personId: PersonId, position: DerivationPosition, standing: WalletStanding, openFor: SignedContentRef | null): UserWallet {
     return new UserWallet(id, personId, position, standing, openFor);
   }
-  reconstructForSigning(contentRef: string): void {
+  reconstructForSigning(contentRef: SignedContentRef): void {
     if (this._standing === WalletStanding.SUSPENDED) throw new IllegalWalletStateError('SigningNotAllowed_Suspended');
     if (this._standing === WalletStanding.RETIRED) throw new IllegalWalletStateError('SigningNotAllowed_Retired');
     if (this._standing !== WalletStanding.PROVISIONED) throw new IllegalWalletStateError('capability not provisioned');
     if (this._openFor !== null) throw new IllegalWalletStateError('ReconstructionAlreadyOpen');
-    if (!contentRef?.trim()) throw new IllegalWalletStateError('content required');
     this._standing = WalletStanding.SIGNING_OPEN;
     this._openFor = contentRef;
     this.registerEvent(new KeyReconstructed(this._id, contentRef));
@@ -118,11 +123,13 @@ export class UserWallet extends AggregateRoot {
     this._standing = WalletStanding.PROVISIONED;
     this.registerEvent(new KeyForgotten(this._id, ref));
   }
-  rotate(newPosition: DerivationPosition): void {
+  /** Rota a una posicion fresca: esta capacidad queda ROTATED (su posicion nunca vuelve a firmar) y nace la capacidad sucesora en PROVISIONED. El servicio salva ambas en el mismo UoW. */
+  rotate(newPosition: DerivationPosition): UserWallet {
     if (this._standing !== WalletStanding.PROVISIONED) throw new IllegalWalletStateError('RotationNotAllowed');
-    const old = this._position;
-    this._position = newPosition;
-    this.registerEvent(new WalletRotated(this._id, old, newPosition));
+    if (this._openFor !== null) throw new IllegalWalletStateError('ReconstructionOpen');
+    this._standing = WalletStanding.ROTATED;
+    this.registerEvent(new WalletRotated(this._id, this._position, newPosition));
+    return UserWallet.provision(UserWalletId.generate(), this._personId, newPosition);
   }
   suspend(reason: string): void {
     if (this._standing !== WalletStanding.PROVISIONED) throw new IllegalWalletStateError('suspend only from PROVISIONED');
@@ -145,7 +152,7 @@ export class UserWallet extends AggregateRoot {
 
 ### 2.2 Value Objects
 
-`UserWalletId` (`wal-uuid`, `generate()` + `of()` + `equals()`), `PersonId` (igual forma, owned por IAM — aqui solo referencia), `DerivationPosition` (entero `>= 0`, `of()` valida). `SignedContentRef` es `string` opaco: el contenido lo ownea Voting, aqui solo identidad.
+`UserWalletId` (`wal-uuid`, `generate()` + `of()` + `equals()`), `PersonId` (igual forma, owned por IAM — aqui solo referencia), `DerivationPosition` (entero `>= 0`, `of()` valida), `SignedContentRef` (`of()` + `equals()`: referencia al contenido en firma, owneado por Voting — aqui solo identidad, nunca string pelado). Regla: `string` solo para motivos libres (`reason` de `suspend`: texto no vacio); todo lo que identifica, VO.
 
 ### 2.3 Commands / Queries
 
@@ -163,15 +170,21 @@ export interface WalletCommandService {
   provision(cmd: ProvisionWalletCommand): Promise<UserWalletId>;
   signContent(cmd: SignVoteContentCommand): Promise<string>;
   rotate(cmd: RotateWalletCommand): Promise<void>;
-  suspend(walletId: UserWalletId, reason: string): Promise<void>;
-  retire(walletId: UserWalletId): Promise<void>;
+  suspend(cmd: SuspendWalletCommand): Promise<void>;
+  retire(cmd: RetireWalletCommand): Promise<void>;
+}
+export const WALLET_QUERY_SERVICE = Symbol('WALLET_QUERY_SERVICE');
+export interface WalletQueryService {
+  getCapabilityByPerson(q: GetSigningCapabilityByPersonQuery): Promise<{ maySign: boolean; walletId: string; position: number }>;
+  getHistoryByWallet(q: GetStewardshipHistoryByWalletQuery): Promise<StewardshipEntry[]>;
 }
 export const WALLET_REPOSITORY = Symbol('WALLET_REPOSITORY');
 export interface WalletRepository {
   findById(id: UserWalletId): Promise<UserWallet | null>;
   findLiveByPerson(personId: PersonId): Promise<UserWallet | null>;
   existsPosition(position: DerivationPosition): Promise<boolean>;
-  save(wallet: UserWallet): Promise<void>;
+  save(wallet: UserWallet): Promise<void>; // persiste el agregado + anexa sus eventos a wallet.events en el mismo UoW
+  findEventsByWallet(id: UserWalletId): Promise<DomainEvent[]>; // scrutiny: log de eventos por capability
 }
 ```
 
@@ -196,7 +209,7 @@ export class WalletCommandServiceImpl implements WalletCommandService {
     });
     let signed: string;
     try {
-      signed = await this.custody.signTransient(wallet.id.value, cmd.contentRef); // solo memoria
+      signed = await this.custody.signTransient(wallet.id.value, cmd.contentRef.value); // solo memoria, VO desenvuelto en el borde
     } finally {
       const closed = await this.uow.run(async () => {
         const w = (await this.wallets.findById(cmd.walletId))!;
@@ -218,7 +231,7 @@ export class WalletCommandServiceImpl implements WalletCommandService {
 
 ### 3.2 Query Service — pull, no push
 
-`getCapabilityByPerson()` delega a `answerCapability()` del agregado (pull de solo lectura, sin hechos ni efectos). `getHistoryByWallet()` reconstruye stewardship desde eventos persistidos (scrutiny).
+`getCapabilityByPerson()` delega a `answerCapability()` del agregado (pull de solo lectura, sin hechos ni efectos). `getHistoryByWallet()` lee `wallet.events` vía `findEventsByWallet()` (el adapter anexa los eventos drenados en cada `save()`, mismo UoW — scrutiny sobre hechos persistidos, nunca reconstrucción en memoria).
 
 ### 3.3 Ports de salida
 
@@ -232,7 +245,7 @@ export interface KeyCustodyService {
 
 ### 3.4 Event handler y ACL publicada
 
-`WalletEventLogger` — `@OnEvent(...)` solo log, nunca suscrito desde otro modulo (bus global sin aislamiento). `WalletContextFacadeImpl` expone `sign(contentRef)` + `answerCapability(personId)`; Voting la consume via `ExternalWalletService`. Handler `Retired → Consent`: `@OnEvent(WalletRetired.eventName, { async: true })` en modulo propio, con `try/catch` (fallo de aviso no revierte el `retire` ya commiteado; log + reintento de transporte, nunca re-apertura del agregado).
+`WalletEventLogger` — `@OnEvent(...)` solo log, nunca suscrito desde otro modulo (bus global sin aislamiento). `WalletContextFacadeImpl` expone `sign(contentRef)` + `answerCapability(personId)`; Voting la consume via `ExternalWalletService`. Handler `Retired → Consent`: `@OnEvent(WalletRetired.eventName, { async: true })` en modulo propio, inyecta `ExternalConsentService.notifyRetired()` (ACL → `CONSENT_CONTEXT_FACADE`), con `try/catch` (fallo de aviso no revierte el `retire` ya commiteado; log + reintento de transporte, nunca re-apertura del agregado). Ciclo Wallet↔Consent (Consent coordina `retire`, Wallet confirma): `forwardRef(() => ConsentModule)` en ambos lados.
 
 ---
 
@@ -259,10 +272,14 @@ Assembler `toDomain` via `UserWallet.rehydrate` + VOs (`parseWalletStanding`, nu
 
 `infrastructure/kms/hd-wallet/hd-key-custody.service.ts` implementa `KeyCustodyService`: deriva la clave de `personId + position` contra el secreto maestro (HSM/KMS en prod, variable de entorno en dev), firma el contenido y **descarta el material en el mismo tick** — jamas persiste, jamas cachea, jamas loguea. Tests con doble en memoria tras la misma interfaz. Frontera de auditoria abierta (OQ5): que cuenta como "material firmable" requiere revision de seguridad.
 
-### 4.3 Strategy: `KeyDerivation` + `SigningPolicy` (ports de dominio)
+### 4.3 Strategy: `KeyDerivation` + `SigningPolicy` (puertos application, sin hardcode)
+
+Puertos en `application/internal/outboundservices/key-derivation/key-derivation.service.ts` y `application/internal/outboundservices/signing-policy/signing-policy.service.ts` (el dominio nunca los implementa; `HdKeyCustodyService` los compone):
 
 ```typescript
+export const WALLET_DERIVATION_STRATEGY = Symbol('WALLET_DERIVATION_STRATEGY');
 export interface KeyDerivationStrategy { derivePath(personId: string, position: number): string; }
+export const WALLET_SIGNING_POLICY = Symbol('WALLET_SIGNING_POLICY');
 export interface SigningPolicy { sign(digest: Buffer, path: string): Promise<string>; }
 ```
 
@@ -303,6 +320,13 @@ CREATE TABLE wallet.wallets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_wallets_person ON wallet.wallets (person_id);
+-- Log de scrutiny: el adapter anexa los eventos drenados en cada save(), mismo UoW.
+CREATE TABLE wallet.events (
+  seq BIGSERIAL PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallet.wallets(id),
+  event_name TEXT NOT NULL, payload JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_events_wallet ON wallet.events (wallet_id, seq);
 ```
 
 ---
@@ -323,7 +347,7 @@ POST /api/v1/wallets/:id/sign { contentRef }
 
 ### 7.2 UC1 Provision / UC4-6 Stewardship
 
-`provision`: `ExternalIamService.personExists()` → `existsPosition()` → `UserWallet.provision()` → save → `WalletProvisioned` post-commit. `rotate/suspend/retire`: cargar → metodo del agregado → save → publicar post-commit. UC6 sin comando externo de persona: lo dispara el hecho de coordinacion de Consent & Compliance.
+`provision`: `ExternalIamService.personExists()` → `existsPosition()` → `UserWallet.provision()` → save → `WalletProvisioned` post-commit. `rotate`: cargar → `rotate(newPosition)` (esta queda `ROTATED`) + `save` de la sucesora `PROVISIONED` en el mismo UoW → publicar ambos post-commit. `suspend/retire`: cargar → metodo del agregado → save → publicar post-commit. UC6 sin comando externo de persona: lo dispara el hecho de coordinacion de Consent & Compliance.
 
 ---
 

@@ -155,7 +155,7 @@ export class Community extends AggregateRoot implements CommunityStandable {
 
   suspend(reason: string): void {
     this.assertMutable();
-    this.applyStandingTransition(this._standing, CommunityStanding.SUSPENDED, new CommunitySuspended(this._id, reason));
+    this.applyStandingTransition(CommunityStanding.ACTIVE, CommunityStanding.SUSPENDED, new CommunitySuspended(this._id, reason));
   }
 
   reactivate(): void {
@@ -164,6 +164,8 @@ export class Community extends AggregateRoot implements CommunityStandable {
 
   archive(reason: string): void {
     this.assertMutable();
+    if (this._standing !== CommunityStanding.ACTIVE && this._standing !== CommunityStanding.SUSPENDED)
+      throw new IllegalCommunityTransitionError('archive only from ACTIVE/SUSPENDED');
     this.applyStandingTransition(this._standing, CommunityStanding.ARCHIVED, new CommunityArchived(this._id, reason));
   }
   // updateSettings(), appointAdmin(),
@@ -204,15 +206,27 @@ export class Community extends AggregateRoot implements CommunityStandable {
 export const COMMUNITY_COMMAND_SERVICE = Symbol('COMMUNITY_COMMAND_SERVICE');
 export interface CommunityCommandService {
   register(c: RegisterCommunityCommand): Promise<CommunityId>;
+  activate(c: ActivateCommunityCommand): Promise<void>;
+  updateSettings(c: UpdateCommunitySettingsCommand): Promise<void>;
   definePolicy(c: DefineVotingPolicyCommand): Promise<void>;
-  // ... one method per command
+  appointAdmin(c: AppointCommunityAdminCommand): Promise<void>;
+  removeAdmin(c: RemoveCommunityAdminCommand): Promise<void>;
+  suspend(c: SuspendCommunityCommand): Promise<void>;
+  reactivate(c: ReactivateCommunityCommand): Promise<void>;
+  archive(c: ArchiveCommunityCommand): Promise<void>;
 }
 export const COMMUNITY_QUERY_SERVICE = Symbol('COMMUNITY_QUERY_SERVICE');
 export interface CommunityQueryService {
   getById(q: GetCommunityByIdQuery): Promise<Community | null>;
-  getPolicy(q: GetVotingPolicyByCommunityQuery): Promise<VotingPolicy | null>;
+  getPolicy(q: GetVotingPolicyByCommunityQuery): Promise<VotingPolicy>; // throws PolicyUndefinedError when none defined
   getStanding(q: GetStandingByCommunityQuery): Promise<StandingAnswer>;
   getAdmins(q: GetAdministratorsByCommunityQuery): Promise<CommunityAdmin[]>;
+}
+export const COMMUNITY_REPOSITORY = Symbol('COMMUNITY_REPOSITORY');
+export interface CommunityRepository {
+  findById(id: CommunityId): Promise<Community | null>;
+  findByName(name: string): Promise<Community | null>; // UC1 uniqueness guard (§7.1)
+  save(community: Community): Promise<void>;
 }
 ```
 
@@ -401,7 +415,7 @@ Fan-out Observer (ver §3.4): Activated/Suspended/Reactivated → gates Membersh
 - **Out — R1 Voting (OHS `answerPolicy` → Voting):** Voting calls `CommunityContextFacade.answerPolicy()` at each proposal opening and freezes its own `QuorumSnapshot`. Never pushed; never re-read mid-vote.
 - **Out — `answerStanding`:** Voting (proposals allowed?) + Membership (registrations allowed?) consume `answerStanding()`. Suspended refuses beginnings; in-flight votes close under frozen rule (default).
 - **In — IAM → Community (UC5):** `ExternalIamService` checks person existence via `IAM_CONTEXT_FACADE`; only the reference is stored.
-- **Out — lifecycle facts:** `CommunitySuspended/Reactivated/Archived` observed by Membership, Voting, Notifications via in-module handler → ACL calls.
+- **Out — lifecycle facts:** Community only emits. Membership, Voting, Notifications observe via *their own* in-module handlers, which pull `answerStanding()`/`answerPolicy()` or react through *their own* `ExternalCommunityService` ACL calls — Community holds no `ExternalMembership/ExternalVotingService` (pull is one-directional).
 
 ---
 

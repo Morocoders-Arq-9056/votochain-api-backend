@@ -29,14 +29,17 @@ src/voting-verifiable-ledger/
 │   ├── rest/ (proposal / authorization / vote controllers, resources/, transform/)
 │   ├── acl/voting-context.facade.ts          # Reservada (sin consumidores hoy)
 │   └── filters/voting-exception.filter.ts
-├── application/internal/
-│   ├── commandservices/ (proposal, authorization, vote — CastVote ancla + UC5/UC6)
-│   ├── queryservices/ (proposal-query, vote-query — tally, receipt, proof)
-│   ├── eventhandlers/ (vote-cast.handler.ts -> UC5, proposal-closed.handler.ts -> UC8)
-│   └── outboundservices/
-│       ├── acl/ (external-community R1, external-membership R2, external-biometric R3,
-│       │         external-wallet R4, external-relay R5, external-notifications R11)
-│       └── signing/signature-verification.service.ts  # Port ecrecover/EIP-712
+├── application/
+│   ├── acl/voting-context-facade.impl.ts    # Reservada (sin consumidores hoy)
+│   └── internal/
+│       ├── commandservices/ (proposal, authorization, vote — CastVote ancla + UC5/UC6)
+│       ├── queryservices/ (proposal-query, vote-query — tally, receipt, proof)
+│       ├── eventhandlers/ (vote-cast.handler.ts -> UC5, proposal-closed.handler.ts -> UC8)
+│       └── outboundservices/
+│           ├── acl/ (external-community R1, external-membership R2, external-biometric R3,
+│           │         external-wallet R4, external-relay R5, external-notifications R11)
+│           ├── signing/signature-policy.service.ts   # Port + token SIGNATURE_POLICY
+│           └── quorum/quorum-policy.service.ts       # Port + token QUORUM_POLICY
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/ (proposal, vote-authorization, vote)
@@ -138,9 +141,14 @@ Un `(proposal, voter)` admite como maximo un `PENDING` (finder + unico parcial).
 
 ```typescript
 export class Vote extends AggregateRoot implements VoteTrackable {
+  /** Ensambla el contenido firmable (puro, sin eventos): proposal + voter + choice + nonce. */
+  static buildMessage(proposalId: ProposalId, voter: VoterAddress, choice: Choice, nonce: VoteNonce): string {
+    return `vote:${proposalId.value}:${voter.value}:${choice.value}:${nonce.value}`;
+  }
   static cast(id: VoteId, proposalId: ProposalId, voter: VoterAddress, choice: Choice, nonce: VoteNonce, sig: EIP712Signature, recovered: VoterAddress): Vote {
     if (!recovered.equals(voter)) throw new SignerMismatchError('SignerMismatch');
     const v = new Vote(id, proposalId, voter, choice, nonce, sig, null, VoteStatus.SIGNED);
+    v.registerEvent(new VoteMessageBuilt(id, proposalId, choice, nonce)); // scrutiny: el mensaje existió antes que la firma
     v.registerEvent(new VoteCast(id, proposalId, voter, sig));
     return v;
   }
@@ -161,6 +169,44 @@ Un solo voto inmutable: un segundo `CONFIRMED` por `(proposal, voter)` es replay
 
 Proposal: `ProposalDrafted/Opened/Closed/Tallied + QuorumReached/NotReached`. Autorizacion: `Requested/Granted/Denied/Consumed/Expired`. Voto: `VoteMessageBuilt/VoteCast/SignedVoteQueued/TransactionSent/VoteConfirmedOnChain/TransactionFailed + ReplayRejected/LateVoteRejected`. Todos con `static eventName` y payload con VOs.
 
+### 2.6 Servicios CQRS (puertos en `domain/services/`, con tokens)
+
+```typescript
+export const PROPOSAL_COMMAND_SERVICE = Symbol('PROPOSAL_COMMAND_SERVICE');
+export interface ProposalCommandService {
+  draft(cmd: DraftProposalCommand): Promise<ProposalId>;
+  open(cmd: OpenProposalCommand): Promise<void>;
+  close(cmd: CloseProposalCommand): Promise<void>;
+  tally(cmd: TallyProposalCommand): Promise<void>; // UC8
+}
+export const AUTHORIZATION_COMMAND_SERVICE = Symbol('AUTHORIZATION_COMMAND_SERVICE');
+export interface VoteAuthorizationCommandService {
+  request(cmd: RequestVoteAuthorizationCommand): Promise<AuthorizationId>;
+  grant(cmd: GrantVoteAuthorizationCommand): Promise<void>;
+  deny(cmd: DenyVoteAuthorizationCommand): Promise<void>;
+  expire(cmd: ExpireVoteAuthorizationCommand): Promise<void>;
+}
+export const VOTE_COMMAND_SERVICE = Symbol('VOTE_COMMAND_SERVICE');
+export interface VoteCommandService {
+  cast(cmd: CastVoteCommand): Promise<VoteId>; // consume+cast atomico (H5)
+  markQueued(voteId: VoteId): Promise<void>;
+  markSent(voteId: VoteId, ref: TransactionReference): Promise<void>;
+  markConfirmed(voteId: VoteId, ref: TransactionReference, blockNo: number): Promise<void>;
+  markFailed(voteId: VoteId, reason: string, retryable: boolean): Promise<void>;
+}
+export const PROPOSAL_QUERY_SERVICE = Symbol('PROPOSAL_QUERY_SERVICE');
+export interface ProposalQueryService {
+  getById(q: GetProposalByIdQuery): Promise<Proposal | null>;
+  listByCommunityAndStatus(q: ListProposalsByCommunityAndStatusQuery): Promise<Proposal[]>;
+  getTally(q: GetTallyByProposalQuery): Promise<Tally | null>;
+}
+export const VOTE_QUERY_SERVICE = Symbol('VOTE_QUERY_SERVICE');
+export interface VoteQueryService {
+  getReceipt(q: GetVoterReceiptByProposalAndVoterQuery): Promise<VoterReceipt | null>;
+  getProof(voteId: VoteId): Promise<VerifiableProof | null>;
+}
+```
+
 ---
 
 <a name="application"></a>
@@ -170,14 +216,26 @@ Proposal: `ProposalDrafted/Opened/Closed/Tallied + QuorumReached/NotReached`. Au
 ### 3.1 UC4 CastVote (ancla) — dos agregados + Wallet en una transaccion de negocio
 
 ```typescript
-async cast(cmd: CastVoteCommand): Promise<VoteId> {
+@Injectable()
+export class VoteCommandServiceImpl implements VoteCommandService {
+  constructor(
+    @Inject(PROPOSAL_REPOSITORY) private readonly proposals: ProposalRepository,
+    @Inject(AUTHORIZATION_REPOSITORY) private readonly auths: VoteAuthorizationRepository,
+    @Inject(VOTE_REPOSITORY) private readonly votes: VoteRepository,
+    @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
+    private readonly events: EventEmitter2,
+    private readonly wallet: ExternalWalletService,                 // R4 → WALLET_CONTEXT_FACADE
+    @Inject(SIGNATURE_POLICY) private readonly signatures: SignaturePolicy,
+    private readonly notifications: ExternalNotificationsService,  // R11 → NOTIFICATION_CONTEXT_FACADE
+  ) {}
+  async cast(cmd: CastVoteCommand): Promise<VoteId> {
   const auth = await this.auths.findById(cmd.authorizationId) ?? throwNotFound(); // guards antes de firmar
   const proposal = await this.proposals.findById(auth.proposalId) ?? throwNotFound();
   proposal.assertOpen();            // si no -> LateVoteRejected
   proposal.assertChoice(cmd.choice); // si no -> InvalidChoice
   if (auth.isConsumedOrExpired()) throw new ReplayRejectedError(...);
   const nonce = VoteNonce.fresh();
-  const contentRef = buildContentRef(proposal.id, auth.voterAddress, cmd.choice, nonce);
+  const contentRef = Vote.buildMessage(proposal.id, auth.voterAddress, cmd.choice, nonce);
   const sigRaw = await this.wallet.sign(auth.walletIdHint, contentRef); // R4, transitorio
   const recovered = VoterAddress.of(await this.signatures.recoverSigner(contentRef, sigRaw));
   if (!recovered.equals(auth.voterAddress)) throw new SignerMismatchError('SignerMismatch');
@@ -189,13 +247,17 @@ async cast(cmd: CastVoteCommand): Promise<VoteId> {
     await this.auths.save(a); await this.votes.save(v);
     return v;
   });
-  this.publish(vote, auth); // VoteCast + AuthorizationConsumed post-commit
-  await this.notifications.voteCast(auth.voterAddress.value, vote.id.value); // R11
+  this.publish(vote, auth); // VoteMessageBuilt + VoteCast + AuthorizationConsumed post-commit
+  await this.notifications.voteCast(auth.voterAddress.value, vote.id.value); // R11 vía ExternalNotificationsService → NOTIFICATION_CONTEXT_FACADE
   return vote.id;
+  }
+  private publish(vote: Vote, auth: VoteAuthorization): void {
+    for (const e of [...vote.pullDomainEvents(), ...auth.pullDomainEvents()]) this.events.emit(e.eventName, e);
+  }
 }
 ```
 
-Si persistir falla tras firmar, la firma se descarta: reintento = nuevo `CastVoteCommand` contra la misma autorizacion aun-`PENDING`. UC4 no re-pregunta elegibilidad ni liveness (confia en la autorizacion congelada de UC3). Handlers con `@OnEvent(..., { async: true })` + `try/catch` (fallo de aviso/relay no revierte el commit); publicacion post-`uow.run` (outbox logico: primero commit, luego `emit`; outbox persistente como OQ si se exige exactly-once cross-BC).
+Si persistir falla tras firmar, la firma se descarta: reintento = nuevo `CastVoteCommand` contra la misma autorizacion aun-`PENDING`. UC4 no re-pregunta elegibilidad ni liveness (confia en la autorizacion congelada de UC3). Handlers con `@OnEvent(..., { async: true })` + `try/catch` (fallo de aviso/relay no revierte el commit); publicacion post-`uow.run` (outbox logico: primero commit, luego `emit`; outbox persistente como OQ si se exige exactly-once cross-BC). `EventEmitterModule.forRoot()` solo en `AppModule` — este modulo solo inyecta `EventEmitter2`.
 
 ### 3.2 UC1/UC2/UC7/UC8 + UC3 + UC5/UC6/UC9
 
@@ -257,10 +319,14 @@ export class VoteOrmEntity extends AuditableOrmEntity {
 
 `jsonb` solo para detalles con forma de VO (options, snapshots, signature) — nunca para hijos con identidad (aqui no hay: tres raices separadas por H1).
 
-### 4.2 Strategy: `SignaturePolicy` + `QuorumPolicy` (ports de dominio)
+### 4.2 Strategy: `SignaturePolicy` + `QuorumPolicy` (puertos application, sin hardcode)
+
+Puertos en `application/internal/outboundservices/signing/signature-policy.service.ts` y `application/internal/outboundservices/quorum/quorum-policy.service.ts` (el dominio los consume — `recovered.equals(declarado)`, `verdictFor` — nunca los implementa):
 
 ```typescript
+export const SIGNATURE_POLICY = Symbol('SIGNATURE_POLICY');
 export interface SignaturePolicy { recoverSigner(contentRef: string, sig: string): Promise<string>; }
+export const QUORUM_POLICY = Symbol('QUORUM_POLICY');
 export interface QuorumPolicy { verdictFor(turnout: number, snapshot: QuorumSnapshot): boolean; }
 ```
 
@@ -280,19 +346,20 @@ export interface QuorumPolicy { verdictFor(turnout: number, snapshot: QuorumSnap
 | `GET` | `/api/v1/proposals/:id` | Proposal Detail |
 | `GET` | `/api/v1/proposals/:id/tally` | Tally / quorum (tras TALLIED) |
 | `POST` | `/api/v1/authorizations` | RequestAuth (UC3) |
-| `POST` | `/api/v1/votes` | CastVote (UC4, ancla) → receipt SIGNED |
+| `POST` | `/api/v1/votes` | CastVote (UC4, ancla) → receipt SIGNED (header `Idempotency-Key` requerido; ver §7.1) |
 | `GET` | `/api/v1/votes/:id` | Verifiable Proof (choice+firma+tx+recovered) |
 | `GET` | `/api/v1/votes/receipt?proposal=&voter=` | Voter Receipt (mi journey, sin choices ajenos) |
 
-Filtro: `ProposalNotOpen → 422`, `SignerMismatch → 422`, `ReplayRejected → 409`, `AuthorizationExpired → 410`, `VoteNotFound → 404`, `IllegalProposalTransition → 409`.
+Filtro (error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejected`), `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejected`), `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
 
-### 5.1 Fachada entrante `VOTING_CONTEXT_FACADE` (primitivas, para futuro Reporting)
+### 5.1 Fachada publicada `VOTING_CONTEXT_FACADE` (primitivas; primer consumidor futuro: Reporting)
 
 ```typescript
-export interface VotingContextFacade { getTally(proposalId: string): Promise<{ counts: Record<string, number>; turnout: number; quorumMet: boolean }>; getProof(voteId: string): Promise<{ choice: string; signature: unknown; txHash: string | null; recovered: string }>; }
+export const VOTING_CONTEXT_FACADE = Symbol('VOTING_CONTEXT_FACADE');
+export interface VotingContextFacade { getTally(proposalId: string): Promise<{ counts: Record<string, number>; turnout: number; quorumMet: boolean }>; getProof(voteId: string): Promise<{ choice: string; signature: { v: number; r: string; s: string }; txHash: string | null; recovered: string }>; }
 ```
 
-Hoy sin consumidores cross-modulo (reads los consume la UI). Impl en `application/acl/voting-context-facade.impl.ts` delegando a los query services; primitivos (el consumidor traduce a sus VOs). Si Relay/Voting llegan a importarse mutuamente, usar `forwardRef(() => ...)` en los modulos — hoy innecesario (dependencia unidireccional Voting → Relay via ACL).
+Hoy sin consumidores cross-modulo (reads los consume la UI). Impl en `application/acl/voting-context-facade.impl.ts` delegando a los query services; primitivos (el consumidor traduce a sus VOs). `voting-verifiable-ledger.module.ts` `exports: [VOTING_CONTEXT_FACADE]`. Si Relay/Voting llegan a importarse mutuamente, usar `forwardRef(() => ...)` en los modulos — hoy innecesario (dependencia unidireccional Voting → Relay via ACL).
 
 ---
 
@@ -321,9 +388,13 @@ CREATE TABLE voting.votes (
   voter_address TEXT NOT NULL, choice TEXT NOT NULL, nonce TEXT NOT NULL,
   signature JSONB NOT NULL, tx_hash TEXT NULL, block_number INT NULL,
   status TEXT NOT NULL CHECK (status IN ('SIGNED','QUEUED','SENT','CONFIRMED','FAILED')),
-  idempotency_key TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (proposal_id, voter_address, nonce)
+);
+-- Dedup de transporte (NO es agregado, sin puerto en domain/, solo lo usa la capa interfaces):
+CREATE TABLE voting.request_log (
+  idempotency_key TEXT PRIMARY KEY, vote_id TEXT NOT NULL REFERENCES voting.votes(id),
+  receipt JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX uq_auth_pending ON voting.authorizations (proposal_id, voter_address) WHERE status = 'PENDING';
 CREATE UNIQUE INDEX uq_vote_confirmed ON voting.votes (proposal_id, voter_address) WHERE status = 'CONFIRMED';
@@ -347,7 +418,7 @@ POST /votes { authorizationId, choice }
   -> 201 receipt { voteId, SIGNED }
 ```
 
-`CastVoteCommand` trae `idempotencyKey` (`UNIQUE` en `votes`): reintento HTTP del mismo voto retorna el `voteId` existente sin consumir otra autorizacion.
+Reintento HTTP del mismo voto (no es concepto de dominio): `POST /votes` exige header `Idempotency-Key`; clave repetida retorna el receipt guardado en `voting.request_log` sin invocar el caso de uso. El dominio garantiza un solo `CONFIRMED` por `(proposal, voter)` via autorizacion consumida + `uq_vote_confirmed`.
 
 ### 7.2 UC5 → UC6 → UC8
 
@@ -372,7 +443,7 @@ Relay outcome -> markConfirmed (factura al tally) | markFailed (+retry misma ide
 | R5 Voting → Relay | Customer/Supplier + OHS | UC5/UC6: signed-only; solo `DeliveryConfirmed` alimenta tally |
 | R11 Voting → Notifications | OHS | Avisos cast/queue/confirm/fail (intents, nunca decisiones) |
 
-Voting no expone ACL sincrona hoy (sus reads los consume la UI, no otro BC). Si Reporting se escinde, nace aqui la primera entrada publicada.
+Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads los consume la UI, no otro BC). Si Reporting se escinde, nace ahi el primer consumidor publicado.
 
 ---
 
@@ -382,7 +453,7 @@ Voting no expone ACL sincrona hoy (sus reads los consume la UI, no otro BC). Si 
 
 | Dependencia | Puerto | Adaptador | Estado |
 |:--|:--|:--|:--|
-| ethers/viem (EIP-712) | `SignatureVerificationService` | `ethers-signature-verification.service.ts` | Port & Adapter |
+| ethers/viem (EIP-712) | `SignaturePolicy` (`SIGNATURE_POLICY`) | `ethers-signature-verification.service.ts` | Port & Adapter |
 | Community/Membership/Biometric | `External{...}Service` | ACL en proceso | Consumidas (R1/R2/R3) |
 | `WALLET_CONTEXT_FACADE` | `ExternalWalletService` | ACL en proceso | Consumida (R4) |
 | `RELAY_CONTEXT_FACADE` | `ExternalRelayService` | ACL en proceso | Consumida (R5) |
