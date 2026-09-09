@@ -54,7 +54,8 @@ src/iam/
 │           ├── session/
 │           │   └── session-artifact.service.ts          # port + token
 │           └── acl/
-│               └── external-auth0.service.ts            # consume Auth0 adapter
+│               ├── external-verification.service.ts     # consume Verification facade (UC6)
+│               └── external-notifications.service.ts    # consume Notifications facade (avisos)
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/
@@ -279,7 +280,7 @@ Read-only, no `UNIT_OF_WORK`: `getStanding()` → `users.findByPersonId()` + `an
 
 ### 3.3 Outbound Ports (Strategy)
 
-Puerto `ProofVerification` (Strategy): contrato en `application/internal/outboundservices/proof/proof-verification.service.ts`. El caso de uso observa el veredicto (`holds()`), nunca ejecuta la prueba.
+Puerto `ProofVerification` (Strategy): contrato en `application/internal/outboundservices/proof/proof-verification.service.ts`. El caso de uso observa el veredicto (`holds()`), nunca ejecuta la prueba. `Auth0ProofAdapter` implementa este puerto directamente — no existe servicio intermedio `external-auth0`: `acl/` reserva exclusivamente para `External{Bc}Service` que consumen facades de otros BCs (`external-verification`, `external-notifications`).
 
 ```typescript
 export const PROOF_VERIFICATION_SERVICE = Symbol('PROOF_VERIFICATION_SERVICE');
