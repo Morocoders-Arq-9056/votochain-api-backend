@@ -61,9 +61,9 @@ confused with the aggregate operations in `domain-model.md`, which are internal.
 
 | Command | Carries | Handled By |
 |---------|---------|------------|
-| `RequestChallengeCommand` | personId, purpose (`login`, `email-verification`, `password-reset`) | UC1 |
-| `AnswerChallengeCommand` | challengeId, presented code | UC2 |
-| `ExpireChallengeCommand` | challengeId | UC3 (time-triggered sweep) |
+| `RequestVerificationChallengeCommand` | personId, purpose (`login`, `email-verification`, `password-reset`) | UC1 |
+| `AnswerVerificationChallengeCommand` | challengeId, presented code | UC2 |
+| `ExpireVerificationChallengeCommand` | challengeId | UC3 (time-triggered sweep) |
 
 UC1 refuses before opening when the purpose is outside the closed set
 (`PurposeUnknown`) or contact is not allowed now (`ContactNotAllowed`) — both checked
@@ -100,7 +100,7 @@ sequenceDiagram
     participant Executor as External Executor
     participant IAM as IAM BC
 
-    Person->>OTP: AnswerChallengeCommand(challengeId, presented code)
+    Person->>OTP: AnswerVerificationChallengeCommand(challengeId, presented code)
     OTP->>OTP: OPEN and within window? attempts remain?
     OTP->>Executor: code holds for this attempt? (observed, never kept)
     Executor-->>OTP: holds / does not hold

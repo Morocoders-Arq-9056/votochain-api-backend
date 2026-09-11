@@ -31,7 +31,7 @@ version: "0.1.0"
 | **Secret** | The local proof material a person offers to prove identity (what the person knows). This context judges proofs; it never exposes the material itself |
 | **Outside proof** | Identity proof vouched by the one agreed outside prover and linked to this `User`. A second way to prove, not a second identity |
 | **Session** | The standing of being currently proven-in: at most one open session per `User` at any instant |
-| **System Role** | A global technical permission (e.g. steward vs plain person) — distinct from a member's community role and from administering a community |
+| **System Role** | A global technical permission (e.g. admin vs user person) — distinct from a member's community role and from administering a community |
 | **Access standing** | Where this identity stands: `REGISTERED`, `ACTIVE`, `SUSPENDED` — plus whether a session is open |
 | **Email identity** | The contact address recorded for this `User` and whether it stands verified. Standing is judged here; delivery of the verification is executed outside |
 
@@ -68,7 +68,7 @@ graph LR
         ChangeEmail --> EmailChanged[Email Changed]
     end
 
-    subgraph "Stewardship"
+    subgraph "Adminship"
         GrantRole[Grant System Role]
         GrantRole --> RoleGranted[System Role Granted]
         RevokeRole[Revoke System Role]
@@ -90,7 +90,7 @@ graph LR
 1. `User Signed Up` → the technical identity exists from here; nothing else may act for this person yet.
 2. `User Signed In` → exactly one open session from here; a new sign-in while one is open supersedes the prior session (default, needs expert confirmation).
 3. `Access Suspended` → the open session ends here and further proofs are refused until restoration.
-4. `System Role Revoked` → refused when it would remove the final steward (domain invariant, not policy).
+4. `System Role Revoked` → refused when it would remove the final admin (domain invariant, not policy).
 
 ## Design Level — User Aggregate
 
@@ -120,7 +120,7 @@ graph TD
         U --- USess[Session: open/closed<br/>at most one open]
         U --- UProof[Proofs: local secret<br/>+ linked outside proof]
         U --- UEmail[Email identity<br/>address + verified standing]
-        U --- URoles[SystemRoles<br/>steward / plain person]
+        U --- URoles[SystemRoles<br/>admin / user]
     end
 
     subgraph "Events (Facts)"
@@ -142,7 +142,7 @@ graph TD
         Pol1[Repeated failed proof suspends access]
         Pol2[Secret change ends the open session]
         Pol3[Suspension ends the open session]
-        Pol4[Last proof never unlinked; last steward never revoked]
+        Pol4[Last proof never unlinked; last admin never revoked]
     end
 
     subgraph "Read Models"
@@ -231,7 +231,7 @@ graph TD
 
 | Aggregate | Root | Invariants |
 |-----------|------|------------|
-| **User** | `User` | Exactly one technical identity per person; standing follows `REGISTERED → ACTIVE ⇄ SUSPENDED`; at most one open session at any instant; at least one proof always remains (local secret or the linked outside proof); at least one steward always remains; `SUSPENDED` refuses proof and ends the open session |
+| **User** | `User` | Exactly one technical identity per person; standing follows `REGISTERED → ACTIVE ⇄ SUSPENDED`; at most one open session at any instant; at least one proof always remains (local secret or the linked outside proof); at least one admin always remains; `SUSPENDED` refuses proof and ends the open session |
 
 ### Commands (12 + 1 answering)
 
@@ -246,7 +246,7 @@ graph TD
 | `LinkOutsideIdentityCommand` | User | Identity `ACTIVE`; no outside proof linked yet (one prover for now); the outside proof is genuine |
 | `UnlinkOutsideIdentityCommand` | User | Another proof remains afterwards — never unlinks the last way to prove |
 | `GrantSystemRoleCommand` | User | Role is a known system role; not already held |
-| `RevokeSystemRoleCommand` | User | Role held; never revokes the final steward |
+| `RevokeSystemRoleCommand` | User | Role held; never revokes the final admin |
 | `SuspendAccessCommand` | User | Identity not already `SUSPENDED`; reason recorded; ends the open session |
 | `RestoreAccessCommand` | User | Identity `SUSPENDED`; cause resolved |
 | `AnswerAccessStanding` | User (read) | Always answerable: may this person act now, with which roles, and is a session open |
@@ -275,7 +275,7 @@ graph TD
 | **Repeated failed proof suspends** | Failed-proof signal observed from the executor, past the agreed count | `SuspendAccessCommand` with reason; the count resets on a successful proof (default, needs expert confirmation) |
 | **Secret change ends the session** | `SecretChanged` | The open session ends; proving again requires the new secret |
 | **Suspension ends the session** | `AccessSuspended` | The open session ends; further proofs refused until `AccessRestored` |
-| **Last proof / last steward refusal** | `UnlinkOutsideIdentityCommand` on the final proof; `RevokeSystemRoleCommand` on the final steward | Refused as domain invariants — a person always keeps one way to prove, the system always keeps one steward |
+| **Last proof / last admin refusal** | `UnlinkOutsideIdentityCommand` on the final proof; `RevokeSystemRoleCommand` on the final admin | Refused as domain invariants — a person always keeps one way to prove, the system always keeps one admin |
 
 ### Read Models
 
@@ -304,7 +304,7 @@ graph TD
 | H3 | **One outside prover for now vs many** | One linked outside proof at most; adding a second prover later is a new mapping, not a domain change | Keeps the "at least one proof remains" invariant simple; multiplicity is an execution concern |
 | H4 | **Single open session: refuse the new sign-in or supersede the old?** | Supersede (default, needs expert confirmation): the prior session closes with reason `superseded` and the new one opens | Matches one-person-one-presence; refusal would strand legitimate re-entry |
 | H5 | **Failed-proof count: where does it live?** | Counted where executed, judged here: suspension is a domain fact on the observed signal; the count resets on successful proof (default, needs expert confirmation) | Keeps mechanics outside while the standing decision stays a domain judgment with history |
-| H6 | **Last steward: invariant or policy?** | Domain invariant: the final steward can never be revoked (locked decision) | The system must always keep one steward; policies can be overridden, invariants cannot |
+| H6 | **Last admin: invariant or policy?** | Domain invariant: the final admin can never be revoked (locked decision) | The system must always keep one admin; policies can be overridden, invariants cannot |
 | H7 | **Email change + verification: owned here or delegated to OTP + Notifications?** | Standing owned here (locked decision); delivery executed outside | The address is part of this identity, so its verified standing is judged here; only the delivery mechanics are external |
 
 ## Open Questions / Parking Lot
@@ -313,7 +313,7 @@ graph TD
 |---|----------|--------|-------|
 | 1 | Supersede vs refuse on a second sign-in — confirm supersede as the standing rule? | Open — needs product decision | Product |
 | 2 | Failed-proof threshold count and reset rule — confirm reset-on-success? | Open — needs product decision | Product |
-| 3 | Which system roles exist (beyond steward / plain person), and who may grant them? | Open | Product |
+| 3 | Which system roles exist (beyond admin / user), and who may grant them? | Open | Product |
 | 4 | Must suspension and address-change reasons be told to the person, and through which notice? | Open | Product |
 | 5 | Session presence across devices — one presence total, or one per device under a single standing? | Open — parked | Product |
 | 6 | Passwordless or further provers later — at what point does the one-prover default break? | Open — parked, revisit when a concrete driver appears | Product |

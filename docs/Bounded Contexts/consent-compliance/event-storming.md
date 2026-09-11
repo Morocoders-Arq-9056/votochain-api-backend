@@ -112,9 +112,9 @@ flowchart TB
 |---|---------|--------|-------|
 | 1 | `GrantConsent` | Record that the person consents, for one scope, under one policy version | Person |
 | 2 | `RevokeConsent` | Record that the person withdraws consent for one scope | Person |
-| 3 | `DefineRetentionPolicy` | Set how long and under what terms one data category is kept | Compliance steward |
+| 3 | `DefineRetentionPolicy` | Set how long and under what terms one data category is kept | Compliance admin |
 | 4 | `SubmitErasureRequest` | Open a Law 29733 erasure request | Person |
-| 5 | `ConfirmErasureRequest` | Confirm the request is valid and in force | Compliance steward |
+| 5 | `ConfirmErasureRequest` | Confirm the request is valid and in force | Compliance admin |
 | 6 | `CoordinateRevocation` | Ask every owning context to end use and delete its data for this person | Erasure flow (once confirmed) |
 | 7 | `RecordRevocationConfirmation` | Record one owning context's confirmation that it revoked | Owning context (Biometric, Notifications, Membership, …) |
 | 8 | `AnswerConsentState` | Answer whether processing for a scope may run now | Biometric, Notifications (gates) |

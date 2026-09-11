@@ -70,7 +70,7 @@ Source of truth per context: its `domain-model.md`. This file consolidates; it d
 |---|---|
 | **User** | A person's technical identity; exactly 1 per person; never carries membership, community, or physical identity |
 | **Session** | The proven-in standing; at most one open per `User` (supersede default) |
-| **System Role** | A global technical permission (`STEWARD / PLAIN`); distinct from community role and community administration |
+| **System Role** | A global technical permission (`ADMIN / USER`); distinct from community role and community administration |
 | **Secret** | Local proof material; this context judges proofs, never exposes material |
 | **Outside proof** | Standing vouched by the one agreed outside prover; a linked facet, not a second identity |
 | **Access standing** | `REGISTERED, ACTIVE, SUSPENDED` + session open/closed |

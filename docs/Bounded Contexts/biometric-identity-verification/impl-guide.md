@@ -21,7 +21,7 @@ src/biometric-identity-verification/
 ├── application/acl/biometric-context-facade.impl.ts
 ├── application/internal/commandservices/ (biometric, attempt)
 ├── application/internal/queryservices/biometric-query.service.impl.ts
-├── application/internal/eventhandlers/identity-verified.handler.ts
+├── application/internal/eventhandlers/identity-verified.event-handler.ts (IdentityVerifiedEventHandler)
 ├── application/internal/outboundservices/acl/ (external-consent.service.ts, external-ocr.service.ts)
 ├── application/internal/outboundservices/matching/face-matching.service.ts (puerto)
 ├── domain/model/aggregates/biometric-profile.aggregate.ts
@@ -50,13 +50,19 @@ Contrato `Enrollable` (sin esqueleto: solo `requireNotTerminal` de una línea; g
 
 ```typescript
 export interface Enrollable { enroll(): void; revoke(): void; }
-export enum ProfileStanding { ENROLLED = 'ENROLLED', REVOKED = 'REVOKED' }
+export const ProfileStanding = { ENROLLED: 'ENROLLED', REVOKED: 'REVOKED' } as const;
+export type ProfileStanding = (typeof ProfileStanding)[keyof typeof ProfileStanding];
+export function parseProfileStanding(v: string): ProfileStanding {
+  if (!(Object.values(ProfileStanding) as string[]).includes(v)) throw new Error(`invalid profile standing: ${v}`);
+  return v as ProfileStanding;
+}
+// DTOs: @IsIn(Object.values(ProfileStanding)) (nunca forma enum clásica / `as` / `@IsEnum`)
 export class BiometricProfile extends AggregateRoot {
   private constructor(private readonly _id: BiometricProfileId, private readonly _personId: PersonId,
     private _standing: ProfileStanding) { super(); }
   static enroll(i: { id: BiometricProfileId; personId: PersonId }): BiometricProfile {
     const p = new BiometricProfile(i.id, i.personId, ProfileStanding.ENROLLED);
-    p.registerEvent(new BiometricEnrolled(p._id, p._personId)); return p;
+    p.registerEvent(new BiometricEnrolledEvent(p._id, p._personId)); return p;
   }
   static rehydrate(i: { id: BiometricProfileId; personId: PersonId; standing: ProfileStanding }): BiometricProfile {
     return new BiometricProfile(i.id, i.personId, i.standing);
@@ -64,7 +70,7 @@ export class BiometricProfile extends AggregateRoot {
   revoke(): void {
     if (this._standing !== ProfileStanding.ENROLLED) throw new AttemptConcludedError('already revoked');
     this._standing = ProfileStanding.REVOKED;
-    this.registerEvent(new BiometricProfileRevoked(this._id, this._personId));
+    this.registerEvent(new BiometricProfileRevokedEvent(this._id, this._personId));
   }
   answerReferenceStanding(): { live: boolean } { return { live: this._standing === ProfileStanding.ENROLLED }; }
   get id(): BiometricProfileId { return this._id; }
@@ -88,38 +94,44 @@ export interface AttemptStandable {
 }
 
 ```typescript
-export enum AttemptStanding { CHALLENGE_OPEN = 'CHALLENGE_OPEN', LIVENESS_PASSED = 'LIVENESS_PASSED', LIVENESS_FAILED = 'LIVENESS_FAILED', COMPARISON_REQUESTED = 'COMPARISON_REQUESTED', VERIFIED = 'VERIFIED', NOT_VERIFIED = 'NOT_VERIFIED', EXPIRED = 'EXPIRED' }
+export const AttemptStanding = { CHALLENGE_OPEN: 'CHALLENGE_OPEN', LIVENESS_PASSED: 'LIVENESS_PASSED', LIVENESS_FAILED: 'LIVENESS_FAILED', COMPARISON_REQUESTED: 'COMPARISON_REQUESTED', VERIFIED: 'VERIFIED', NOT_VERIFIED: 'NOT_VERIFIED', EXPIRED: 'EXPIRED' } as const;
+export type AttemptStanding = (typeof AttemptStanding)[keyof typeof AttemptStanding];
+export function parseAttemptStanding(v: string): AttemptStanding {
+  if (!(Object.values(AttemptStanding) as string[]).includes(v)) throw new Error(`invalid attempt standing: ${v}`);
+  return v as AttemptStanding;
+}
+// DTOs: @IsIn(Object.values(AttemptStanding)) (nunca forma enum clásica / `as` / `@IsEnum`)
 export class VerificationAttempt extends AggregateRoot {
   private constructor(private readonly _id: VerificationAttemptId, private readonly _personId: PersonId,
     private readonly _profileId: BiometricProfileId, private _standing: AttemptStanding,
     private _freshness: FreshnessWindow, private _failure: FailureReason | null = null) { super(); }
   static start(i: { id: VerificationAttemptId; personId: PersonId; profileId: BiometricProfileId; freshness: FreshnessWindow }): VerificationAttempt {
     const a = new VerificationAttempt(i.id, i.personId, i.profileId, AttemptStanding.CHALLENGE_OPEN, i.freshness);
-    a.registerEvent(new LivenessChallengeStarted(a._id, a._personId)); return a;
+    a.registerEvent(new LivenessChallengeStartedEvent(a._id, a._personId)); return a;
   }
   static rehydrate(i: { id: VerificationAttemptId; personId: PersonId; profileId: BiometricProfileId; standing: AttemptStanding; freshness: FreshnessWindow; failure: FailureReason | null }): VerificationAttempt {
     return new VerificationAttempt(i.id, i.personId, i.profileId, i.standing, i.freshness, i.failure);
   }
   completeLiveness(present: boolean): void {
     this.assertStanding(AttemptStanding.CHALLENGE_OPEN);
-    if (present) { this._standing = AttemptStanding.LIVENESS_PASSED; this.registerEvent(new LivenessPassed(this._id)); }
-    else { this._standing = AttemptStanding.LIVENESS_FAILED; this.registerEvent(new LivenessFailed(this._id, FailureReason.LIVENESS_NOT_OBSERVED)); }
+    if (present) { this._standing = AttemptStanding.LIVENESS_PASSED; this.registerEvent(new LivenessPassedEvent(this._id)); }
+    else { this._standing = AttemptStanding.LIVENESS_FAILED; this.registerEvent(new LivenessFailedEvent(this._id, FailureReason.LIVENESS_NOT_OBSERVED)); }
   }
   requestComparison(profileLive: boolean): void {
     this.assertStanding(AttemptStanding.LIVENESS_PASSED);
     if (!profileLive) throw new ReferenceEndedError('reference revoked');
     this._standing = AttemptStanding.COMPARISON_REQUESTED;
-    this.registerEvent(new FaceComparisonRequested(this._id, this._profileId));
+    this.registerEvent(new FaceComparisonRequestedEvent(this._id, this._profileId));
   }
   recordVerdict(match: boolean, now: Date): void {
     this.assertStanding(AttemptStanding.COMPARISON_REQUESTED);
-    if (match) { this._standing = AttemptStanding.VERIFIED; this._freshness = this._freshness.stamp(now); this.registerEvent(new IdentityVerified(this._id, this._personId, this._freshness)); }
-    else { this._standing = AttemptStanding.NOT_VERIFIED; this._failure = FailureReason.NO_MATCH; this.registerEvent(new IdentityVerificationFailed(this._id, this._personId, this._failure)); }
+    if (match) { this._standing = AttemptStanding.VERIFIED; this._freshness = this._freshness.stamp(now); this.registerEvent(new IdentityVerifiedEvent(this._id, this._personId, this._freshness)); }
+    else { this._standing = AttemptStanding.NOT_VERIFIED; this._failure = FailureReason.NO_MATCH; this.registerEvent(new IdentityVerificationFailedEvent(this._id, this._personId, this._failure)); }
   }
   expire(reason: FailureReason): void {
     if ([AttemptStanding.VERIFIED, AttemptStanding.NOT_VERIFIED, AttemptStanding.LIVENESS_FAILED, AttemptStanding.EXPIRED].includes(this._standing)) return;
     this._standing = AttemptStanding.EXPIRED;
-    this.registerEvent(new VerificationAttemptExpired(this._id, reason));
+    this.registerEvent(new VerificationAttemptExpiredEvent(this._id, reason));
   }
   answerStanding(now: Date): { verifiedNow: boolean; reason: FailureReason | null } {
     const fresh = this._standing === AttemptStanding.VERIFIED && !this._freshness.isElapsed(now);
@@ -139,7 +151,7 @@ export class VerificationAttempt extends AggregateRoot {
 | `FreshnessWindow(durationMin)` + `stamp(now)` + `isElapsed(now)` | Un veredicto autoriza una autorización, luego caduca (default) |
 | `LivenessOutcome` (`PRESENT/ABSENT`) | Decidido una vez, nunca revisado |
 | `FailureReason` (`LIVENESS_NOT_OBSERVED, NO_MATCH, REFERENCE_ENDED, ATTEMPT_EXPIRED, CONSENT_WITHDRAWN`) | Sin detalles de comparación |
-| `ProfileStanding` / `AttemptStanding` (enum + `parseX()`) | Sin `as` |
+| `ProfileStanding` / `AttemptStanding` (as const + type union + `parseX()` vía `Object.values`, `@IsIn(Object.values(...))` en DTOs, nunca forma enum clásica/`as`/`@IsEnum`) | Sin `as` |
 
 ### 2.4 Commands / Queries / Excepciones
 
@@ -156,7 +168,7 @@ Pasos intermedios UC2 (liveness outcome, comparación, veredicto) se observan de
 
 ### 2.5 Eventos (9)
 
-`BiometricEnrolled` · `LivenessChallengeStarted` · `LivenessPassed` · `LivenessFailed` (reason) · `FaceComparisonRequested` · `IdentityVerified` (freshness) · `IdentityVerificationFailed` (reason) · `VerificationAttemptExpired` (reason) · `BiometricProfileRevoked`. Clases con `eventName` estático y VOs tipados.
+`BiometricEnrolledEvent` · `LivenessChallengeStartedEvent` · `LivenessPassedEvent` · `LivenessFailedEvent` (reason) · `FaceComparisonRequestedEvent` · `IdentityVerifiedEvent` (freshness) · `IdentityVerificationFailedEvent` (reason) · `VerificationAttemptExpiredEvent` (reason) · `BiometricProfileRevokedEvent`. Clases con `eventName` estático (wire inalterado `'BiometricEnrolled'`, `'LivenessChallengeStarted'`, `'LivenessPassed'`, `'LivenessFailed'`, `'FaceComparisonRequested'`, `'IdentityVerified'`, `'IdentityVerificationFailed'`, `'VerificationAttemptExpired'`, `'BiometricProfileRevoked'`) y VOs tipados.
 
 ### 2.6 Servicios de dominio
 
@@ -276,7 +288,7 @@ export interface FaceMatchingService { judgesMatch(attemptId: string): Promise<b
 
 ### 3.4 Handlers + 3.5 Facade ACL
 
-`IdentityVerifiedHandler` (`@OnEvent` in-module) llama al facade de Voting vía ACL (R3) — nunca `@OnEvent` cross-module. `BiometricContextFacadeImpl`: `answerVerifiedNow(personId, nowIso)` (Voting, primitivas en el borde) + confirmación de revocación hacia Consent.
+`IdentityVerifiedEventHandler` (`identity-verified.event-handler.ts`, `@OnEvent(IdentityVerifiedEvent.eventName)` in-module) llama al facade de Voting vía ACL (R3) — nunca `@OnEvent` cross-module. `BiometricContextFacadeImpl`: `answerVerifiedNow(personId, nowIso)` (Voting, primitivas en el borde) + confirmación de revocación hacia Consent.
 
 ---
 
@@ -381,7 +393,7 @@ CREATE INDEX ix_attempt_person ON biometric.attempts (person_id, standing);
 ## 7. Flujos CQRS por Caso de Uso
 **UC1 Enroll:** consent? → `consumeUsableMatch` (R7, una vez) → `findLive` (existe → 409) → `enroll()` → `save` → publish.
 **UC2 VerifyIdentity (anchor):** `consent→reference→start→completeLiveness→requestComparison→recordVerdict`: `start` → `Passed/Failed` (failed terminal) → comparación solo tras `LIVENESS_PASSED` → veredicto binario congelado → publish post-commit.
-**UC3/UC4/UC5:** `answerStanding(now)` (solo fresco autoriza, R3); sweep `expire`; erasure → `revoke()` + `expire(REFERENCE_ENDED)` por abierto → `BiometricProfileRevoked`; re-enroll = nueva identidad.
+**UC3/UC4/UC5:** `answerStanding(now)` (solo fresco autoriza, R3); sweep `expire`; erasure → `revoke()` + `expire(REFERENCE_ENDED)` por abierto → `BiometricProfileRevokedEvent`; re-enroll = nueva identidad.
 
 ---
 
@@ -391,7 +403,7 @@ CREATE INDEX ix_attempt_person ON biometric.attempts (person_id, standing);
 | Dirección | Relación | Mecanismo |
 |:--|:--|:--|
 | Biometric → Voting (R3) | `answerVerifiedNow` (UC3) | ACL síncrona; solo `VERIFIED` fresco autoriza |
-| Biometric → Consent | `BiometricProfileRevoked` | Confirma erasure; revocación cierra abiertos |
+| Biometric → Consent | `BiometricProfileRevokedEvent` | Confirma erasure; revocación cierra abiertos |
 | OCR → Biometric (R7 Customer/Supplier) | `consumeUsableMatch` (UC1) | Single-use `MATCH` siembra referencia; nada image-like cruza |
 | Consent → Biometric | `biometricConsentStands` | Gate UC1/UC2; `ConsentRequired` |
 | IAM → Biometric | Existencia persona | Referencia por identidad |
@@ -421,9 +433,12 @@ CREATE INDEX ix_attempt_person ON biometric.attempts (person_id, standing);
 | D2 | Alta | Comparación sin liveness | `requestComparison` exige `LIVENESS_PASSED` (`LivenessRequired`) |
 | D3 | Media | Imágenes en referencia/eventos | Prohibidas; solo standing/veredicto/frescura |
 | D4 | Media | Umbral del vendor como veredicto | Vendor reporta score; BC juzga boolean contra umbral propio |
-| D5 | Media | `as` cast de standings | Parsers explícitos en assemblers |
+| D5 | Media | `as` cast de standings | Parsers explícitos vía `Object.values()` en assemblers; enums como `as const` + `@IsIn(Object.values(...))` |
 | D6 | Baja | Publish dentro de UoW | Publish tras `run()` resuelto |
 | D7 | Baja | Composite entre Profile/Attempts | No aplica: ID-refs correctas (`profileId` por valor), ritmos distintos, nada que componer |
+| V1.0.7 | Baja | Naming v1.0.7: forma enum clásica / `in` / `@IsEnum`, eventos sin sufijo `Event`, handlers `<Stem>Handler` / `*.handler.ts` | Enums como `as const` + `type` union + `parseX()` vía `Object.values()` + `@IsIn(Object.values(X))`; eventos con sufijo `Event` (wire `eventName` inalterado, sin doble sufijo); handlers `IdentityVerifiedEventHandler` en `*.event-handler.ts` con `@OnEvent(XEvent.eventName)`; comandos Biometric UNCHANGED |
+
+> **Project override (v1.0.7):** sufijo `Event` en TODOS los eventos (no solo en colisión); wire `eventName='X'` inalterado (fix-back tras replaceAll, evitar doble sufijo).
 
 **Preguntas abiertas (no bloqueantes):** frontera exacta raw-images (producto+legal); ventana de frescura (default: una autorización); disciplina de fallos/pausas; detalle de scrutiny (score, versión umbral); referencia global vs por comunidad (default: una por persona).
 

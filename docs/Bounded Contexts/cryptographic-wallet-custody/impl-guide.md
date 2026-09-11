@@ -47,7 +47,7 @@ src/cryptographic-wallet-custody/
 │   │   ├── aggregates/user-wallet.aggregate.ts
 │   │   ├── valueobjects/ (user-wallet-id, person-id, derivation-position)
 │   │   ├── commands/ (provision, sign-vote-content, rotate, suspend, retire)
-│   │   ├── queries/ (get-signing-capability-by-person, get-stewardship-history-by-wallet)
+│   │   ├── queries/ (get-signing-capability-by-person, get-adminship-history-by-wallet)
 │   │   └── events/ (6 hechos: provisioned, reconstructed, forgotten, rotated, suspended, retired)
 │   ├── services/ (wallet-command.service.ts, wallet-query.service.ts + tokens)
 │   ├── repositories/wallet.repository.ts      # + WALLET_REPOSITORY
@@ -75,7 +75,7 @@ export interface Signable { reconstructForSigning(contentRef: SignedContentRef):
 export interface CustodyStandable { rotate(newPosition: DerivationPosition): UserWallet; suspend(reason: string): void; retire(): void; }
 ```
 
-`UserWallet implements Signable, CustodyStandable`. Sin esqueleto: el par transitorio (`reconstructForSigning`/`forget`) es unico — abre un solo `openFor` y lo cierra; el resto es trivialmente distinto (cada metodo cambia `standing`/`position` y registra su hecho). `WalletStanding` (`PROVISIONED | SIGNING_OPEN | ROTATED | SUSPENDED | RETIRED`) vive en dominio con `parseWalletStanding()`.
+`UserWallet implements Signable, CustodyStandable`. Sin esqueleto: el par transitorio (`reconstructForSigning`/`forget`) es unico — abre un solo `openFor` y lo cierra; el resto es trivialmente distinto (cada metodo cambia `standing`/`position` y registra su hecho). `WalletStanding` (`PROVISIONED | SIGNING_OPEN | ROTATED | SUSPENDED | RETIRED`) como `as const` + `type` union, con `parseWalletStanding()` vía `Object.values()` y `@IsIn(Object.values(WalletStanding))` en DTOs (nunca forma enum clásica / `as` / `@IsEnum`).
 
 ### 2.1 Aggregate Root: `UserWallet`
 
@@ -86,22 +86,24 @@ import { AggregateRoot } from '../../../../shared/domain/model/aggregate-root';
 import { UserWalletId } from '../valueobjects/user-wallet-id.value-object';
 import { PersonId } from '../valueobjects/person-id.value-object';
 import { DerivationPosition } from '../valueobjects/derivation-position.value-object';
-import { WalletProvisioned } from '../events/wallet-provisioned.event';
-import { KeyReconstructed } from '../events/key-reconstructed.event';
-import { KeyForgotten } from '../events/key-forgotten.event';
-import { WalletRotated } from '../events/wallet-rotated.event';
-import { WalletSuspended } from '../events/wallet-suspended.event';
-import { WalletRetired } from '../events/wallet-retired.event';
-export enum WalletStanding { PROVISIONED = 'PROVISIONED', SIGNING_OPEN = 'SIGNING_OPEN', ROTATED = 'ROTATED', SUSPENDED = 'SUSPENDED', RETIRED = 'RETIRED' }
+import { WalletProvisionedEvent } from '../events/wallet-provisioned.event';
+import { KeyReconstructedEvent } from '../events/key-reconstructed.event';
+import { KeyForgottenEvent } from '../events/key-forgotten.event';
+import { WalletRotatedEvent } from '../events/wallet-rotated.event';
+import { WalletSuspendedEvent } from '../events/wallet-suspended.event';
+import { WalletRetiredEvent } from '../events/wallet-retired.event';
+export const WalletStanding = { PROVISIONED: 'PROVISIONED', SIGNING_OPEN: 'SIGNING_OPEN', ROTATED: 'ROTATED', SUSPENDED: 'SUSPENDED', RETIRED: 'RETIRED' } as const;
+export type WalletStanding = (typeof WalletStanding)[keyof typeof WalletStanding];
 export function parseWalletStanding(v: string): WalletStanding {
-  if (!(v in WalletStanding)) throw new Error(`invalid wallet standing: ${v}`);
-  return WalletStanding[v as keyof typeof WalletStanding];
+  if (!(Object.values(WalletStanding) as string[]).includes(v)) throw new Error(`invalid wallet standing: ${v}`);
+  return v as WalletStanding;
 }
+// DTOs: @IsIn(Object.values(WalletStanding)) (nunca forma enum clásica / `@IsEnum` / `as`)
 export class UserWallet extends AggregateRoot {
   private constructor(private readonly _id: UserWalletId, private readonly _personId: PersonId, private _position: DerivationPosition, private _standing: WalletStanding, private _openFor: SignedContentRef | null) { super(); }
   static provision(id: UserWalletId, personId: PersonId, position: DerivationPosition): UserWallet {
     const w = new UserWallet(id, personId, position, WalletStanding.PROVISIONED, null);
-    w.registerEvent(new WalletProvisioned(id, personId, position));
+    w.registerEvent(new WalletProvisionedEvent(id, personId, position));
     return w;
   }
   static rehydrate(id: UserWalletId, personId: PersonId, position: DerivationPosition, standing: WalletStanding, openFor: SignedContentRef | null): UserWallet {
@@ -114,33 +116,33 @@ export class UserWallet extends AggregateRoot {
     if (this._openFor !== null) throw new IllegalWalletStateError('ReconstructionAlreadyOpen');
     this._standing = WalletStanding.SIGNING_OPEN;
     this._openFor = contentRef;
-    this.registerEvent(new KeyReconstructed(this._id, contentRef));
+    this.registerEvent(new KeyReconstructedEvent(this._id, contentRef));
   }
   forget(): void {
     if (this._standing !== WalletStanding.SIGNING_OPEN) throw new IllegalWalletStateError('nothing open to forget');
     const ref = this._openFor!;
     this._openFor = null;
     this._standing = WalletStanding.PROVISIONED;
-    this.registerEvent(new KeyForgotten(this._id, ref));
+    this.registerEvent(new KeyForgottenEvent(this._id, ref));
   }
   /** Rota a una posicion fresca: esta capacidad queda ROTATED (su posicion nunca vuelve a firmar) y nace la capacidad sucesora en PROVISIONED. El servicio salva ambas en el mismo UoW. */
   rotate(newPosition: DerivationPosition): UserWallet {
     if (this._standing !== WalletStanding.PROVISIONED) throw new IllegalWalletStateError('RotationNotAllowed');
     if (this._openFor !== null) throw new IllegalWalletStateError('ReconstructionOpen');
     this._standing = WalletStanding.ROTATED;
-    this.registerEvent(new WalletRotated(this._id, this._position, newPosition));
+    this.registerEvent(new WalletRotatedEvent(this._id, this._position, newPosition));
     return UserWallet.provision(UserWalletId.generate(), this._personId, newPosition);
   }
   suspend(reason: string): void {
     if (this._standing !== WalletStanding.PROVISIONED) throw new IllegalWalletStateError('suspend only from PROVISIONED');
     this._standing = WalletStanding.SUSPENDED;
-    this.registerEvent(new WalletSuspended(this._id, reason));
+    this.registerEvent(new WalletSuspendedEvent(this._id, reason));
   }
   retire(): void {
     if (this._standing === WalletStanding.RETIRED) throw new IllegalWalletStateError('WalletConcluded');
     this._standing = WalletStanding.RETIRED;
     this._openFor = null;
-    this.registerEvent(new WalletRetired(this._id, this._personId));
+    this.registerEvent(new WalletRetiredEvent(this._id, this._personId));
   }
   answerCapability(): { maySign: boolean; walletId: string; position: number } {
     return { maySign: this._standing === WalletStanding.PROVISIONED, walletId: this._id.value, position: this._position.value };
@@ -156,11 +158,11 @@ export class UserWallet extends AggregateRoot {
 
 ### 2.3 Commands / Queries
 
-`ProvisionWalletCommand(personId)`, `SignVoteContentCommand(walletId, contentRef)`, `RotateWalletCommand(walletId, newPosition)`, `SuspendWalletCommand`, `RetireWalletCommand` — clases planas que validan en el constructor. Queries: `GetSigningCapabilityByPersonQuery` y `GetStewardshipHistoryByWalletQuery`.
+`ProvisionWalletCommand(personId)`, `SignVoteContentCommand(walletId, contentRef)`, `RotateWalletCommand(walletId, newPosition)`, `SuspendWalletCommand`, `RetireWalletCommand` — clases planas que validan en el constructor. Queries: `GetSigningCapabilityByPersonQuery` y `GetAdminshipHistoryByWalletQuery`.
 
 ### 2.4 Domain Events (6)
 
-`WalletProvisioned | KeyReconstructed | KeyForgotten | WalletRotated | WalletSuspended | WalletRetired` — clases en `domain/model/events/`, `implements DomainEvent`, con `static eventName` y payload tipado con VOs (nunca strings pelados para identidad de negocio).
+`WalletProvisionedEvent | KeyReconstructedEvent | KeyForgottenEvent | WalletRotatedEvent | WalletSuspendedEvent | WalletRetiredEvent` — clases en `domain/model/events/`, `implements DomainEvent`, con `static eventName` (wire inalterado `'WalletProvisioned'`, `'KeyReconstructed'`, `'KeyForgotten'`, `'WalletRotated'`, `'WalletSuspended'`, `'WalletRetired'`) y payload tipado con VOs (nunca strings pelados para identidad de negocio).
 
 ### 2.5 Puertos de dominio
 
@@ -176,7 +178,7 @@ export interface WalletCommandService {
 export const WALLET_QUERY_SERVICE = Symbol('WALLET_QUERY_SERVICE');
 export interface WalletQueryService {
   getCapabilityByPerson(q: GetSigningCapabilityByPersonQuery): Promise<{ maySign: boolean; walletId: string; position: number }>;
-  getHistoryByWallet(q: GetStewardshipHistoryByWalletQuery): Promise<StewardshipEntry[]>;
+  getHistoryByWallet(q: GetAdminshipHistoryByWalletQuery): Promise<AdminshipEntry[]>;
 }
 export const WALLET_REPOSITORY = Symbol('WALLET_REPOSITORY');
 export interface WalletRepository {
@@ -203,7 +205,7 @@ export class WalletCommandServiceImpl implements WalletCommandService {
   async signContent(cmd: SignVoteContentCommand): Promise<string> {
     const wallet = await this.uow.run(async () => {
       const w = (await this.wallets.findById(cmd.walletId)) ?? (() => { throw new CapabilityNotFoundError(cmd.walletId.value); })();
-      w.reconstructForSigning(cmd.contentRef); // KeyReconstructed
+      w.reconstructForSigning(cmd.contentRef); // KeyReconstructedEvent
       await this.wallets.save(w);
       return w;
     });
@@ -216,7 +218,7 @@ export class WalletCommandServiceImpl implements WalletCommandService {
         if (w.standing === WalletStanding.SIGNING_OPEN) { w.forget(); await this.wallets.save(w); }
         return w;
       });
-      this.publish(closed); // KeyForgotten — siempre, aun si sign fallo
+      this.publish(closed); // KeyForgottenEvent — siempre, aun si sign fallo
     }
     this.publish(wallet);
     return signed!;
@@ -245,7 +247,7 @@ export interface KeyCustodyService {
 
 ### 3.4 Event handler y ACL publicada
 
-`WalletEventLogger` — `@OnEvent(...)` solo log, nunca suscrito desde otro modulo (bus global sin aislamiento). `WalletContextFacadeImpl` expone `sign(contentRef)` + `answerCapability(personId)`; Voting la consume via `ExternalWalletService`. Handler `Retired → Consent`: `@OnEvent(WalletRetired.eventName, { async: true })` en modulo propio, inyecta `ExternalConsentService.notifyRetired()` (ACL → `CONSENT_CONTEXT_FACADE`), con `try/catch` (fallo de aviso no revierte el `retire` ya commiteado; log + reintento de transporte, nunca re-apertura del agregado). Ciclo Wallet↔Consent (Consent coordina `retire`, Wallet confirma): `forwardRef(() => ConsentModule)` en ambos lados.
+`WalletEventLogger` — `@OnEvent(...)` solo log, nunca suscrito desde otro modulo (bus global sin aislamiento; exento de renombre `*EventHandler`, se mantiene + nota). `WalletContextFacadeImpl` expone `sign(contentRef)` + `answerCapability(personId)`; Voting la consume via `ExternalWalletService`. Handler `Retired → Consent`: `@OnEvent(WalletRetiredEvent.eventName, { async: true })` en modulo propio, inyecta `ExternalConsentService.notifyRetired()` (ACL → `CONSENT_CONTEXT_FACADE`), con `try/catch` (fallo de aviso no revierte el `retire` ya commiteado; log + reintento de transporte, nunca re-apertura del agregado). Ciclo Wallet↔Consent (Consent coordina `retire`, Wallet confirma): `forwardRef(() => ConsentModule)` en ambos lados.
 
 ---
 
@@ -345,9 +347,9 @@ POST /api/v1/wallets/:id/sign { contentRef }
  -> publish tras cada commit (emit tras run resuelto) -> 200 { signedContent }
 ```
 
-### 7.2 UC1 Provision / UC4-6 Stewardship
+### 7.2 UC1 Provision / UC4-6 Adminship
 
-`provision`: `ExternalIamService.personExists()` → `existsPosition()` → `UserWallet.provision()` → save → `WalletProvisioned` post-commit. `rotate`: cargar → `rotate(newPosition)` (esta queda `ROTATED`) + `save` de la sucesora `PROVISIONED` en el mismo UoW → publicar ambos post-commit. `suspend/retire`: cargar → metodo del agregado → save → publicar post-commit. UC6 sin comando externo de persona: lo dispara el hecho de coordinacion de Consent & Compliance.
+`provision`: `ExternalIamService.personExists()` → `existsPosition()` → `UserWallet.provision()` → save → `WalletProvisionedEvent` post-commit. `rotate`: cargar → `rotate(newPosition)` (esta queda `ROTATED`) + `save` de la sucesora `PROVISIONED` en el mismo UoW → publicar ambos post-commit. `suspend/retire`: cargar → metodo del agregado → save → publicar post-commit. UC6 sin comando externo de persona: lo dispara el hecho de coordinacion de Consent & Compliance.
 
 ---
 
@@ -360,9 +362,9 @@ POST /api/v1/wallets/:id/sign { contentRef }
 | Voting → Wallet (R4) | Customer/Supplier (Voting cliente) | `ExternalWalletService` consume `WALLET_CONTEXT_FACADE.sign()`; un contenido cruza, nada firmable cruza |
 | Wallet ⋮ Relay (R6) | **Separate Ways** | Sin integracion directa. Firmante firma, pagador paga; se encuentran solo en el flujo de Voting |
 | IAM → Wallet | Referencia identidad | `ExternalIamService.personExists()` en UC1 |
-| Consent → Wallet | Coordinacion | Hecho de erasure dispara `retire()`; `WalletRetired` confirma la parte propia |
+| Consent → Wallet | Coordinacion | Hecho de erasure dispara `retire()`; `WalletRetiredEvent` confirma la parte propia |
 
-Handler interno ante `WalletRetired`: notifica a Consent via su fachada (llamada ACL en proceso, no `@OnEvent` cross-modulo).
+Handler interno ante `WalletRetiredEvent`: notifica a Consent via su fachada (llamada ACL en proceso, no `@OnEvent` cross-modulo).
 
 ---
 
@@ -391,9 +393,12 @@ Handler interno ante `WalletRetired`: notifica a Consent via su fachada (llamada
 | D2 | Alta | `SIGNING_OPEN` como segundo agregado/entidad | Rechazado: `openFor` es campo del agregado; atomicidad intacta |
 | D3 | Media | Fachada tipada con VOs del consumidor | Primitivos; traduccion en `ExternalWalletService` |
 | D4 | Media | Publicar eventos dentro de `uow.run()` | Solo tras `run()` resuelto (post-commit) |
-| D5 | Media | `@OnEvent(KeyReconstructed)` consumido desde Voting | Prohibido: Voting llama la fachada; handler solo interno |
-| D6 | Baja | Cast `as` en assembler | `parseWalletStanding()` explicito |
-| D7 | Baja | Composite para capability + stewardship | No Composite (Inv.5): `answerCapability()` retorna DTO pull, historial por ID-refs, sin arbol de objetos |
+| D5 | Media | `@OnEvent(KeyReconstructedEvent.eventName)` consumido desde Voting | Prohibido: Voting llama la fachada; handler solo interno |
+| D6 | Baja | Cast `as` en assembler | `parseWalletStanding()` vía `Object.values()` explícito; enum como `as const` + `@IsIn(Object.values(...))` |
+| D7 | Baja | Composite para capability + adminship | No Composite (Inv.5): `answerCapability()` retorna DTO pull, historial por ID-refs, sin arbol de objetos |
+| V1.0.7 | Baja | Naming v1.0.7: forma enum clásica / `in` / `@IsEnum`, eventos sin sufijo `Event` | Enums como `as const` + `type` union + `parseX()` vía `Object.values()` + `@IsIn(Object.values(X))`; eventos con sufijo `Event` (wire `eventName` inalterado, sin doble sufijo); `WalletEventLogger` exento (se mantiene + nota); `@OnEvent(XEvent.eventName)`; comandos Wallet UNCHANGED |
+
+> **Project override (v1.0.7):** sufijo `Event` en TODOS los eventos (no solo en colisión); wire `eventName='X'` inalterado (fix-back tras replaceAll, evitar doble sufijo); `WalletEventLogger` exento.
 
 ### Decisiones de diseno
 

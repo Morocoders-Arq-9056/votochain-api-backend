@@ -56,7 +56,7 @@ confused with the aggregate operations in `domain-model.md`, which are internal.
 
 | Command | Carries | Handled By |
 |---------|---------|------------|
-| `AcceptForDeliveryCommand` | signed content reference, payer reference | UC1 |
+| `AcceptDeliveryOrderCommand` | signed content reference, payer reference | UC1 |
 
 UC2's steps are triggered by the context's own flow and by observed ledger outcomes
 (recorded via `recordSending()`, `recordConfirmation()`, `recordFailure()`), not by

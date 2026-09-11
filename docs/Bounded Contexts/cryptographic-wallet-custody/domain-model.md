@@ -159,7 +159,7 @@ stateDiagram-v2
 | Need | Returns |
 |------|---------|
 | Signing capability | Whether the person may sign now, and with which capability |
-| Stewardship history (scrutiny) | Provisioning, rotations, suspensions, and retirement behind a past signature |
+| Adminship history (scrutiny) | Provisioning, rotations, suspensions, and retirement behind a past signature |
 
 ---
 

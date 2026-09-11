@@ -47,7 +47,7 @@ src/iam/
 │       ├── queryservices/
 │       │   └── user-query.service.impl.ts
 │       ├── eventhandlers/
-│       │   └── user-event-logger.ts    # @OnEvent internos, solo log
+│   │   └── user-event-logger.ts    # @OnEvent internos, solo log (exempt logger)
 │       └── outboundservices/
 │           ├── proof/
 │           │   └── proof-verification.service.ts        # port + token
@@ -95,9 +95,12 @@ Single aggregate. Session is a standing facet (open/closed, at most one open), o
 
 ```typescript
 import { AggregateRoot } from '../../../../shared/domain/model/aggregate-root';
-export enum AccessStanding { REGISTERED = 'REGISTERED', ACTIVE = 'ACTIVE', SUSPENDED = 'SUSPENDED' }
-export enum SessionStanding { CLOSED = 'SESSION_CLOSED', OPEN = 'SESSION_OPEN' }
-export enum SignOutReason { ASKED = 'ASKED', SUPERSEDED = 'SUPERSEDED', PROOF_CHANGED = 'PROOF_CHANGED', SUSPENDED = 'SUSPENDED' }
+export const AccessStanding = { REGISTERED: 'REGISTERED', ACTIVE: 'ACTIVE', SUSPENDED: 'SUSPENDED' } as const;
+export type AccessStanding = typeof AccessStanding[keyof typeof AccessStanding];
+export const SessionStanding = { CLOSED: 'SESSION_CLOSED', OPEN: 'SESSION_OPEN' } as const;
+export type SessionStanding = typeof SessionStanding[keyof typeof SessionStanding];
+export const SignOutReason = { ASKED: 'ASKED', SUPERSEDED: 'SUPERSEDED', PROOF_CHANGED: 'PROOF_CHANGED', SUSPENDED: 'SUSPENDED' } as const;
+export type SignOutReason = typeof SignOutReason[keyof typeof SignOutReason];
 
 /** Template+State por composicion: User extiende AggregateRoot e implementa AccessStandable; sin clase base intermedia. */
 export interface AccessStandable {
@@ -116,12 +119,12 @@ export class User extends AggregateRoot implements AccessStandable {
     private _outsideProver: OutsideProverRef | null,
   ) { super(); }
 
-  /** Creates a brand-new identity. Always REGISTERED; always raises UserSignedUp. */
+  /** Creates a brand-new identity. Always REGISTERED; always raises UserSignedUpEvent. */
   static signup(input: { personId: PersonId; contact: ContactAddress }): User {
     const user = new User(UserId.generate(), input.personId,
       AccessStanding.REGISTERED, SessionStanding.CLOSED,
-      input.contact, [new SystemRole('PLAIN')], null);
-    user.registerEvent(new UserSignedUp(user._id, user._personId, user._contact));
+      input.contact, [new SystemRole('USER')], null);
+    user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
     return user;
   }
 
@@ -144,15 +147,15 @@ export class User extends AggregateRoot implements AccessStandable {
   private tearDownSession(reason: SignOutReason): void {
     if (this._session !== SessionStanding.OPEN) return;
     this._session = SessionStanding.CLOSED;
-    this.registerEvent(new UserSignedOut(this._id, this._personId, reason) as never);
+    this.registerEvent(new UserSignedOutEvent(this._id, this._personId, reason) as never);
   }
 
   signIn(kind: ProofKind): void {
     if (this._standing !== AccessStanding.ACTIVE) throw new SuspendedRefusedError('not active');
     if (this._session === SessionStanding.OPEN)
-      this.registerEvent(new UserSignedOut(this._id, this._personId, SignOutReason.SUPERSEDED));
+      this.registerEvent(new UserSignedOutEvent(this._id, this._personId, SignOutReason.SUPERSEDED));
     this._session = SessionStanding.OPEN;
-    this.registerEvent(new UserSignedIn(this._id, this._personId, kind));
+    this.registerEvent(new UserSignedInEvent(this._id, this._personId, kind));
   }
 
   signOut(): void {
@@ -163,17 +166,17 @@ export class User extends AggregateRoot implements AccessStandable {
   changeSecret(): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     this.tearDownSession(SignOutReason.PROOF_CHANGED);
-    this.registerEvent(new SecretChanged(this._id));
+    this.registerEvent(new SecretChangedEvent(this._id));
   }
 
   suspend(reason: string): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new IllegalUserStateError('already suspended');
-    this.applyStandingTransition(this._standing, AccessStanding.SUSPENDED, new AccessSuspended(this._id, reason));
+    this.applyStandingTransition(this._standing, AccessStanding.SUSPENDED, new AccessSuspendedEvent(this._id, reason));
     this.tearDownSession(SignOutReason.SUSPENDED);
   }
 
   restore(): void {
-    this.applyStandingTransition(AccessStanding.SUSPENDED, AccessStanding.ACTIVE, new AccessRestored(this._id));
+    this.applyStandingTransition(AccessStanding.SUSPENDED, AccessStanding.ACTIVE, new AccessRestoredEvent(this._id));
   }
   // changeEmail(), verifyEmail(), link/unlinkOutsideIdentity(), grant/revokeSystemRole(), answerAccessStanding() igual forma.
 }
@@ -186,7 +189,7 @@ export function parseAccessStanding(v: string): AccessStanding { /* explicit par
 |:--|:--|:--|
 | `UserId` / `PersonId` | `private ctor + of() + generate()` (`usr-` / `per-` prefix) | Never interchangeable; `equals()` by value |
 | `ContactAddress` | `{ email, verified }` immutable class | `change()` → new unverified; `verify()` flips standing |
-| `SystemRole` | `{ value: STEWARD \| PLAIN }` | Set never leaves system without a steward (invariant 4) |
+| `SystemRole` | `{ value: ADMIN \| USER }` | Set never leaves system without a admin (invariant 4) |
 | `ProofKind` | enum `LOCAL \| OUTSIDE` | Recorded on sign-in fact |
 | `OutsideProverRef` | `{ prover: 'auth0' }` class, `of()` validated | At most one linked; Auth0 is the single agreed prover |
 
@@ -212,11 +215,11 @@ export class UserId {
 
 ### 2.5 Domain Exceptions (rejections)
 
-`AlreadyRegisteredError`, `ProofNotHeldError`, `SuspendedRefusedError`, `NoOpenSessionError`, `LastProofRefusedError`, `LastStewardRefusedError`, `OutsideProofAlreadyLinkedError`, `AddressAlreadyHeldError`, `RoleAlreadyHeldError/RoleNotHeldError` — all `Error` subclasses with `Object.setPrototypeOf`.
+`AlreadyRegisteredError`, `ProofNotHeldError`, `SuspendedRefusedError`, `NoOpenSessionError`, `LastProofRefusedError`, `LastAdminRefusedError`, `OutsideProofAlreadyLinkedError`, `AddressAlreadyHeldError`, `RoleAlreadyHeldError/RoleNotHeldError` — all `Error` subclasses with `Object.setPrototypeOf`.
 
 ### 2.6 Domain Events (12)
 
-`UserSignedUp`, `UserSignedIn`, `UserSignedOut(reason)`, `SecretChanged`, `EmailChanged`, `EmailVerified`, `OutsideIdentityLinked`, `OutsideIdentityUnlinked`, `SystemRoleGranted`, `SystemRoleRevoked`, `AccessSuspended`, `AccessRestored` — each `implements DomainEvent` with `static eventName`.
+`UserSignedUpEvent`, `UserSignedInEvent`, `UserSignedOutEvent(reason)`, `SecretChangedEvent`, `EmailChangedEvent`, `EmailVerifiedEvent`, `OutsideIdentityLinkedEvent`, `OutsideIdentityUnlinkedEvent`, `SystemRoleGrantedEvent`, `SystemRoleRevokedEvent`, `AccessSuspendedEvent`, `AccessRestoredEvent` — each `implements DomainEvent` with `static eventName`.
 
 ### 2.7 Domain Services (ports)
 
@@ -297,9 +300,9 @@ export interface SessionArtifactService {
 
 | Evento | Reaccion |
 |:--|:--|
-| `UserSignedUp` / `SecretChanged` / `EmailChanged` / `AccessSuspended` / `AccessRestored` | facade `ExternalNotificationsService` (welcome/security/suspension) |
-| `UserSignedIn` / `UserSignedOut` | `session-artifact` `issue()` / `end(reason)` via ejecutor + standing/history |
-| `EmailVerified` / `SystemRoleGranted` / `SystemRoleRevoked` | standing/history (lecturas `answerAccessStanding/getRoles`) |
+| `UserSignedUpEvent` / `SecretChangedEvent` / `EmailChangedEvent` / `AccessSuspendedEvent` / `AccessRestoredEvent` | facade `ExternalNotificationsService` (welcome/security/suspension) |
+| `UserSignedInEvent` / `UserSignedOutEvent` | `session-artifact` `issue()` / `end(reason)` via ejecutor + standing/history |
+| `EmailVerifiedEvent` / `SystemRoleGrantedEvent` / `SystemRoleRevokedEvent` | standing/history (lecturas `answerAccessStanding/getRoles`) |
 
 ### 3.5 ACL Facade (application)
 
@@ -346,7 +349,7 @@ export class UserRepositoryImpl implements UserRepository {
 
 ### 4.4 Auth0 adapter (Strategy real) + Fake para tests
 
-`infrastructure/auth0/auth0-proof.adapter.ts` implementa `ProofVerificationService` (Auth0 verifica, IAM juzga + historiza). Swap en providers con una linea (`useClass: Auth0ProofAdapter` ↔ `FakeProofVerificationService`); en tests `overrideProvider(PROOF_VERIFICATION_SERVICE)`. Session artifact adapter instruye al ejecutor externo ante `UserSignedIn/Out`.
+`infrastructure/auth0/auth0-proof.adapter.ts` implementa `ProofVerificationService` (Auth0 verifica, IAM juzga + historiza). Swap en providers con una linea (`useClass: Auth0ProofAdapter` ↔ `FakeProofVerificationService`); en tests `overrideProvider(PROOF_VERIFICATION_SERVICE)`. Session artifact adapter instruye al ejecutor externo ante `UserSignedInEvent/Out`.
 
 ---
 
@@ -424,9 +427,9 @@ POST /api/v1/iam/users/signup { personId, email }
  -> ValidationPipe -> SignupCommandFromResourceAssembler.toCommand()
  -> UserCommandServiceImpl.signup() inside UNIT_OF_WORK.run()
      -> users.findByPersonId() == null else AlreadyRegisteredError
-     -> User.signup({ personId, contact }) -> registerEvent(UserSignedUp)
+     -> User.signup({ personId, contact }) -> registerEvent(UserSignedUpEvent)
      -> users.save(user)
- -> after commit: emit(UserSignedUp) -> logger + ExternalNotificationsService.welcome()
+ -> after commit: emit(UserSignedUpEvent) -> logger + ExternalNotificationsService.welcome()
  -> 201 + UserResource
 ```
 
@@ -438,7 +441,7 @@ POST /api/v1/iam/users/signin { userId, proofKind }
      -> findById() else UserNotFoundError
      -> standing ACTIVE? else SuspendedRefusedError
      -> proofs.holds() (Auth0 executor verdict, observed never performed)
-     -> user.signIn(kind): supersede -> UserSignedOut(SUPERSEDED)? + UserSignedIn
+     -> user.signIn(kind): supersede -> UserSignedOutEvent(SUPERSEDED)? + UserSignedInEvent
      -> users.save(user)
   -> after commit: emit both events -> session-artifact.issue() via executor
 Concurrency: racing sign-ins serialize; later wins, earlier closes SUPERSEDED.
@@ -451,7 +454,7 @@ Fan-out Observer (ver §3.4): publish() solo tras commit; `@OnEvent` in-module; 
 
 ## 8. Integracion con otros BCs
 
-- **R9 Verification OTP → IAM (UC6):** `ChallengeConfirmed` observed via in-module `@OnEvent` handler → `ExternalVerificationService` ACL call returns primitives → `VerifyEmailCommand` records `EmailVerified`. The code itself never crosses.
+- **R9 Verification OTP → IAM (UC6):** `ChallengeConfirmedEvent` observed via in-module `@OnEvent` handler → `ExternalVerificationService` ACL call returns primitives → `VerifyEmailCommand` records `EmailVerifiedEvent`. The code itself never crosses.
 - **R13/R14 IAM → Membership/Community:** `IamContextFacade.answerAccessStanding()` consumed by every gated use case; person identity held by reference only. Suspension here never rewrites membership/community state.
 - **IAM → Notifications:** welcome/security/suspension notices via `ExternalNotificationsService` (facade token, primitives).
 
@@ -482,7 +485,10 @@ Fan-out Observer (ver §3.4): publish() solo tras commit; `@OnEvent` in-module; 
 | 2 | Media | Bare-string ids across boundaries | Typed VOs `UserId/PersonId/ContactAddress/SystemRole/OutsideProverRef` everywhere in domain |
 | 3 | Media | Risk of publishing before commit | `publish()` strictly after `UNIT_OF_WORK.run()` resolves |
 | 4 | Baja | BaseAssembler / Composite candidatos | Rechazados: sin `BaseAssembler` (assemblers dedicados por BC); sin Composite (VO-sets + ID-ref son correctos); skeleton (`applyStandingTransition`/`tearDownSession`) solo aqui por spec |
+| V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
+
+Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.
 
 Decisions locked: single Postgres schema-per-BC (`iam.users`); Auth0 as the one outside prover (`OutsideProverRef`); foundation-first (judgment + history here, execution outside).
 
-Open questions carried: supersede-vs-refuse confirmation; failed-proof threshold + reset-on-success; role catalog beyond STEWARD/PLAIN; notice content channel; per-device presence (parked); multi-prover break-point (parked).
+Open questions carried: supersede-vs-refuse confirmation; failed-proof threshold + reset-on-success; role catalog beyond ADMIN/USER; notice content channel; per-device presence (parked); multi-prover break-point (parked).

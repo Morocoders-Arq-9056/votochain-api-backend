@@ -46,13 +46,13 @@ src/membership/
 │       ├── queryservices/
 │       │   └── membership-query.service.impl.ts
 │       ├── eventhandlers/
-│       │   └── eligibility-judged.handler.ts # solo dentro del módulo
+│       │   └── eligibility-judged.event-handler.ts # solo dentro del módulo
 │       └── outboundservices/
 │           ├── eligibility/eligibility-policy.service.ts   # port Strategy judge(status,snapshot)
 │           └── acl/
 │               ├── external-iam.service.ts
 │               ├── external-community.service.ts
-│               └── external-voting.service.ts    # EligibilityJudged → Voting facade (UC10)
+│               └── external-voting.service.ts    # EligibilityJudgedEvent → Voting facade (UC10)
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/membership.aggregate.ts
@@ -84,10 +84,11 @@ Contrato de standing (sin esqueleto): `MembershipStandable` declara `activate / 
 
 ```typescript
 // domain/model/aggregates/membership.aggregate.ts — cero imports de framework
-export enum MembershipStatus { REQUESTED = 'REQUESTED', ACTIVE = 'ACTIVE', DELINQUENT = 'DELINQUENT', SUSPENDED = 'SUSPENDED', TERMINATED = 'TERMINATED' }
+export const MembershipStatus = { REQUESTED: 'REQUESTED', ACTIVE: 'ACTIVE', DELINQUENT: 'DELINQUENT', SUSPENDED: 'SUSPENDED', TERMINATED: 'TERMINATED' } as const;
+export type MembershipStatus = typeof MembershipStatus[keyof typeof MembershipStatus];
 export function parseMembershipStatus(v: string): MembershipStatus {
-  if (!(v in MembershipStatus)) throw new Error(`invalid membership status: ${v}`);
-  return MembershipStatus[v as keyof typeof MembershipStatus];
+  if (!(Object.values(MembershipStatus) as string[]).includes(v)) throw new Error(`invalid membership status: ${v}`);
+  return v as MembershipStatus;
 }
 
 /** Contrato de standing. Sin esqueleto: solo firmas + helper assertNotTerminated(); guards por método. */
@@ -113,7 +114,7 @@ export class Membership extends AggregateRoot implements MembershipStandable {
 
   static register(p: PersonId, c: CommunityId, unit: Unit | null): Membership {
     const m = new Membership(MembershipId.generate(), p, c, MembershipStatus.REQUESTED, CommunityRole.owner(), unit, null);
-    m.registerEvent(new MembershipRegistered(m._id, p, c));
+    m.registerEvent(new MembershipRegisteredEvent(m._id, p, c));
     return m;
   }
   static rehydrate(i: { id: MembershipId; personId: PersonId; communityId: CommunityId; status: MembershipStatus; role: CommunityRole; unit: Unit | null; lastEligibility: EligibilitySnapshot | null }): Membership {
@@ -124,39 +125,39 @@ export class Membership extends AggregateRoot implements MembershipStandable {
     this.assertNotTerminated();
     if (this._status !== MembershipStatus.REQUESTED) throw new IllegalMembershipTransitionError('solo REQUESTED activa');
     this._status = MembershipStatus.ACTIVE;
-    this.registerEvent(new MembershipActivated(this._id, this._personId, this._communityId));
+    this.registerEvent(new MembershipActivatedEvent(this._id, this._personId, this._communityId));
   }
-  assignUnit(unit: Unit): void { this.assertNotTerminated(); this._unit = unit; this.registerEvent(new UnitAssigned(this._id, unit)); }
+  assignUnit(unit: Unit): void { this.assertNotTerminated(); this._unit = unit; this.registerEvent(new UnitAssignedEvent(this._id, unit)); }
   assignRole(role: CommunityRole): void {
     this.assertNotTerminated();
     if (this._status !== MembershipStatus.ACTIVE) throw new RoleRequiresActiveError('rol exige ACTIVE');
-    this._role = role; this.registerEvent(new CommunityRoleAssigned(this._id, role));
+    this._role = role; this.registerEvent(new CommunityRoleAssignedEvent(this._id, role));
   }
   markDelinquent(reason: string): void {
     this.assertNotTerminated();
     if (this._status !== MembershipStatus.ACTIVE) throw new IllegalMembershipTransitionError('mora exige ACTIVE');
     this._status = MembershipStatus.DELINQUENT;
-    this.registerEvent(new MemberMarkedDelinquent(this._id, reason));
+    this.registerEvent(new MemberMarkedDelinquentEvent(this._id, reason));
   }
   clearDelinquency(): void {
     this.assertNotTerminated();
     if (this._status !== MembershipStatus.DELINQUENT) throw new IllegalMembershipTransitionError('sin mora que limpiar');
     this._status = MembershipStatus.ACTIVE;
-    this.registerEvent(new DelinquencyCleared(this._id));
+    this.registerEvent(new DelinquencyClearedEvent(this._id));
   }
   suspend(reason: string): void {
     this.assertNotTerminated();
     if (this._status !== MembershipStatus.ACTIVE && this._status !== MembershipStatus.DELINQUENT) throw new IllegalMembershipTransitionError('suspender exige ACTIVE o DELINQUENT');
-    this._status = MembershipStatus.SUSPENDED; this.registerEvent(new MembershipSuspended(this._id, reason));
+    this._status = MembershipStatus.SUSPENDED; this.registerEvent(new MembershipSuspendedEvent(this._id, reason));
   }
   reinstate(): void {
     this.assertNotTerminated();
     if (this._status !== MembershipStatus.SUSPENDED) throw new IllegalMembershipTransitionError('reintegrar exige SUSPENDED');
-    this._status = MembershipStatus.ACTIVE; this.registerEvent(new MembershipReinstated(this._id));
+    this._status = MembershipStatus.ACTIVE; this.registerEvent(new MembershipReinstatedEvent(this._id));
   }
   terminate(reason: string): void {
     this.assertNotTerminated();
-    this._status = MembershipStatus.TERMINATED; this.registerEvent(new MembershipTerminated(this._id, reason));
+    this._status = MembershipStatus.TERMINATED; this.registerEvent(new MembershipTerminatedEvent(this._id, reason));
   }
   /** Ancla: siempre responde; congela snapshot; nunca reescribe el pasado.
    *  El veredicto lo juzga la Strategy EligibilityPolicyService (inyectada, ver §4);
@@ -166,7 +167,7 @@ export class Membership extends AggregateRoot implements MembershipStandable {
     const eligible = policy.judge(this._status, draft);
     const snap = draft.withVerdict(eligible);
     this._lastEligibility = snap;
-    this.registerEvent(new EligibilityJudged(this._personId, this._communityId, snap));
+    this.registerEvent(new EligibilityJudgedEvent(this._personId, this._communityId, snap));
     return snap;
   }
   /** Fábrica fantasma única: ausencia responde NOT_A_MEMBER, nunca 404. Sin persistir. */
@@ -194,7 +195,7 @@ export class MembershipId { private constructor(public readonly value: string) {
 
 ### 2.3 Commands — `domain/model/commands/`
 
-`RegisterMembershipCommand(personId, communityId, unit?)`, `ActivateMembershipCommand(membershipId)`, `AssignUnitCommand(membershipId, unit)`, `AssignCommunityRoleCommand(membershipId, role)`, `MarkDelinquentCommand(membershipId, reason)`, `ClearDelinquencyCommand(membershipId)`, `SuspendMembershipCommand(membershipId, reason)`, `ReinstateMembershipCommand(membershipId)`, `TerminateMembershipCommand(membershipId, reason)`, `JudgeEligibilityCommand(personId, communityId)`. Clases planas, validan en constructor. UC10 es command (no query) porque produce el hecho congelado `EligibilityJudged`.
+`RegisterMembershipCommand(personId, communityId, unit?)`, `ActivateMembershipCommand(membershipId)`, `AssignUnitCommand(membershipId, unit)`, `AssignCommunityRoleCommand(membershipId, role)`, `MarkDelinquentCommand(membershipId, reason)`, `ClearDelinquencyCommand(membershipId)`, `SuspendMembershipCommand(membershipId, reason)`, `ReinstateMembershipCommand(membershipId)`, `TerminateMembershipCommand(membershipId, reason)`, `JudgeEligibilityCommand(personId, communityId)`. Clases planas, validan en constructor. UC10 es command (no query) porque produce el hecho congelado `EligibilityJudgedEvent`.
 
 ### 2.4 Queries — `domain/model/queries/`
 
@@ -202,11 +203,11 @@ export class MembershipId { private constructor(public readonly value: string) {
 
 ### 2.5 Excepciones — `domain/exceptions/`
 
-`MembershipNotFoundError`, `MembershipAlreadyExistsError`, `CommunityNotAcceptingMembersError`, `RoleRequiresActiveError`, `IllegalMembershipTransitionError`, `TerminationIsTerminalError` — subclases de `Error` con `Object.setPrototypeOf`. `NotEligible` NO es excepción: es veredicto dentro de `EligibilitySnapshot`/`EligibilityJudged`.
+`MembershipNotFoundError`, `MembershipAlreadyExistsError`, `CommunityNotAcceptingMembersError`, `RoleRequiresActiveError`, `IllegalMembershipTransitionError`, `TerminationIsTerminalError` — subclases de `Error` con `Object.setPrototypeOf`. `NotEligible` NO es excepción: es veredicto dentro de `EligibilitySnapshot`/`EligibilityJudgedEvent`.
 
 ### 2.6 Eventos (10)
 
-`MembershipRegistered`, `MembershipActivated`, `UnitAssigned`, `CommunityRoleAssigned`, `MemberMarkedDelinquent`, `DelinquencyCleared`, `MembershipSuspended`, `MembershipReinstated`, `MembershipTerminated` (payload: ids tipados como VO + `reason` donde aplica) y `EligibilityJudged(personId, communityId, snapshot)` con referencia de snapshot que Voting congela. Todos implementan `DomainEvent` con `static eventName`; nunca `constructor.name`.
+`MembershipRegisteredEvent`, `MembershipActivatedEvent`, `UnitAssignedEvent`, `CommunityRoleAssignedEvent`, `MemberMarkedDelinquentEvent`, `DelinquencyClearedEvent`, `MembershipSuspendedEvent`, `MembershipReinstatedEvent`, `MembershipTerminatedEvent` (payload: ids tipados como VO + `reason` donde aplica) y `EligibilityJudgedEvent(personId, communityId, snapshot)` con referencia de snapshot que Voting congela. Todos implementan `DomainEvent` con `static eventName`; nunca `constructor.name`.
 
 ## 3. Capa de Aplicación
 
@@ -267,7 +268,7 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
       snap = t.judgeEligibility(this.policy);
       if (found) await this.repo.save(t); return t; // fantasma nunca persiste
     });
-    this.publish(target); // EligibilityJudged tras commit (también del fantasma: el juicio ocurrió)
+    this.publish(target); // EligibilityJudgedEvent tras commit (también del fantasma: el juicio ocurrió)
     return snap;
   }
   private publish(m: Membership): void { for (const e of m.pullDomainEvents()) this.events.emit(e.eventName, e); }
@@ -286,7 +287,7 @@ Solo lee vía `MembershipRepository` (`getById`, `findLiveByPersonAndCommunity`,
 
 ### 3.5 Event handlers
 
-`EligibilityJudgedHandler` con `@OnEvent(EligibilityJudged.eventName)` vive en ESTE módulo e inyecta `ExternalVotingService` (ACL → facade de Voting) con primitivas (`personId.value`, `communityId.value`, `snapshot.reference`). Ningún otro módulo se suscribe a eventos de Membership (bus único sin aislamiento).
+`EligibilityJudgedEventHandler` con `@OnEvent(EligibilityJudgedEvent.eventName)` vive en ESTE módulo e inyecta `ExternalVotingService` (ACL → facade de Voting) con primitivas (`personId.value`, `communityId.value`, `snapshot.reference`). Ningún otro módulo se suscribe a eventos de Membership (bus único sin aislamiento).
 
 ## 4. Capa de Infraestructura
 
@@ -333,7 +334,7 @@ Controller delgado: resource → assembler → command → servicio (token) → 
 | `POST` | `/api/v1/memberships/:id/suspend` | Suspender |
 | `POST` | `/api/v1/memberships/:id/reinstate` | Reintegrar |
 | `POST` | `/api/v1/memberships/:id/terminate` | Terminar (terminal) |
-| `POST` | `/api/v1/memberships/judge-eligibility` | Ancla UC10 → `EligibilityJudged` + snapshot |
+| `POST` | `/api/v1/memberships/judge-eligibility` | Ancla UC10 → `EligibilityJudgedEvent` + snapshot |
 | `GET` | `/api/v1/memberships/:id` | Detalle |
 | `GET` | `/api/v1/memberships?communityId=&status=ACTIVE` | Roster (solo ACTIVE) |
 | `GET` | `/api/v1/memberships?personId=` | Membresías de la persona |
@@ -377,16 +378,16 @@ CREATE INDEX ix_roster ON membership.memberships (community_id, status) WHERE st
 
 ## 7. Flujos CQRS por Caso de Uso
 
-**UC1 Registrar:** `POST /memberships` → `RegisterMembershipCommand` → `ExternalIamService.personExists` + `ExternalCommunityService.acceptsMembers` → `findLiveByPersonAndCommunity` (409 si vive) → `Membership.register()` → `save` (UoW) → publicar `MembershipRegistered` tras commit → 201 + re-leer detalle.
+**UC1 Registrar:** `POST /memberships` → `RegisterMembershipCommand` → `ExternalIamService.personExists` + `ExternalCommunityService.acceptsMembers` → `findLiveByPersonAndCommunity` (409 si vive) → `Membership.register()` → `save` (UoW) → publicar `MembershipRegisteredEvent` tras commit → 201 + re-leer detalle.
 **UC2–UC9:** cargar por id (404) → método del agregado (rechazos §2.5) → `save` → publicar tras commit. `assignUnit/assignRole` no tocan el historial de standing (invariante 5).
-**UC10 Juzgar (ancla):** `POST /judge-eligibility(personId, communityId)` → `findLiveByPersonAndCommunity` → `judgeEligibility(policy)` (ausencia = fantasma `ghost()`, nunca 404; save solo si found) → publicar `EligibilityJudged` tras commit → **Voting** consume el hecho + pull `judgeEligibility()` para la puerta de autorización → responder `{ eligible, reason, snapshotRef }`. Juzgar dos veces seguidas produce dos snapshots (correcto: cada uno responde "¿elegible ahora?").
-**Standing → roster/aviso:** `MembershipActivated / MembershipSuspended` (+ mora/reintegro) se publican como eventos y los consumidores hacen pull del roster (`getRoster`, solo ACTIVE) o emiten aviso vía Notifications; el agregado nunca empuja el roster.
+**UC10 Juzgar (ancla):** `POST /judge-eligibility(personId, communityId)` → `findLiveByPersonAndCommunity` → `judgeEligibility(policy)` (ausencia = fantasma `ghost()`, nunca 404; save solo si found) → publicar `EligibilityJudgedEvent` tras commit → **Voting** consume el hecho + pull `judgeEligibility()` para la puerta de autorización → responder `{ eligible, reason, snapshotRef }`. Juzgar dos veces seguidas produce dos snapshots (correcto: cada uno responde "¿elegible ahora?").
+**Standing → roster/aviso:** `MembershipActivatedEvent / MembershipSuspendedEvent` (+ mora/reintegro) se publican como eventos y los consumidores hacen pull del roster (`getRoster`, solo ACTIVE) o emiten aviso vía Notifications; el agregado nunca empuja el roster.
 
 ## 8. Integración con otros BCs
 
-- **R2 → Voting (OHS + ACL):** `EligibilityJudged` + `getRoster` alimentan puerta de autorización y base de participación. Voting congela copia del snapshot; cambios posteriores no reescriben grants (H3).
+- **R2 → Voting (OHS + ACL):** `EligibilityJudgedEvent` + `getRoster` alimentan puerta de autorización y base de participación. Voting congela copia del snapshot; cambios posteriores no reescriben grants (H3).
 - **R8 → Document OCR:** precondición de pertenencia; OCR rechaza con `NoEligibleMembership` cuando la persona no pertenece en ningún lado. OCR nunca juzga elegibilidad.
-- **R13 (avisos/standing):** `MemberMarkedDelinquent`, `MembershipSuspended`, `MembershipReinstated`, … los consume Notifications vía su propio handler interno (pull del hecho + aviso); el roster se recalcula (solo ACTIVE). Ningún módulo externo se suscribe al bus de Membership.
+- **R13 (avisos/standing):** `MemberMarkedDelinquentEvent`, `MembershipSuspendedEvent`, `MembershipReinstatedEvent`, … los consume Notifications vía su propio handler interno (pull del hecho + aviso); el roster se recalcula (solo ACTIVE). Ningún módulo externo se suscribe al bus de Membership.
 - Consumidas: IAM (existencia, UC1), Community (acepta/standing, UC1–UC2), libros (UC5–UC6, verdad observada), Consent (may-process + revocaciones, coordinación).
 
 ## 9. Dependencias Externas
@@ -395,10 +396,16 @@ CREATE INDEX ix_roster ON membership.memberships (community_id, status) WHERE st
 |:--|:--|:--|
 | Membership → Shared Kernel | Legítima | `AggregateRoot`, `DomainEvent`, `IUnitOfWork`/`UNIT_OF_WORK`, `AuditableOrmEntity` |
 | Membership → IAM / Community | ACL consumida (sync, in-process) | `ExternalIamService`/`ExternalCommunityService` → facades con primitivas |
-| Membership → Voting/OCR/Notifications | ACL publicada / eventos | `MembershipContextFacade` + `EligibilityJudged` (handler interno llama al facade de Voting) |
+| Membership → Voting/OCR/Notifications | ACL publicada / eventos | `MembershipContextFacade` + `EligibilityJudgedEvent` (handler interno llama al facade de Voting) |
 | `EventEmitterModule.forRoot()` | Una sola vez en `AppModule` | Módulos consumen `EventEmitter2`; sin bus CQRS externo (`@nestjs/cqrs` no se usa) |
 
 ## 10. Auditoría y Preguntas Abiertas
 
 Decisiones: roster como query (no embebido, H1) — por eso **sin Composite** (el roster no es un objeto-parte, es `findActiveByCommunity`); snapshots nunca reescritos (H3); membresía sigue a la persona, unidad es atributo (H4); autoridad disciplinaria en Community Management, aquí solo `reason` (H5); `judge` como command por el hecho congelado; HMAC/secretos no aplican (sin códigos aquí); `TERMINATED` exige índice parcial + chequeo. **Sin assembler base**: cada assembler de persistencia/interfaces es estático y específico (`MembershipPersistenceAssembler`, `XxxCommandFromResourceAssembler`); heredarlos acoplaría shapes distintos.
 Abiertas (de `domain-model.md`): inmediatez de mora (#1), venta de unidad (#2), quién suspende/termina (#3), frescura del roster (#4), catálogo de roles (#5), notificación de exclusión (#6).
+
+| # | Severidad | Hallazgo | Correccion |
+|:--|:--|:--|:--|
+| V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
+
+Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.

@@ -30,7 +30,7 @@ src/verification/
 │   │   │   ├── challenge.resource.ts
 │   │   │   └── challenge-standing.resource.ts
 │   │   └── transform/
-│   │       ├── request-challenge-command-from-resource.assembler.ts
+│   │       ├── request-verification-challenge-command-from-resource.assembler.ts
 │   │       └── challenge-resource-from-entity.assembler.ts
 │   ├── acl/
 │   │   └── verification-context.facade.ts       # interfaz + token (primitivas)
@@ -45,7 +45,7 @@ src/verification/
 │       ├── queryservices/
 │       │   └── verification-query.service.impl.ts
 │       ├── eventhandlers/
-│       │   └── challenge-confirmed.handler.ts   # solo dentro del módulo → facade IAM
+│       │   └── challenge-confirmed.event-handler.ts   # solo dentro del módulo → facade IAM
 │       └── outboundservices/
 │           ├── codecompare/code-compare.service.ts      # port ejecutor (hash+matches)
 │           └── acl/
@@ -56,7 +56,7 @@ src/verification/
 │   ├── model/
 │   │   ├── aggregates/verification-challenge.aggregate.ts
 │   │   ├── valueobjects/   # challenge-id, person-id, purpose, attempt-count, validity-window, invalidation-reason
-│   │   ├── commands/       # RequestChallengeCommand, AnswerChallengeCommand, ExpireChallengeCommand
+│   │   ├── commands/       # RequestVerificationChallengeCommand, AnswerVerificationChallengeCommand, ExpireVerificationChallengeCommand
 │   │   ├── queries/        # GetChallengeStandingByPersonAndPurposeQuery, GetChallengeHistoryByPersonAndPurposeQuery
 │   │   └── events/         # 5 eventos (ver §2.6)
 │   ├── services/           # ports command/query + tokens
@@ -86,10 +86,11 @@ Contrato de standing (sin esqueleto): `ChallengeStandable` declara `answer / sup
 
 ```typescript
 // domain/model/aggregates/verification-challenge.aggregate.ts — cero framework
-export enum ChallengeStanding { OPEN = 'OPEN', CONFIRMED = 'CONFIRMED', INVALIDATED = 'INVALIDATED', EXPIRED = 'EXPIRED' }
+export const ChallengeStanding = { OPEN: 'OPEN', CONFIRMED: 'CONFIRMED', INVALIDATED: 'INVALIDATED', EXPIRED: 'EXPIRED' } as const;
+export type ChallengeStanding = typeof ChallengeStanding[keyof typeof ChallengeStanding];
 export function parseChallengeStanding(v: string): ChallengeStanding {
-  if (!(v in ChallengeStanding)) throw new Error(`invalid standing: ${v}`);
-  return ChallengeStanding[v as keyof typeof ChallengeStanding];
+  if (!(Object.values(ChallengeStanding) as string[]).includes(v)) throw new Error(`invalid standing: ${v}`);
+  return v as ChallengeStanding;
 }
 
 /** Contrato de standing. Sin esqueleto: request/answer/expire no comparten base. */
@@ -113,7 +114,7 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 
   static request(id: ChallengeId, p: PersonId, purpose: Purpose, win: ValidityWindow, codeHash: string): VerificationChallenge {
     const c = new VerificationChallenge(id, p, purpose, ChallengeStanding.OPEN, AttemptCount.fresh(5), win, codeHash, null);
-    c.registerEvent(new ChallengeRequested(id, p, purpose, win));
+    c.registerEvent(new ChallengeRequestedEvent(id, p, purpose, win));
     return c;
   }
   static rehydrate(i: { id: ChallengeId; personId: PersonId; purpose: Purpose; standing: ChallengeStanding; attempts: AttemptCount; window: ValidityWindow; codeHash: string; reason: InvalidationReason | null }): VerificationChallenge {
@@ -123,25 +124,25 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
   /** Responde; el veredicto holds/not-holds llega del ejecutor (juzgado fuera, consumido aquí). */
   answer(holds: boolean, now: Date): void {
     if (this._standing !== ChallengeStanding.OPEN) throw new AlreadyAnsweredError('challenge ya respondido');
-    if (this._window.isElapsed(now)) { this._standing = ChallengeStanding.EXPIRED; this.registerEvent(new ChallengeExpired(this._id, this._personId, this._purpose)); throw new AlreadyAnsweredError('ventana vencida'); }
-    if (holds) { this._standing = ChallengeStanding.CONFIRMED; this.registerEvent(new ChallengeConfirmed(this._id, this._personId, this._purpose)); return; }
+    if (this._window.isElapsed(now)) { this._standing = ChallengeStanding.EXPIRED; this.registerEvent(new ChallengeExpiredEvent(this._id, this._personId, this._purpose)); throw new AlreadyAnsweredError('ventana vencida'); }
+    if (holds) { this._standing = ChallengeStanding.CONFIRMED; this.registerEvent(new ChallengeConfirmedEvent(this._id, this._personId, this._purpose)); return; }
     this._attempts = this._attempts.counted();
-    this.registerEvent(new ChallengeAttemptFailed(this._id, this._personId, this._purpose, this._attempts.remaining()));
+    this.registerEvent(new ChallengeAttemptFailedEvent(this._id, this._personId, this._purpose, this._attempts.remaining()));
     if (this._attempts.isExhausted()) {
       this._standing = ChallengeStanding.INVALIDATED;
       this._invalidationReason = InvalidationReason.attemptsExhausted();
-      this.registerEvent(new ChallengeInvalidated(this._id, this._personId, this._purpose, this._invalidationReason));
+      this.registerEvent(new ChallengeInvalidatedEvent(this._id, this._personId, this._purpose, this._invalidationReason));
     }
   }
   supersede(): void {  // request() sobre un OPEN previo: se invalida con SUPERSEDED
     if (this._standing !== ChallengeStanding.OPEN) return;
     this._standing = ChallengeStanding.INVALIDATED;
     this._invalidationReason = InvalidationReason.superseded();
-    this.registerEvent(new ChallengeInvalidated(this._id, this._personId, this._purpose, this._invalidationReason));
+    this.registerEvent(new ChallengeInvalidatedEvent(this._id, this._personId, this._purpose, this._invalidationReason));
   }
   expire(now: Date): void {
     if (this._standing === ChallengeStanding.OPEN && this._window.isElapsed(now)) {
-      this._standing = ChallengeStanding.EXPIRED; this.registerEvent(new ChallengeExpired(this._id, this._personId, this._purpose));
+      this._standing = ChallengeStanding.EXPIRED; this.registerEvent(new ChallengeExpiredEvent(this._id, this._personId, this._purpose));
     }
   }
   /** Operación de respuesta (lectura del agregado): ¿hay usable ahora y con cuántos intentos? */
@@ -160,7 +161,7 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 
 ### 2.3 Commands
 
-`RequestChallengeCommand(personId, purpose)`, `AnswerChallengeCommand(challengeId, presentedCode)`, `ExpireChallengeCommand(challengeId)`. UC1 rechaza antes de abrir con `PurposeUnknown` / `ContactNotAllowed` sin producir hechos.
+`RequestVerificationChallengeCommand(personId, purpose)`, `AnswerVerificationChallengeCommand(challengeId, presentedCode)`, `ExpireVerificationChallengeCommand(challengeId)`. UC1 rechaza antes de abrir con `PurposeUnknown` / `ContactNotAllowed` sin producir hechos.
 
 ### 2.4 Queries
 
@@ -172,7 +173,7 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 
 ### 2.6 Eventos (5) — sin el código, nunca
 
-`ChallengeRequested(challengeId, personId, purpose, window)`, `ChallengeConfirmed(challengeId, personId, purpose)`, `ChallengeAttemptFailed(challengeId, personId, purpose, remaining)`, `ChallengeInvalidated(challengeId, personId, purpose, reason)`, `ChallengeExpired(challengeId, personId, purpose)`. Payloads con VO tipados. **Ningún evento lleva `plainCode` ni el hash**: el historial registra juicios, jamás secretos (decisión espejo de impl-guide §10.1 #8).
+`ChallengeRequestedEvent(challengeId, personId, purpose, window)`, `ChallengeConfirmedEvent(challengeId, personId, purpose)`, `ChallengeAttemptFailedEvent(challengeId, personId, purpose, remaining)`, `ChallengeInvalidatedEvent(challengeId, personId, purpose, reason)`, `ChallengeExpiredEvent(challengeId, personId, purpose)`. Payloads con VO tipados. **Ningún evento lleva `plainCode` ni el hash**: el historial registra juicios, jamás secretos (decisión espejo de impl-guide §10.1 #8).
 
 ## 3. Capa de Aplicación
 
@@ -181,9 +182,9 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 ```typescript
 export const VERIFICATION_COMMAND_SERVICE = Symbol('VERIFICATION_COMMAND_SERVICE');
 export interface VerificationCommandService {
-  requestChallenge(c: RequestChallengeCommand): Promise<ChallengeId>;
-  answerChallenge(c: AnswerChallengeCommand): Promise<void>;
-  expireChallenge(c: ExpireChallengeCommand): Promise<void>;
+  requestChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId>;
+  answerChallenge(c: AnswerVerificationChallengeCommand): Promise<void>;
+  expireChallenge(c: ExpireVerificationChallengeCommand): Promise<void>;
 }
 export const VERIFICATION_QUERY_SERVICE = Symbol('VERIFICATION_QUERY_SERVICE');
 export interface VerificationQueryService {
@@ -206,7 +207,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     private readonly consent: ExternalConsentService,   // gate may-contact
     private readonly iam: ExternalIamService,           // existencia + markVerified (R9)
   ) {}
-  async requestChallenge(c: RequestChallengeCommand): Promise<ChallengeId> {
+  async requestChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId> {
     let plain: string; // vive solo en este método; jamás persiste ni viaja en eventos
     const created = await this.uow.run(async () => {
       if (!(await this.iam.personExists(c.personId.value))) throw new NoUsableChallengeError('persona desconocida');
@@ -224,7 +225,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     } catch (err) { this.logger.warn(`notify falló para ${created!.id.value}: ${String(err)}`); }
     return created!.id;
   }
-  async answerChallenge(c: AnswerChallengeCommand): Promise<void> {
+  async answerChallenge(c: AnswerVerificationChallengeCommand): Promise<void> {
     const ch = await this.uow.run(async () => {
       const found = await this.repo.findById(c.challengeId);
       if (!found) throw new NoUsableChallengeError('sin challenge usable');
@@ -232,7 +233,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
       found.answer(holds, new Date());   // cuenta intento / confirma / invalida / expira
       await this.repo.save(found); return found;
     });
-    this.publish(ch);   // ChallengeConfirmed lo consume el handler interno → IAM (R9)
+    this.publish(ch);   // ChallengeConfirmedEvent lo consume el handler interno → IAM (R9)
   }
   private publish(ch: VerificationChallenge): void { for (const e of ch.pullDomainEvents()) this.events.emit(e.eventName, e); }
 }
@@ -253,16 +254,16 @@ export interface CodeCompareService { hash(plain: string): Promise<string>; matc
 
 ```typescript
 @Injectable()
-export class ChallengeConfirmedHandler {
-  @OnEvent(ChallengeConfirmed.eventName, { async: true })
-  async handle(e: ChallengeConfirmed): Promise<void> {
+export class ChallengeConfirmedEventHandler {
+  @OnEvent(ChallengeConfirmedEvent.eventName, { async: true })
+  async handle(e: ChallengeConfirmedEvent): Promise<void> {
     try { await this.iam.markVerified(e.personId.value, e.purpose.value); } // R9 → IAM
     catch (err) { this.logger.error(`IAM R9 falló para ${e.personId.value}: ${String(err)}`); }
   }
 }
 ```
 
-`EventEmitterModule.forRoot()` solo una vez en `AppModule`; aquí solo se inyecta `EventEmitter2`. `ChallengeConfirmed` → IAM (R9: email verificado / 2FA / reset permitido, solo el hecho, jamás el secreto); la entrega del código es instrucción sync a Notifications (`ExternalNotificationsService.sendCode`, nunca por eventos). Ningún módulo externo se suscribe a estos eventos (misma regla anti-acoplamiento que Membership).
+`EventEmitterModule.forRoot()` solo una vez en `AppModule`; aquí solo se inyecta `EventEmitter2`. `ChallengeConfirmedEvent` → IAM (R9: email verificado / 2FA / reset permitido, solo el hecho, jamás el secreto); la entrega del código es instrucción sync a Notifications (`ExternalNotificationsService.sendCode`, nunca por eventos). Ningún módulo externo se suscribe a estos eventos (misma regla anti-acoplamiento que Membership).
 
 ## 4. Capa de Infraestructura
 
@@ -304,8 +305,8 @@ Controller delgado + filtro BC. Rate-limit en `request` (guardia de ejecución, 
 
 | Método | Endpoint | Descripción |
 |:--|:--|:--|
-| `POST` | `/api/v1/verifications/challenges` | `RequestChallengeCommand` → 201 + `Location` (entrega sync vía ACL, no en eventos) |
-| `POST` | `/api/v1/verifications/challenges/:id/answer` | `AnswerChallengeCommand` → confirma / cuenta / invalida |
+| `POST` | `/api/v1/verifications/challenges` | `RequestVerificationChallengeCommand` → 201 + `Location` (entrega sync vía ACL, no en eventos) |
+| `POST` | `/api/v1/verifications/challenges/:id/answer` | `AnswerVerificationChallengeCommand` → confirma / cuenta / invalida |
 | `GET` | `/api/v1/verifications/standing?personId=&purpose=` | UC4: usable ahora + intentos restantes |
 | `GET` | `/api/v1/verifications/history?personId=&purpose=` | Scrutiny |
 
@@ -342,13 +343,13 @@ CREATE INDEX ix_standing ON verification.challenges (person_id, purpose, standin
 
 ## 7. Flujos CQRS por Caso de Uso
 
-**UC1 Request:** `POST /challenges` → valida `Purpose` cerrado + `mayContactNow` (403 `ContactNotAllowed`) → UoW: supersede del OPEN previo + `request()` + `save` → publicar `ChallengeRequested`/`ChallengeInvalidated` tras commit → instrucción sync a Notifications → 201 + `Location`.
-**UC2 Answer (ancla):** `POST /challenges/:id/answer` → UoW: `findById` → `compare.matches(plain, codeHash)` (juzgado fuera, nunca guardado) → `answer(holds)` → `save` → publicar tras commit (`ChallengeConfirmed` | `ChallengeAttemptFailed` [+ `ChallengeInvalidated` si agotó]) → handler interno → IAM (R9, solo el hecho).
-**UC3 Expire:** barrido por `expiresAt` → `expire()` → `ChallengeExpired`. **UC4 Standing:** query → `answerChallengeStanding()` → `{ usable, remaining }` (flujos IAM, throttling).
+**UC1 Request:** `POST /challenges` → valida `Purpose` cerrado + `mayContactNow` (403 `ContactNotAllowed`) → UoW: supersede del OPEN previo + `request()` + `save` → publicar `ChallengeRequestedEvent`/`ChallengeInvalidatedEvent` tras commit → instrucción sync a Notifications → 201 + `Location`.
+**UC2 Answer (ancla):** `POST /challenges/:id/answer` → UoW: `findById` → `compare.matches(plain, codeHash)` (juzgado fuera, nunca guardado) → `answer(holds)` → `save` → publicar tras commit (`ChallengeConfirmedEvent` | `ChallengeAttemptFailedEvent` [+ `ChallengeInvalidatedEvent` si agotó]) → handler interno → IAM (R9, solo el hecho).
+**UC3 Expire:** barrido por `expiresAt` → `expire()` → `ChallengeExpiredEvent`. **UC4 Standing:** query → `answerChallengeStanding()` → `{ usable, remaining }` (flujos IAM, throttling).
 
 ## 8. Integración con otros BCs
 
-- **R9 → IAM (OHS + ACL):** el handler interno `ChallengeConfirmedHandler` (este módulo) llama a la facade IAM vía `ExternalIamService.markVerified` — IAM consume así el hecho (email verificado / segundo factor / reset permitido). IAM juzga standing, jamás re-juzga el código.
+- **R9 → IAM (OHS + ACL):** el handler interno `ChallengeConfirmedEventHandler` (este módulo) llama a la facade IAM vía `ExternalIamService.markVerified` — IAM consume así el hecho (email verificado / segundo factor / reset permitido). IAM juzga standing, jamás re-juzga el código.
 - **→ Notifications (instrucción):** "persona invitada a confirmar"; entrega del código como intención, propiedad de Notifications.
 - **↔ Consent & Compliance:** `may-contact-now?` en UC1; denegado bloquea sin hechos.
 - IAM → Verification: existencia de persona (referencia de identidad). Sin Redis; `Purpose` cerrado en tres (autorización de voto vive en Voting).
@@ -360,9 +361,15 @@ CREATE INDEX ix_standing ON verification.challenges (person_id, purpose, standin
 | Verification → Shared Kernel | Legítima | `AggregateRoot`, `DomainEvent`, `IUnitOfWork`, `AuditableOrmEntity` |
 | Verification → Notifications | ACL consumida sync | `ExternalNotificationsService` → `NOTIFICATIONS_CONTEXT_FACADE` (código por ACL, no por bus) |
 | Verification → Consent / IAM | ACL consumida | gates `mayContactNow` / `personExists` (primitivas en el borde, VO dentro) |
-| Verification → IAM (R9) | ACL publicada (hecho) | handler interno `ChallengeConfirmed` → facade IAM; consumidores actúan sobre el hecho, nunca el secreto |
+| Verification → IAM (R9) | ACL publicada (hecho) | handler interno `ChallengeConfirmedEvent` → facade IAM; consumidores actúan sobre el hecho, nunca el secreto |
 
 ## 10. Auditoría y Preguntas Abiertas
 
 Decisiones espejo de impl-guide: HMAC-SHA256 real por defecto, bcrypt/fake por flag `OTP_HASHER` (§4.2 impl-guide #9); sin `plainCode` en eventos, entrega por `ExternalNotificationsService` sync con try/catch (#8, #11); `Purpose` como enum cerrado (aquí 3: sin `CHECK_IN` genérico); multicanal queda en Notifications (sin `channel` en este BC); optimistic handling vía serialización por intento + supersede atómico en UoW (análogo a `@Version`); rate-limit en `request` (análogo a `@RateLimiter`); `personId` string alfanumérico (#10); validación de entrada en resources + `ValidationPipe` global (#4); 201 con `Location` (#5). **Sin Composite**: `AttemptCount`/`ValidityWindow` son VOs contados/juzgados dentro del challenge (H2), no partes componibles; el historial es query, no árbol.
 Abiertas (de `domain-model.md`): supersede vs rechazar (#1), ventana/intentos/longitud (#2), throttling como regla vs guardia (#3), canales futuros (#4), qué flujos IAM consumen primero (#5).
+
+| # | Severidad | Hallazgo | Correccion |
+|:--|:--|:--|:--|
+| V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
+
+Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.

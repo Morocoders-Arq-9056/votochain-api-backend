@@ -208,7 +208,7 @@ No identity; defined entirely by attributes; immutable; invalid values are unrep
 
 ### SystemRole
 
-- One global technical permission: `STEWARD` (keeps the system governable) or `PLAIN` (ordinary person). Further roles are added as values, not as structure.
+- One global technical permission: `ADMIN` (keeps the system governable) or `USER` (ordinary person). Further roles are added as values, not as structure.
 - The set held always contains at least one steward somewhere in the system (invariant 4 guards the final one).
 
 ### ProofKind

@@ -63,9 +63,9 @@ confused with the aggregate operations in `domain-model.md`, which are internal.
 
 | Command | Carries | Handled By |
 |---------|---------|------------|
-| `RequestExaminationCommand` | personId, document reference | UC1 |
-| `RequestReexaminationCommand` | prior examinationId | UC4 (opens a fresh examination linked to the prior) |
-| `ExpireExaminationCommand` | examinationId | UC3 (time-triggered sweep) |
+| `RequestDocumentExaminationCommand` | personId, document reference | UC1 |
+| `RequestDocumentReexaminationCommand` | prior examinationId | UC4 (opens a fresh examination linked to the prior) |
+| `ExpireDocumentExaminationCommand` | examinationId | UC3 (time-triggered sweep) |
 
 UC2's steps (extraction, comparison, verdict) proceed on observed executor results
 inside the examination journey via `recordExtraction()` / `recordComparison()` /
@@ -146,7 +146,7 @@ sequenceDiagram
 - Evidence or verdicts arriving for a non-`OPEN` examination are refused
   (`NoOpenExamination` / `AlreadyConcluded`) — a late executor result never reopens or
   edits a concluded examination.
-- A second `RequestExaminationCommand` for the same (person, document) while one is
+- A second `RequestDocumentExaminationCommand` for the same (person, document) while one is
   `OPEN` is refused (`ExaminationAlreadyOpen`) — examinations are never doubled; the
   retry path is UC4 after conclusion, not a parallel examination.
 - A consumed `MATCH` is never answered again: Biometric consumes through UC5 once; a

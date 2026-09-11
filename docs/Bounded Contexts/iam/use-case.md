@@ -46,10 +46,10 @@ whenever the criteria need declaring.
 | UC6 | VerifyEmail | Observed confirmation for the recorded address | `User` | Verification OTP (`ChallengeConfirmedEvent`, R9); delivery executed outside | `EmailVerifiedEvent` |
 | UC7 | LinkOutsideIdentity | Person request with a genuine outside proof | `User` | Outside prover (genuineness judged where execution lives) | `OutsideIdentityLinkedEvent` |
 | UC8 | UnlinkOutsideIdentity | Person request | `User` | — | `OutsideIdentityUnlinkedEvent` |
-| UC9 | GrantSystemRole | Steward request | `User` | — | `SystemRoleGrantedEvent` |
-| UC10 | RevokeSystemRole | Steward request | `User` | — | `SystemRoleRevokedEvent` |
-| UC11 | SuspendAccess | Failed-proof signal past the agreed count, or steward decision | `User` | External executor (failed-proof signal observed) | `AccessSuspendedEvent` (+ `UserSignedOutEvent` with reason `suspended`, only if a session was open) |
-| UC12 | RestoreAccess | Steward request once cause resolved | `User` | — | `AccessRestoredEvent` |
+| UC9 | GrantSystemRole | Admin request | `User` | — | `SystemRoleGrantedEvent` |
+| UC10 | RevokeSystemRole | Admin request | `User` | — | `SystemRoleRevokedEvent` |
+| UC11 | SuspendAccess | Failed-proof signal past the agreed count, or admin decision | `User` | External executor (failed-proof signal observed) | `AccessSuspendedEvent` (+ `UserSignedOutEvent` with reason `suspended`, only if a session was open) |
+| UC12 | RestoreAccess | Admin request once cause resolved | `User` | — | `AccessRestoredEvent` |
 | UC13 | AnswerAccessStanding | Any gated use case across contexts | `User` (answering operation only) | — | — (synchronous answer, no fact) |
 
 UC2 is detailed fully below because the judge-proof → open-session → supersede-prior

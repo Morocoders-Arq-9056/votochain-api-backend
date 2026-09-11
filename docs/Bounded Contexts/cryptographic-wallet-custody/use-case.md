@@ -37,8 +37,8 @@ whenever the criteria need declaring.
 | UC1 | ProvisionWallet | Custodian request, on person onboarding | `UserWallet` | IAM (person existence, identity reference) | `WalletProvisionedEvent` |
 | UC2 | **SignVoteContent** (anchor) | Voting request, with one specific vote content | `UserWallet` | Voting (the content to sign) | `KeyReconstructedEvent`, `KeyForgottenEvent` |
 | UC3 | AnswerSigningCapability | Voting signing-gate check | `UserWallet` (answering operation only) | — | — (synchronous answer, no fact) |
-| UC4 | RotateWallet | Custody steward request | `UserWallet` | — | `WalletRotatedEvent` |
-| UC5 | SuspendWallet | Custody steward request | `UserWallet` | — | `WalletSuspendedEvent` |
+| UC4 | RotateWallet | Custody admin request | `UserWallet` | — | `WalletRotatedEvent` |
+| UC5 | SuspendWallet | Custody admin request | `UserWallet` | — | `WalletSuspendedEvent` |
 | UC6 | RetireWallet | Reacts to erasure coordination confirmed (Consent & Compliance) | `UserWallet` | Consent & Compliance (coordination) | `WalletRetiredEvent` |
 
 UC2 is detailed fully below because the reconstruct → sign → forget atomicity is the
@@ -64,7 +64,7 @@ confused with the aggregate operations in `domain-model.md`, which are internal.
 | `SuspendWalletCommand` | walletId, reason | UC5 |
 | `RetireWalletCommand` | walletId | UC6 |
 
-UC6 accepts no standing external command from a person or steward: it is triggered by
+UC6 accepts no standing external command from a person or admin: it is triggered by
 the erasure-coordination fact arriving from Consent & Compliance.
 
 ### Queries
@@ -72,7 +72,7 @@ the erasure-coordination fact arriving from Consent & Compliance.
 | Query | Returns | Backing Read Need (domain-model.md) |
 |-------|---------|--------------------------------------|
 | `GetSigningCapabilityByPersonQuery` | Whether the person may sign now, and with which capability and position | "Signing capability" |
-| `GetStewardshipHistoryByWalletQuery` | Provisioning, rotations, suspensions, retirement behind a past signature | "Stewardship history (scrutiny)" |
+| `GetAdminshipHistoryByWalletQuery` | Provisioning, rotations, suspensions, retirement behind a past signature | "Adminship history (scrutiny)" |
 
 UC3 is served by the aggregate's answering operation `answerSigningCapability()` — it
 judges standing and answers; it mutates nothing and produces no fact.

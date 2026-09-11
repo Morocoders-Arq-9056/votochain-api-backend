@@ -34,7 +34,7 @@ src/blockchain-relay-transaction-delivery/
 │   └── internal/
 │       ├── commandservices/delivery-command.service.impl.ts  # accept + DeliverOrder
 │       ├── queryservices/delivery-query.service.impl.ts
-│       ├── eventhandlers/ (delivery-confirmed.handler.ts, delivery-event.logger.ts)
+│       ├── eventhandlers/ (delivery-confirmed.event-handler.ts, delivery-failed.event-handler.ts, delivery-abandoned.event-handler.ts, delivery-event.logger.ts)
 │       └── outboundservices/
 │           ├── ledger/ledger.service.ts  # Port LedgerGatewayService: hand-over + observe outcome
 │           ├── queue/delivery-queue.service.ts   # Port: orden de envio (BullMQ)
@@ -46,8 +46,8 @@ src/blockchain-relay-transaction-delivery/
 │   │   ├── aggregates/delivery-order.aggregate.ts
 │   │   ├── entities/sending-attempt.entity.ts
 │   │   ├── valueobjects/ (delivery-order-id, signed-content-ref, payer-ref, sending-order-position, failure-reason)
-│   │   ├── commands/ (accept-for-delivery, record-ledger-outcome)
-│   │   ├── queries/ (standing-by-order, sending-order-by-payer, attempt-history-by-order)
+│ │   ├── commands/ (accept-delivery-order, record-delivery-order-ledger-outcome)
+│ │   ├── queries/ (`GetDeliveryOrderStandingByIdQuery`, `GetDeliverySendingOrderByPayerQuery`, `GetDeliveryAttemptHistoryByOrderQuery` — formalización de los slugs previos `standing-by-order`, `sending-order-by-payer`, `attempt-history-by-order`)
 │   │   └── events/ (7 hechos)
 │   ├── services/ (delivery-command, delivery-query + tokens)
 │   ├── repositories/delivery-order.repository.ts
@@ -83,17 +83,19 @@ export interface Deliverable {
 ACCEPTED → ORDERED → SENT → CONFIRMED (terminal) / FAILED → RETRIED → ORDERED / → ABANDONED (terminal).
 
 ```typescript
-export enum DeliveryStanding { ACCEPTED = 'ACCEPTED', ORDERED = 'ORDERED', SENT = 'SENT', CONFIRMED = 'CONFIRMED', FAILED = 'FAILED', RETRIED = 'RETRIED', ABANDONED = 'ABANDONED' }
+export const DeliveryStanding = { ACCEPTED: 'ACCEPTED', ORDERED: 'ORDERED', SENT: 'SENT', CONFIRMED: 'CONFIRMED', FAILED: 'FAILED', RETRIED: 'RETRIED', ABANDONED: 'ABANDONED' } as const;
+export type DeliveryStanding = (typeof DeliveryStanding)[keyof typeof DeliveryStanding];
 export function parseDeliveryStanding(v: string): DeliveryStanding {
-  if (!(v in DeliveryStanding)) throw new Error(`invalid delivery standing: ${v}`);
-  return DeliveryStanding[v as keyof typeof DeliveryStanding];
+  if (!(Object.values(DeliveryStanding) as string[]).includes(v)) throw new Error(`invalid delivery standing: ${v}`);
+  return v as DeliveryStanding;
 }
+// DTOs validan con @IsIn(Object.values(DeliveryStanding)) (nunca forma enum clásica / @IsEnum)
 export class DeliveryOrder extends AggregateRoot {
   private constructor(private readonly _id: DeliveryOrderId, private readonly _contentRef: SignedContentRef, private readonly _payerRef: PayerRef, private readonly _orderPosition: SendingOrderPosition, private _standing: DeliveryStanding, private readonly _attempts: SendingAttempt[]) { super(); }
   static accept(id: DeliveryOrderId, content: SignedContentRef, payer: PayerRef, pos: SendingOrderPosition, signedProof: boolean): DeliveryOrder {
     if (!signedProof) throw new UnsignedContentRefusedError('content must arrive already signed');
     const o = new DeliveryOrder(id, content, payer, pos, DeliveryStanding.ACCEPTED, []);
-    o.registerEvent(new AcceptedForDelivery(id, content, payer));
+    o.registerEvent(new AcceptedForDeliveryEvent(id, content, payer));
     return o;
   }
   static rehydrate(id: DeliveryOrderId, content: SignedContentRef, payer: PayerRef, pos: SendingOrderPosition, standing: DeliveryStanding, attempts: SendingAttempt[]): DeliveryOrder {
@@ -102,36 +104,36 @@ export class DeliveryOrder extends AggregateRoot {
   order(): void {
     if (this._standing !== DeliveryStanding.ACCEPTED && this._standing !== DeliveryStanding.RETRIED) throw new IllegalDeliveryStateError('order only from ACCEPTED/RETRIED');
     this._standing = DeliveryStanding.ORDERED;
-    this.registerEvent(new OrderedForSending(this._id, this._payerRef, this._orderPosition));
+    this.registerEvent(new OrderedForSendingEvent(this._id, this._payerRef, this._orderPosition));
   }
   recordSending(): void {
     if (this._standing !== DeliveryStanding.ORDERED) throw new IllegalDeliveryStateError('send only from ORDERED');
     this._attempts.push(SendingAttempt.createSent(this._attempts.length + 1));
     this._standing = DeliveryStanding.SENT;
-    this.registerEvent(new SendingRecorded(this._id, this._attempts.length));
+    this.registerEvent(new SendingRecordedEvent(this._id, this._attempts.length));
   }
   recordConfirmation(): void {
     if (this._standing !== DeliveryStanding.SENT) throw new IllegalDeliveryStateError('confirm only from SENT');
     this._standing = DeliveryStanding.CONFIRMED;
-    this.registerEvent(new DeliveryConfirmed(this._id, this._contentRef));
+    this.registerEvent(new DeliveryConfirmedEvent(this._id, this._contentRef));
   }
   recordFailure(reason: FailureReason): void {
     if (this._standing !== DeliveryStanding.SENT) throw new IllegalDeliveryStateError('fail only from SENT');
     this._attempts.push(SendingAttempt.createFailed(this._attempts.length + 1, reason));
     this._standing = DeliveryStanding.FAILED;
-    this.registerEvent(new DeliveryFailed(this._id, reason));
+    this.registerEvent(new DeliveryFailedEvent(this._id, reason));
   }
   retry(policy: RetryPolicy): void {
     if (this._standing === DeliveryStanding.CONFIRMED) throw new IllegalDeliveryStateError('RetryAfterConfirmationRefused');
     if (this._standing !== DeliveryStanding.FAILED) throw new IllegalDeliveryStateError('retry only from FAILED');
     if (!policy.shouldRetry(this._attempts.length, this.lastReason())) throw new IllegalDeliveryStateError('RetryLimitReached');
     this._standing = DeliveryStanding.RETRIED;
-    this.registerEvent(new DeliveryRetried(this._id, this._attempts.length + 1));
+    this.registerEvent(new DeliveryRetriedEvent(this._id, this._attempts.length + 1));
   }
   abandon(reason: FailureReason): void {
     if (this._standing !== DeliveryStanding.FAILED) throw new IllegalDeliveryStateError('abandon only from FAILED');
     this._standing = DeliveryStanding.ABANDONED;
-    this.registerEvent(new DeliveryAbandoned(this._id, reason));
+    this.registerEvent(new DeliveryAbandonedEvent(this._id, reason));
   }
   /** Unica que decide el destino tras observar el ledger: confirma, o falla y deriva a abandonar/reintentar. El servicio traduce el outcome a primitivos y delega — nunca decide aqui. */
   observeOutcome(confirmed: boolean, reason: FailureReason | null, retryable: boolean, retries: RetryPolicy, fees: FeePolicy): void {
@@ -153,10 +155,15 @@ export class DeliveryOrder extends AggregateRoot {
 
 ### 2.2 Value Objects / Entidad interna
 
-`DeliveryOrderId` (`dlo-uuid`), `SignedContentRef`, `PayerRef`: `of()` + `equals()`, nunca intercambiables. `SendingOrderPosition`: entero `>= 0`, denso por payer (rephrase del sequence counter). `SendingAttempt` (entidad interna, solo construible por sus create-methods — el root nunca hace `new` directo): `{ nro, outcome: AttemptOutcome, reason? }`, inmutable, append-only. `AttemptOutcome`: `SENT | FAILED` (nunca string pelado). `FailureReason`: `LEDGER_REJECTED | COST_EXHAUSTED | RETRY_LIMIT_REACHED | ORDER_SUPERSEDED`, con `isRetryable()`.
+`DeliveryOrderId` (`dlo-uuid`), `SignedContentRef`, `PayerRef`: `of()` + `equals()`, nunca intercambiables. `SendingOrderPosition`: entero `>= 0`, denso por payer (rephrase del sequence counter). `SendingAttempt` (entidad interna, solo construible por sus create-methods — el root nunca hace `new` directo): `{ nro, outcome: AttemptOutcome, reason? }`, inmutable, append-only. `AttemptOutcome` (as const + type union + `parseAttemptOutcome()` vía `Object.values`, `@IsIn`): `SENT | FAILED` (nunca string pelado). `FailureReason`: `LEDGER_REJECTED | COST_EXHAUSTED | RETRY_LIMIT_REACHED | ORDER_SUPERSEDED`, con `isRetryable()`.
 
 ```typescript
-export enum AttemptOutcome { SENT = 'SENT', FAILED = 'FAILED' }
+export const AttemptOutcome = { SENT: 'SENT', FAILED: 'FAILED' } as const;
+export type AttemptOutcome = (typeof AttemptOutcome)[keyof typeof AttemptOutcome];
+export function parseAttemptOutcome(v: string): AttemptOutcome {
+  if (!(Object.values(AttemptOutcome) as string[]).includes(v)) throw new Error(`invalid attempt outcome: ${v}`);
+  return v as AttemptOutcome;
+}
 export class SendingAttempt {
   private constructor(public readonly nro: number, public readonly outcome: AttemptOutcome, public readonly reason: FailureReason | null) {}
   static createSent(nro: number): SendingAttempt { return new SendingAttempt(nro, AttemptOutcome.SENT, null); }
@@ -170,7 +177,7 @@ export class SendingAttempt {
 
 ### 2.3 Events (7) y puertos
 
-`AcceptedForDelivery | OrderedForSending | SendingRecorded | DeliveryConfirmed | DeliveryFailed | DeliveryRetried | DeliveryAbandoned` — `implements DomainEvent`, `static eventName`, VOs tipados. `DeliveryConfirmed/Failed/Abandoned` los consume Voting (R5). Repository: `findById`, `findOpenByContent`, `findByPayer`, `nextPositionForPayer`, `save`.
+`AcceptedForDeliveryEvent | OrderedForSendingEvent | SendingRecordedEvent | DeliveryConfirmedEvent | DeliveryFailedEvent | DeliveryRetriedEvent | DeliveryAbandonedEvent` — `implements DomainEvent`, `static eventName` (wire inalterado: `'AcceptedForDelivery'`, `'OrderedForSending'`, `'SendingRecorded'`, `'DeliveryConfirmed'`, `'DeliveryFailed'`, `'DeliveryRetried'`, `'DeliveryAbandoned'`), VOs tipados. `DeliveryConfirmedEvent/DeliveryFailedEvent/DeliveryAbandonedEvent` los consume Voting (R5). Repository: `findById`, `findOpenByContent`, `findByPayer`, `nextPositionForPayer`, `save`.
 
 ---
 
@@ -184,7 +191,7 @@ export class SendingAttempt {
 @Injectable()
 export class DeliveryCommandServiceImpl implements DeliveryCommandService {
   constructor(@Inject(DELIVERY_ORDER_REPOSITORY) private readonly orders: DeliveryOrderRepository, @Inject(LEDGER_GATEWAY) private readonly ledger: LedgerGatewayService, @Inject(DELIVERY_QUEUE) private readonly queue: DeliveryQueueService, @Inject(RETRY_POLICY) private readonly retries: RetryPolicy, @Inject(FEE_POLICY) private readonly fees: FeePolicy, @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork, private readonly events: EventEmitter2) {}
-  async accept(cmd: AcceptForDeliveryCommand): Promise<DeliveryOrderId> {
+  async accept(cmd: AcceptDeliveryOrderCommand): Promise<DeliveryOrderId> {
     const order = await this.uow.run(async () => {
       const open = await this.orders.findOpenByContent(cmd.contentRef);
       if (open) return open; // idempotente por contentRef abierto (uq_orders_open_content)
@@ -222,11 +229,11 @@ export class DeliveryCommandServiceImpl implements DeliveryCommandService {
 }
 ```
 
-Confirmacion y reintento en carrera se resuelven por standing: si `recordConfirmation()` gano, el reintento tardio falla con `RetryAfterConfirmationRefused`. Doble observacion del ledger se ignora (standing ya salio de `SENT`).
+Confirmacion y reintento en carrera se resuelven por standing: si `recordConfirmation()` gano, el reintento tardio falla con `RetryAfterConfirmationRefused`. Doble observacion del ledger se ignora (standing ya salio de `SENT`). El tramo observar→cerrar viaja como `RecordDeliveryOrderLedgerOutcomeCommand{orderId, confirmed, reason, retryable}` (antes `RecordLedgerOutcomeCommand`).
 
 ### 3.2 Queries, ports y handlers
 
-`getStandingByOrder` → `answerDeliveryStanding()`; `getSendingOrderByPayer` (por que espera una orden tardia); `getAttemptHistoryByOrder` (scrutiny). Ports: `LedgerGatewayService.submit()` → `{ confirmed, reason, retryable }`; `DeliveryQueueService.enqueue()`. `DeliveryConfirmedHandler` + `DeliveryFailedHandler` + `DeliveryAbandonedHandler`: `@OnEvent(<evt>.eventName, { async: true })` en este modulo → `ExternalVotingService.notifyConfirmed/Failed/Abandoned()` (R5, ACL en proceso, con `try/catch` + log; fallo de aviso no revierte la orden). Ningun `@OnEvent` vive en otro modulo.
+`GetDeliveryOrderStandingByIdQuery` → `answerDeliveryStanding()`; `GetDeliverySendingOrderByPayerQuery` (por que espera una orden tardia); `GetDeliveryAttemptHistoryByOrderQuery` (scrutiny). Ports: `LedgerGatewayService.submit()` → `{ confirmed, reason, retryable }`; `DeliveryQueueService.enqueue()`. `DeliveryConfirmedEventHandler` (`delivery-confirmed.event-handler.ts`) + `DeliveryFailedEventHandler` (`delivery-failed.event-handler.ts`) + `DeliveryAbandonedEventHandler` (`delivery-abandoned.event-handler.ts`): `@OnEvent(DeliveryConfirmedEvent.eventName / DeliveryFailedEvent.eventName / DeliveryAbandonedEvent.eventName, { async: true })` en este modulo → `ExternalVotingService.notifyConfirmed/Failed/Abandoned()` (R5, ACL en proceso, con `try/catch` + log; fallo de aviso no revierte la orden). Ningun `@OnEvent` vive en otro modulo.
 
 ---
 
@@ -258,7 +265,7 @@ export class SendingAttemptOrmEntity extends AuditableOrmEntity {
 }
 ```
 
-Hija en tabla propia (no `jsonb`): los intentos tienen identidad y se consultan por separado. Assembler con `parseDeliveryStanding()` / `parseFailureReason()` — nunca `as`.
+Hija en tabla propia (no `jsonb`): los intentos tienen identidad y se consultan por separado. Assembler con `parseDeliveryStanding()` / `parseFailureReason()` / `parseAttemptOutcome()` vía `Object.values` — nunca `as`/enum clásico; DTOs con `@IsIn(Object.values(...))`.
 
 ### 4.2 Cola BullMQ + Redis y RPC Polygon Amoy
 
@@ -302,7 +309,7 @@ Unico Template fuera de agregados. `PolygonAmoyGateway extends BaseLedgerGateway
 
 | Metodo | Endpoint | Descripcion |
 |:--|:--|:--|
-| `POST` | `/api/v1/deliveries` | `AcceptForDeliveryCommand` → 202 + `Location: /api/v1/deliveries/:id` |
+| `POST` | `/api/v1/deliveries` | `AcceptDeliveryOrderCommand` → 202 + `Location: /api/v1/deliveries/:id` |
 | `GET` | `/api/v1/deliveries/:id` | standing + reason (UC3) |
 | `GET` | `/api/v1/deliveries?payer=` | sending order por pagador |
 | `GET` | `/api/v1/deliveries/:id/attempts` | historial de intentos |
@@ -336,7 +343,7 @@ CREATE TABLE relay.sending_attempts (
 CREATE INDEX idx_orders_payer ON relay.orders (payer_ref, order_position);
 ```
 
-`UNIQUE(payer, position)` = no-overtaking estructural; `content_ref` ya NO es `UNIQUE` total sino parcial sobre no-terminales (`uq_orders_open_content`) — reintentar tras terminal no choca. Reintento HTTP del intake no lleva clave de dominio: la idempotencia de accept es por `contentRef` abierto (`findOpenByContent`); una clave `Idempotency-Key` de transporte, si se adopta, se resuelve en la capa interfaces (request log sin agregado), nunca en `AcceptForDeliveryCommand`. `SendingCost` no es columna en MVP: costo incobrable = `recordFailure(COST_EXHAUSTED)` via `FeePolicy`.
+`UNIQUE(payer, position)` = no-overtaking estructural; `content_ref` ya NO es `UNIQUE` total sino parcial sobre no-terminales (`uq_orders_open_content`) — reintentar tras terminal no choca. Reintento HTTP del intake no lleva clave de dominio: la idempotencia de accept es por `contentRef` abierto (`findOpenByContent`); una clave `Idempotency-Key` de transporte, si se adopta, se resuelve en la capa interfaces (request log sin agregado), nunca en `AcceptDeliveryOrderCommand`. `SendingCost` no es columna en MVP: costo incobrable = `recordFailure(COST_EXHAUSTED)` via `FeePolicy`.
 
 ---
 
@@ -358,8 +365,8 @@ POST /api/v1/deliveries { contentRef, payerRef, signedProof }
 
 ```
 worker BullMQ -> deliver(orderId)
- -> [uow] order() -> publish(OrderedForSending)
- -> [uow] recordSending() -> publish(SendingRecorded)
+  -> [uow] order() -> publish(OrderedForSendingEvent)
+  -> [uow] recordSending() -> publish(SendingRecordedEvent)
  -> ledger.submit() [fuera de tx]
  -> [uow] recordConfirmation | recordFailure -> retry (-> order de nuevo) | abandon
  -> publish -> handler interno -> ExternalVotingService.notify* (R5)
@@ -373,7 +380,7 @@ worker BullMQ -> deliver(orderId)
 
 | Relacion | Patron | Mecanismo |
 |:--|:--|:--|
-| Voting → Relay (R5) | Customer/Supplier + OHS | Intake solo-firmado; `DeliveryConfirmed/Failed/Abandoned` → Voting UC6 via `ExternalVotingService` |
+| Voting → Relay (R5) | Customer/Supplier + OHS | Intake solo-firmado; `DeliveryConfirmedEvent/DeliveryFailedEvent/DeliveryAbandonedEvent` (wire `'DeliveryConfirmed'`/`'DeliveryFailed'`/`'DeliveryAbandoned'`) → Voting UC6 via `ExternalVotingService` |
 | Wallet ⋮ Relay (R6) | **Separate Ways** | Cero integracion directa; `payerRef` es referencia opaca, nunca la signing capability |
 | Relay → Notifications | Via Voting | Relay no notifica personas; Voting decide el aviso con el reason |
 
@@ -406,11 +413,14 @@ Solo `CONFIRMED` cuenta para el tally (R5: intent vs fact).
 | D2 | Alta | `SendingAttempt` en `jsonb` sin identidad | Tabla hija `sending_attempts` |
 | D3 | Media | `recordConfirmation` y `retry` en carrera | Resuelto por standing: post-`CONFIRMED`, reintento → `RetryAfterConfirmationRefused` |
 | D4 | Media | Fachada con VOs de Relay | Primitivos; Voting traduce |
-| D5 | Media | `@OnEvent(DeliveryConfirmed)` suscrito desde Voting | Prohibido: handler interno + ACL `ExternalVotingService` |
+| D5 | Media | `@OnEvent(DeliveryConfirmedEvent)` suscrito desde Voting | Prohibido: handler interno + ACL `ExternalVotingService` |
 | D6 | **Alta** | Confundir reintento de cola (BullMQ) con reintento de dominio | Separados: BullMQ re-ejecuta `deliver()`; el agregado decide idempotencia por standing + `UNIQUE` parcial |
 | D7 | Baja | `as DeliveryStanding` en assembler | `parseDeliveryStanding()` explicito |
 | D8 | Media | `MAX_RETRIES` / `COST_EXHAUSTED` hardcodeados en agregado/servicio | Extraidos a `RetryPolicy.shouldRetry` + `FeePolicy` (providers, testeables) |
 | D9 | Media | Duda Composite orden + intentos | **KEEP — unico Composite permitido:** `DeliveryOrder` ownea `SendingAttempt[]`, padre + tabla hija (intentos con identidad consultable) |
+| D10 | Baja | Nomenclatura ddd-guideliness v1.0.7 | Enums → as const + type union + parser `Object.values` + `@IsIn` (`DeliveryStanding`, `AttemptOutcome`); 7 eventos → sufijo `Event` (wire `eventName` inalterado); handlers → `DeliveryConfirmedEventHandler`/`DeliveryFailedEventHandler`/`DeliveryAbandonedEventHandler` + `delivery-*.event-handler.ts`, `@OnEvent(XEvent.eventName)`; comandos ambiguos → `AcceptDeliveryOrderCommand`, `RecordDeliveryOrderLedgerOutcomeCommand`; queries formalizadas `GetDeliveryOrderStandingByIdQuery`/`GetDeliverySendingOrderByPayerQuery`/`GetDeliveryAttemptHistoryByOrderQuery` (origen slugs `standing-by-order`, `sending-order-by-payer`, `attempt-history-by-order`) |
+
+> Override proyecto (skill ddd-guideliness v1.0.7, CHANGELOG líneas 7-18): closed sets como `as const` (sin enum clásico ni `@IsEnum`); comandos `Action+Target+Command`, queries `Action+Target+Criteria+Query`, eventos `Target+PastAction` + sufijo `Event` solo en clase (wire inalterado), handlers `<EventName>EventHandler`.
 
 ### Decisiones
 

@@ -29,7 +29,7 @@ src/document-ocr-face-match-provider/
 ├── application/internal/outboundservices/acl/external-consent.service.ts
 ├── domain/model/aggregates/document-examination.aggregate.ts
 ├── domain/model/valueobjects/ (examination-id, person-id, document-ref, standing, verdict, unreadable-reason, validity-window)
-├── domain/model/commands/ (request-examination, request-reexamination, expire-examination)
+├── domain/model/commands/ (request-document-examination, request-document-reexamination, examine-document-examination, expire-document-examination)
 ├── domain/model/queries/ (get-standing, get-history)
 ├── domain/model/events/ (7: requested, refused, extracted, compared, concluded, expired, reexamination-requested)
 ├── domain/services/ + repositories/ + exceptions/ (already-open, no-open, concluded, no-eligible-membership, contact-not-allowed)
@@ -62,8 +62,19 @@ export interface Examinable {
   noteRefused(reason: string): void; // scrutiny sin transición: el rechazo queda en el historial del abierto
   expire(now: Date): void;
 }
-export enum ExaminationStanding { OPEN = 'OPEN', CONCLUDED = 'CONCLUDED', EXPIRED = 'EXPIRED' }
-export enum Verdict { MATCH = 'MATCH', NO_MATCH = 'NO_MATCH', UNREADABLE = 'UNREADABLE' }
+export const ExaminationStanding = { OPEN: 'OPEN', CONCLUDED: 'CONCLUDED', EXPIRED: 'EXPIRED' } as const;
+export type ExaminationStanding = (typeof ExaminationStanding)[keyof typeof ExaminationStanding];
+export function parseExaminationStanding(v: string): ExaminationStanding {
+  if (!(Object.values(ExaminationStanding) as string[]).includes(v)) throw new Error(`invalid examination standing: ${v}`);
+  return v as ExaminationStanding;
+}
+export const Verdict = { MATCH: 'MATCH', NO_MATCH: 'NO_MATCH', UNREADABLE: 'UNREADABLE' } as const;
+export type Verdict = (typeof Verdict)[keyof typeof Verdict];
+export function parseVerdict(v: string): Verdict {
+  if (!(Object.values(Verdict) as string[]).includes(v)) throw new Error(`invalid verdict: ${v}`);
+  return v as Verdict;
+}
+// UnreadableReason: conjunto cerrado en 5 como as const + type union + parseUnreadableReason(Object.values) + @IsIn(Object.values(UnreadableReason)) en DTOs (nunca forma enum clásica / `as` / `@IsEnum`)
 export class DocumentExamination extends AggregateRoot {
   private constructor(private readonly _id: ExaminationId, private readonly _personId: PersonId,
     private readonly _documentRef: DocumentRef, private _standing: ExaminationStanding,
@@ -71,40 +82,40 @@ export class DocumentExamination extends AggregateRoot {
     private _consumed = false, private _extracted = false, private _compared = false) { super(); }
   static request(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; window: ValidityWindow }): DocumentExamination {
     const e = new DocumentExamination(i.id, i.personId, i.documentRef, ExaminationStanding.OPEN, i.window);
-    e.registerEvent(new ExaminationRequested(e._id, e._personId, e._documentRef)); return e;
+    e.registerEvent(new ExaminationRequestedEvent(e._id, e._personId, e._documentRef)); return e;
   }
   static rehydrate(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; standing: ExaminationStanding; window: ValidityWindow; verdict: Verdict | null; consumed: boolean; extracted: boolean; compared: boolean }): DocumentExamination {
     return new DocumentExamination(i.id, i.personId, i.documentRef, i.standing, i.window, i.verdict, i.consumed, i.extracted, i.compared);
   }
   recordExtraction(readable: boolean, reason: UnreadableReason | null): void {
     this.assertOpen(); this._extracted = true;
-    this.registerEvent(new DocumentExtracted(this._id, readable, reason));
+    this.registerEvent(new DocumentExtractedEvent(this._id, readable, reason));
   }
   recordComparison(holds: boolean): void {
     this.assertOpen();
     if (!this._extracted) throw new NoOpenExaminationError('comparison without clean read');
-    this._compared = true; this.registerEvent(new FacesCompared(this._id, holds));
+    this._compared = true; this.registerEvent(new FacesComparedEvent(this._id, holds));
   }
   recordVerdict(v: Verdict): void {
     this.assertOpen();
     if (!this._extracted) throw new NoOpenExaminationError('verdict without extraction');
     this._verdict = v; this._standing = ExaminationStanding.CONCLUDED;
-    this.registerEvent(new ExaminationConcluded(this._id, v));
+    this.registerEvent(new ExaminationConcludedEvent(this._id, v));
   }
   noteRefused(reason: string): void {
     this.assertOpen();
-    this.registerEvent(new ExaminationRefused(this._id, this._personId, reason)); // DUPLICATE: historia sin transición
+    this.registerEvent(new ExaminationRefusedEvent(this._id, this._personId, reason)); // DUPLICATE: historia sin transición
   }
   expire(now: Date): void {
     if (this._standing !== ExaminationStanding.OPEN) return;
     if (!this._window.isElapsed(now)) throw new ExaminationConcludedError('window still answerable');
     this._standing = ExaminationStanding.EXPIRED;
-    this.registerEvent(new ExaminationExpired(this._id, this._personId));
+    this.registerEvent(new ExaminationExpiredEvent(this._id, this._personId));
   }
   requestReexamination(newId: ExaminationId, w: ValidityWindow): DocumentExamination {
     if (this._standing === ExaminationStanding.OPEN) throw new ExaminationAlreadyOpenError('one OPEN per person+doc');
     const f = new DocumentExamination(newId, this._personId, this._documentRef, ExaminationStanding.OPEN, w);
-    f.registerEvent(new ReexaminationRequested(this._id, newId)); return f;
+    f.registerEvent(new ReexaminationRequestedEvent(this._id, newId)); return f;
   }
   answerStanding(): { usableMatch: boolean } {
     return { usableMatch: this._standing === ExaminationStanding.CONCLUDED && this._verdict === Verdict.MATCH && !this._consumed };
@@ -124,8 +135,8 @@ Invariantes: ≤1 `OPEN` por (persona, documento); concluida/expirada nunca resp
 |:--|:--|
 | `ExaminationId` (`exm-`+UUID, `of/generate`) | Identidad estable, nunca reutilizada |
 | `PersonId` / `DocumentRef` (`of`) | Referencias por identidad, no embebidas |
-| `ExaminationStanding` / `Verdict` (enum + `parseX()`, nunca `as`) | Sets cerrados |
-| `UnreadableReason` (5: `BLURRY, GLARE, CROPPED, EXPIRED, MISMATCHED_TYPE`) | Cerrado en 5 |
+| `ExaminationStanding` / `Verdict` (as const + type union + `parseX()` vía `Object.values`, `@IsIn(Object.values(...))` en DTOs, nunca `enum`/`as`/`@IsEnum`) | Sets cerrados |
+| `UnreadableReason` (as const 5: `BLURRY, GLARE, CROPPED, EXPIRED, MISMATCHED_TYPE` + `parseUnreadableReason()` vía `Object.values`, `@IsIn`) | Cerrado en 5 |
 | `ValidityWindow(requestedAt, ttlMinutes)` + `isElapsed(now)` | Ventana terminal |
 
 ```typescript
@@ -142,23 +153,23 @@ export class ValidityWindow {
 ### 2.3 Commands / 2.4 Queries / 2.5 Excepciones
 
 ```typescript
-export class RequestExaminationCommand { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) { if (!personId || !documentRef) throw new Error('person+document required'); } }
-export class RequestReexaminationCommand { constructor(public readonly priorExaminationId: ExaminationId) {} }
-export class ExamineDocumentCommand { constructor(public readonly examinationId: ExaminationId) { if (!examinationId) throw new Error('examination required'); } }
-export class ExpireExaminationCommand { constructor(public readonly examinationId: ExaminationId, public readonly now: Date) {} }
+export class RequestDocumentExaminationCommand { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) { if (!personId || !documentRef) throw new Error('person+document required'); } }
+export class RequestDocumentReexaminationCommand { constructor(public readonly priorExaminationId: ExaminationId) {} }
+export class ExamineDocumentExaminationCommand { constructor(public readonly examinationId: ExaminationId) { if (!examinationId) throw new Error('examination required'); } }
+export class ExpireDocumentExaminationCommand { constructor(public readonly examinationId: ExaminationId, public readonly now: Date) {} }
 export class GetExaminationStandingByPersonAndDocumentQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
 export class GetExaminationHistoryByPersonAndDocumentQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
 ```
 
-UC2 `examineDocument` viaja en `ExamineDocumentCommand{examinationId}` de primera clase (la dispara el worker tras `request`, sin intención de usuario de por medio — el comando nombra el trabajo pendiente, no una intención humana): extracción/comparación/veredicto se observan del ejecutor y se aplican vía `record*` en orquestación app-side. `record*` observado preserva el límite: el dominio juzga el pipeline, nunca ejecuta vendors. Push único `ExaminationConcluded(MATCH)` → Biometric consume single-use + pull de standing. Excepciones puras: `ExaminationAlreadyOpenError`, `NoOpenExaminationError`, `ExaminationConcludedError`, `NoEligibleMembershipError` (R8, 403), `ContactNotAllowedError` (consent gate, 403) (+ `Object.setPrototypeOf`).
+UC2 `examineDocument` viaja en `ExamineDocumentExaminationCommand{examinationId}` de primera clase (la dispara el worker tras `request`, sin intención de usuario de por medio — el comando nombra el trabajo pendiente, no una intención humana): extracción/comparación/veredicto se observan del ejecutor y se aplican vía `record*` en orquestación app-side. `record*` observado preserva el límite: el dominio juzga el pipeline, nunca ejecuta vendors. Push único `ExaminationConcludedEvent(MATCH)` (wire `eventName='ExaminationConcluded'`) → Biometric consume single-use + pull de standing. Excepciones puras: `ExaminationAlreadyOpenError`, `NoOpenExaminationError`, `ExaminationConcludedError`, `NoEligibleMembershipError` (R8, 403), `ContactNotAllowedError` (consent gate, 403) (+ `Object.setPrototypeOf`).
 
 ### 2.6 Eventos (7)
 
-`ExaminationRequested` (person, docRef) · `ExaminationRefused` (reason) · `DocumentExtracted` (readable, reason?) · `FacesCompared` (holds) · `ExaminationConcluded` (verdict) · `ExaminationExpired` (person) · `ReexaminationRequested` (priorId, newId). Ninguno lleva imágenes, retratos, artefactos, vendor ids ni scores.
+`ExaminationRequestedEvent` (person, docRef) · `ExaminationRefusedEvent` (reason) · `DocumentExtractedEvent` (readable, reason?) · `FacesComparedEvent` (holds) · `ExaminationConcludedEvent` (verdict) · `ExaminationExpiredEvent` (person) · `ReexaminationRequestedEvent` (priorId, newId). Ninguno lleva imágenes, retratos, artefactos, vendor ids ni scores. Wire `eventName` inalterado (`'ExaminationRequested'`, `'ExaminationRefused'`, `'DocumentExtracted'`, `'FacesCompared'`, `'ExaminationConcluded'`, `'ExaminationExpired'`, `'ReexaminationRequested'`).
 
 ```typescript
-export class ExaminationConcluded implements DomainEvent {
-  static readonly eventName = 'ExaminationConcluded'; readonly eventName = ExaminationConcluded.eventName; readonly occurredAt = new Date();
+export class ExaminationConcludedEvent implements DomainEvent {
+  static readonly eventName = 'ExaminationConcluded'; readonly eventName = ExaminationConcludedEvent.eventName; readonly occurredAt = new Date();
   constructor(public readonly examinationId: ExaminationId, public readonly verdict: Verdict) {}
 }
 ```
@@ -168,10 +179,10 @@ export class ExaminationConcluded implements DomainEvent {
 ```typescript
 export const EXAMINATION_COMMAND_SERVICE = Symbol('EXAMINATION_COMMAND_SERVICE');
 export interface ExaminationCommandService {
-  requestExamination(c: RequestExaminationCommand): Promise<ExaminationId>;
-  requestReexamination(c: RequestReexaminationCommand): Promise<ExaminationId>;
-  examineDocument(c: ExamineDocumentCommand): Promise<void>; // UC2 anchor
-  expireExamination(c: ExpireExaminationCommand): Promise<void>;
+  requestExamination(c: RequestDocumentExaminationCommand): Promise<ExaminationId>;
+  requestReexamination(c: RequestDocumentReexaminationCommand): Promise<ExaminationId>;
+  examineDocument(c: ExamineDocumentExaminationCommand): Promise<void>; // UC2 anchor
+  expireExamination(c: ExpireDocumentExaminationCommand): Promise<void>;
 }
 export const EXAMINATION_QUERY_SERVICE = Symbol('EXAMINATION_QUERY_SERVICE');
 export interface ExaminationQueryService {
@@ -200,7 +211,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     @Inject(MEMBERSHIP_PORT) private readonly membership: ExternalMembershipService,
     @Inject(CONSENT_PORT) private readonly consent: ExternalConsentService,
     @Inject(EXECUTOR_PORT) private readonly executor: DocumentExecutorService) {}
-  async requestExamination(cmd: RequestExaminationCommand): Promise<ExaminationId> {
+  async requestExamination(cmd: RequestDocumentExaminationCommand): Promise<ExaminationId> {
     if (!(await this.membership.belongsToAnyCommunity(cmd.personId.value))) throw new NoEligibleMembershipError('person belongs nowhere');
     if (!(await this.consent.mayProcessNow(cmd.personId.value))) throw new ContactNotAllowedError('processing not allowed now');
     const open = await this.exams.findOpenByPersonAndDocument(cmd.personId, cmd.documentRef);
@@ -217,7 +228,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     });
     this.publish(e); return e.id;
   }
-  async examineDocument(cmd: ExamineDocumentCommand): Promise<void> { // UC2 anchor
+  async examineDocument(cmd: ExamineDocumentExaminationCommand): Promise<void> { // UC2 anchor
     const id = cmd.examinationId;
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(id);
@@ -228,7 +239,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     });
     this.publish(e);
   }
-  async requestReexamination(cmd: RequestReexaminationCommand): Promise<ExaminationId> {
+  async requestReexamination(cmd: RequestDocumentReexaminationCommand): Promise<ExaminationId> {
     const created = await this.uow.run(async () => {
       const prior = await this.exams.findByIdOrThrow(cmd.priorExaminationId); // el reexamen vincula al previo, nunca lo transiciona
       const x = prior.requestReexamination(ExaminationId.generate(), ValidityWindow.now(30));
@@ -236,7 +247,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     });
     this.publish(created); return created.id;
   }
-  async expireExamination(cmd: ExpireExaminationCommand): Promise<void> {
+  async expireExamination(cmd: ExpireDocumentExaminationCommand): Promise<void> {
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(cmd.examinationId);
       x.expire(cmd.now);
@@ -270,7 +281,7 @@ Executor-first: mismo puerto, adaptadores Rekognition/GDocAI intercambiables; el
 
 ### 3.4 Handlers + 3.5 Facade ACL
 
-`ExaminationEventLogger` (`@OnEvent(...eventName)`) solo observabilidad. Si otro BC necesita el `MATCH`, el handler in-module llama su facade (nunca `@OnEvent` cross-module). `OcrContextFacadeImpl` expone `answerUsableMatch()` + `consumeMatch()` (single-use: `markConsumed()` + `save` en UoW).
+`ExaminationEventLogger` (`@OnEvent(...eventName)`, exempto del renombre `<Stem>EventHandler` — logger genérico, no handler de un evento) solo observabilidad. Si otro BC necesita el `MATCH`, el handler in-module llama su facade (nunca `@OnEvent` cross-module). `OcrContextFacadeImpl` expone `answerUsableMatch()` + `consumeMatch()` (single-use: `markConsumed()` + `save` en UoW). Eventos observados como `ExaminationConcludedEvent` y demás (wire `eventName` inalterado).
 
 ---
 
@@ -290,7 +301,7 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
 }
 ```
 
-`ExaminationRepositoryImpl` usa `TransactionContext.current ?? orm`; assembler con `parseExaminationStanding/parseVerdict/parseUnreadableReason` (nunca `as`). Índice parcial `WHERE standing='OPEN'` en migración (§6).
+`ExaminationRepositoryImpl` usa `TransactionContext.current ?? orm`; assembler con `parseExaminationStanding()/parseVerdict()/parseUnreadableReason()` vía `Object.values` (nunca `as`/`enum`); DTOs validan con `@IsIn(Object.values(...))`. Índice parcial `WHERE standing='OPEN'` en migración (§6).
 
 ### 4.2 Adaptadores ejecutor + 4.3 Módulo
 
@@ -320,7 +331,7 @@ export class DocumentOcrFaceMatchProviderModule {}
 
 | Método | Endpoint | Uso |
 |:--|:--|:--|
-| `POST` | `/api/v1/examinations` | `RequestExaminationCommand` → 201 + `Location` |
+| `POST` | `/api/v1/examinations` | `RequestDocumentExaminationCommand` → 201 + `Location` |
 | `POST` | `/api/v1/examinations/:id/reexaminations` | Nuevo ID vinculado al previo |
 | `POST` | `/api/v1/examinations/:id/examine` | UC2 anchor |
 | `GET` | `/api/v1/examinations/standing?personId=&documentRef=` | `GetExaminationStandingByPersonAndDocumentQuery` |
@@ -375,8 +386,8 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 ## 7. Flujos CQRS por Caso de Uso
 
 **UC1 Request:** `POST` → `belongsToAnyCommunity?` (R8) + `mayProcessNow?` → `findOpen` (doble → `noteRefused('DUPLICATE')` + publish + 409) → `request()` → `save` (UoW) → publish post-commit → 201.
-**UC2 ExamineDocument (anchor):** `examine(id)` → assert OPEN+ventana → `observeExtraction→recordExtraction` → si ilegible `recordVerdict(UNREADABLE)`; si legible `observeComparison→recordComparison→recordVerdict(MATCH|NO_MATCH)` → `save` → publish → push único `Concluded(MATCH)` consumible vía facade (R7, una vez) + pull `answerUsableMatch/consumeMatch`. Comparar sin lectura limpia o veredicto tardío se rechaza.
-**UC3 Expire / UC4 Reexamen / UC5 Standing:** sweep `findOpenExpired→expire→ExaminationExpired`; reexamen solo si previo terminal (`requestReexamination(newId)` + `ReexaminationRequested` + `ExaminationRequested`); standing = query → `answerStanding()`, sin evento.
+**UC2 ExamineDocument (anchor):** `examine(id)` → assert OPEN+ventana → `observeExtraction→recordExtraction` → si ilegible `recordVerdict(UNREADABLE)`; si legible `observeComparison→recordComparison→recordVerdict(MATCH|NO_MATCH)` → `save` → publish → push único `ExaminationConcludedEvent(MATCH)` consumible vía facade (R7, una vez) + pull `answerUsableMatch/consumeMatch`. Comparar sin lectura limpia o veredicto tardío se rechaza.
+**UC3 Expire / UC4 Reexamen / UC5 Standing:** sweep `findOpenExpired→expire→ExaminationExpiredEvent` (wire `'ExaminationExpired'`); reexamen solo si previo terminal (`requestReexamination(newId)` + `ReexaminationRequestedEvent` + `ExaminationRequestedEvent`); standing = query → `answerStanding()`, sin evento.
 
 ---
 
@@ -386,7 +397,7 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 
 | Dirección | Relación | Mecanismo |
 |:--|:--|:--|
-| OCR → Biometric (R7 Customer/Supplier) | `ExaminationConcluded(MATCH)` + `consumeMatch` | ACL single-use; nada image-like cruza |
+| OCR → Biometric (R7 Customer/Supplier) | `ExaminationConcludedEvent(MATCH)` (wire `'ExaminationConcluded'`) + `consumeMatch` | ACL single-use; nada image-like cruza |
 | Membership → OCR (R8 Conformist) | `belongsToAnyCommunity` | Precondición UC1/UC4; `NoEligibleMembership` |
 | Consent → OCR | `mayProcessNow` | Gate UC1/UC4; `ContactNotAllowed` |
 | IAM → OCR | Existencia persona | Referencia por identidad |
@@ -422,6 +433,9 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 | D5 | Baja | Publish dentro de `uow.run()` | Publish solo tras commit |
 | D6 | Baja | `@OnEvent` cross-BC | Handler in-module + ACL |
 | D7 | Baja | Composite para facetas H4 | No aplica: facetas H4 son estados del único examen; evidencia muere, nada que componer |
+| D8 | Baja | Nomenclatura ddd-guideliness v1.0.7 | Enums → as const + type union + parser `Object.values` + `@IsIn` (`ExaminationStanding`, `Verdict`, `UnreadableReason`); 7 eventos → sufijo `Event` (wire `eventName` inalterado); 4 comandos ambiguos → `RequestDocumentExaminationCommand`, `RequestDocumentReexaminationCommand`, `ExamineDocumentExaminationCommand`, `ExpireDocumentExaminationCommand`; `ExaminationEventLogger` exempto de `<Stem>EventHandler` |
+
+> Override proyecto (skill ddd-guideliness v1.0.7, CHANGELOG líneas 7-18): closed sets como `as const` (sin enum clásico ni `@IsEnum`); comandos `Action+Target+Command`, queries `Action+Target+Criteria+Query`, eventos `Target+PastAction` + sufijo `Event` solo en clase (wire inalterado), handlers `<EventName>EventHandler` — `ExaminationEventLogger` exempto por ser logger genérico.
 
 **Preguntas abiertas:** ninguna bloqueante (veredicto single-use, reexamen ilimitado con IDs frescos, nada retenido, 5 razones, swap neutro — todo resuelto en storming).
 

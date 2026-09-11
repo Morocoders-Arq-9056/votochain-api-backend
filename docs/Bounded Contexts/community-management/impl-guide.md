@@ -46,7 +46,7 @@ src/community/
 │       ├── queryservices/
 │       │   └── community-query.service.impl.ts
 │       ├── eventhandlers/
-│       │   └── community-event-logger.ts
+│       │   └── community-event-logger.ts (exempt logger)
 │       └── outboundservices/acl/
 │           └── external-iam.service.ts   # person-existence check (UC5)
 ├── domain/
@@ -85,7 +85,8 @@ Owns settings, voting policy (supersede-chain), administrator list. Never holds 
 
 ```typescript
 import { AggregateRoot } from '../../../../shared/domain/model/aggregate-root';
-export enum CommunityStanding { REGISTERED = 'REGISTERED', ACTIVE = 'ACTIVE', SUSPENDED = 'SUSPENDED', ARCHIVED = 'ARCHIVED' }
+export const CommunityStanding = { REGISTERED: 'REGISTERED', ACTIVE: 'ACTIVE', SUSPENDED: 'SUSPENDED', ARCHIVED: 'ARCHIVED' } as const;
+export type CommunityStanding = typeof CommunityStanding[keyof typeof CommunityStanding];
 /** CommunityStatus = CommunityStanding (nombre spec); se conserva CommunityStanding en codigo. */
 export type CommunityStatus = CommunityStanding;
 
@@ -103,11 +104,11 @@ export class Community extends AggregateRoot implements CommunityStandable {
     private _admins: CommunityAdmin[],
   ) { super(); }
 
-  /** Brand-new community. Always REGISTERED; raises CommunityRegistered. */
+  /** Brand-new community. Always REGISTERED; raises CommunityRegisteredEvent. */
   static register(input: { settings: CommunitySettings; admin: CommunityAdmin }): Community {
     const c = new Community(CommunityId.generate(), CommunityStanding.REGISTERED,
       input.settings, null, [input.admin]);
-    c.registerEvent(new CommunityRegistered(c._id, c._settings));
+    c.registerEvent(new CommunityRegisteredEvent(c._id, c._settings));
     return c;
   }
 
@@ -122,14 +123,14 @@ export class Community extends AggregateRoot implements CommunityStandable {
     if (this._standing !== CommunityStanding.REGISTERED) throw new IllegalCommunityTransitionError('not registrable');
     if (!this._policy) throw new PolicyUndefinedError('policy required');
     if (this._admins.length < 1) throw new LastAdministratorError('need >=1 admin');
-    this.applyStandingTransition(CommunityStanding.REGISTERED, CommunityStanding.ACTIVE, new CommunityActivated(this._id));
+    this.applyStandingTransition(CommunityStanding.REGISTERED, CommunityStanding.ACTIVE, new CommunityActivatedEvent(this._id));
   }
 
   definePolicy(next: VotingPolicy): void {
     if (this._standing === CommunityStanding.ARCHIVED) throw new ArchivedIsTerminalError('terminal');
     const supersedes = this._policy;
     this._policy = next; // supersede-chain: history kept, past never edited
-    this.registerEvent(new VotingPolicyDefined(this._id, next, supersedes));
+    this.registerEvent(new VotingPolicyDefinedEvent(this._id, next, supersedes));
   }
 
   removeAdmin(person: PersonId): void {
@@ -138,7 +139,7 @@ export class Community extends AggregateRoot implements CommunityStandable {
     if (this._standing === CommunityStanding.ACTIVE && this._admins.length === 1)
       throw new LastAdministratorError('last admin while active');
     this._admins = this._admins.filter((a) => !a.personId.equals(person));
-    this.registerEvent(new CommunityAdminRemoved(this._id, person));
+    this.registerEvent(new CommunityAdminRemovedEvent(this._id, person));
   }
 
   /** Template de transicion de standing; skeleton reusado por activate/suspend/reactivate/archive. */
@@ -155,18 +156,18 @@ export class Community extends AggregateRoot implements CommunityStandable {
 
   suspend(reason: string): void {
     this.assertMutable();
-    this.applyStandingTransition(CommunityStanding.ACTIVE, CommunityStanding.SUSPENDED, new CommunitySuspended(this._id, reason));
+    this.applyStandingTransition(CommunityStanding.ACTIVE, CommunityStanding.SUSPENDED, new CommunitySuspendedEvent(this._id, reason));
   }
 
   reactivate(): void {
-    this.applyStandingTransition(CommunityStanding.SUSPENDED, CommunityStanding.ACTIVE, new CommunityReactivated(this._id));
+    this.applyStandingTransition(CommunityStanding.SUSPENDED, CommunityStanding.ACTIVE, new CommunityReactivatedEvent(this._id));
   }
 
   archive(reason: string): void {
     this.assertMutable();
     if (this._standing !== CommunityStanding.ACTIVE && this._standing !== CommunityStanding.SUSPENDED)
       throw new IllegalCommunityTransitionError('archive only from ACTIVE/SUSPENDED');
-    this.applyStandingTransition(this._standing, CommunityStanding.ARCHIVED, new CommunityArchived(this._id, reason));
+    this.applyStandingTransition(this._standing, CommunityStanding.ARCHIVED, new CommunityArchivedEvent(this._id, reason));
   }
   // updateSettings(), appointAdmin(),
   // answerStanding(), answerPolicy() follow same shape (mutadores llaman assertMutable() primero).
@@ -198,7 +199,7 @@ export class Community extends AggregateRoot implements CommunityStandable {
 
 ### 2.6 Domain Events (9)
 
-`CommunityRegistered`, `CommunityActivated`, `CommunitySettingsUpdated`, `VotingPolicyDefined(supersedes)`, `CommunityAdminAppointed`, `CommunityAdminRemoved`, `CommunitySuspended(reason)`, `CommunityReactivated`, `CommunityArchived(reason)` — `implements DomainEvent`, `static eventName`.
+`CommunityRegisteredEvent`, `CommunityActivatedEvent`, `CommunitySettingsUpdatedEvent`, `VotingPolicyDefinedEvent(supersedes)`, `CommunityAdminAppointedEvent`, `CommunityAdminRemovedEvent`, `CommunitySuspendedEvent(reason)`, `CommunityReactivatedEvent`, `CommunityArchivedEvent(reason)` — `implements DomainEvent`, `static eventName`.
 
 ### 2.7 Domain Services (ports)
 
@@ -272,13 +273,13 @@ Read-only: `getById`, `getPolicy` (throws `PolicyUndefinedError` when none defin
 
 ### 3.4 Event Handlers (Observer, solo in-module)
 
-`community-event-logger.ts` — `@OnEvent(...)` solo dentro del modulo; ningun BC foraneo suscribe directo. `publish()` unicamente despues de `uow.run()`. Fan-out:
+`community-event-logger.ts` (exempt logger) — `@OnEvent(...)` solo dentro del modulo; ningun BC foraneo suscribe directo. `publish()` unicamente despues de `uow.run()`. Fan-out:
 
 | Evento | Reaccion |
 |:--|:--|
-| `CommunityActivated` / `CommunitySuspended` / `CommunityReactivated` | gates Membership (altas) + Voting (aperturas) via `answerStanding()` |
-| `VotingPolicyDefined(supersedes)` | Voting congela `QuorumSnapshot` en cada apertura (pull, nunca push mid-vote) |
-| `CommunityArchived` | cierre terminal observado via ACL por Membership/Voting/Notifications |
+| `CommunityActivatedEvent` / `CommunitySuspendedEvent` / `CommunityReactivatedEvent` | gates Membership (altas) + Voting (aperturas) via `answerStanding()` |
+| `VotingPolicyDefinedEvent(supersedes)` | Voting congela `QuorumSnapshot` en cada apertura (pull, nunca push mid-vote) |
+| `CommunityArchivedEvent` | cierre terminal observado via ACL por Membership/Voting/Notifications |
 
 ### 3.5 ACL Facade (application)
 
@@ -388,9 +389,9 @@ POST /api/v1/communities { name, domicile, contact, adminPersonId }
  -> RegisterCommandFromResourceAssembler.toCommand()
  -> CommunityCommandServiceImpl.register() inside UNIT_OF_WORK.run()
      -> findByName? else CommunityAlreadyExistsError
-     -> Community.register({ settings, admin }) -> CommunityRegistered
+     -> Community.register({ settings, admin }) -> CommunityRegisteredEvent
      -> communities.save()
- -> after commit: emit(CommunityRegistered) -> 201 + CommunityResource
+ -> after commit: emit(CommunityRegisteredEvent) -> 201 + CommunityResource
 ```
 
 ### 7.2 DefineVotingPolicy anchor (UC4)
@@ -399,9 +400,9 @@ POST /api/v1/communities { name, domicile, contact, adminPersonId }
 PUT /api/v1/communities/:id/policy { threshold, basis, majorityRule }
  -> DefineVotingPolicyCommand -> definePolicy() inside UNIT_OF_WORK.run()
      -> not ARCHIVED? coherent threshold+basis? else rejection
-     -> community.definePolicy(next) -> VotingPolicyDefined(supersedes)
+     -> community.definePolicy(next) -> VotingPolicyDefinedEvent(supersedes)
      -> communities.save()
-  -> after commit: emit(VotingPolicyDefined)
+  -> after commit: emit(VotingPolicyDefinedEvent)
 Voting pulls at each opening via answerPolicy [R1]; frozen QuorumSnapshot stays untouched.
 Fan-out Observer (ver §3.4): Activated/Suspended/Reactivated → gates Membership+Voting; PolicyDefined → quorum freeze en Voting.
 ```
@@ -429,7 +430,7 @@ Fan-out Observer (ver §3.4): Activated/Suspended/Reactivated → gates Membersh
 | Community → IAM | ACL consumida | `ExternalIamService` → `IAM_CONTEXT_FACADE` (UC5 only) |
 | `COMMUNITY_CONTEXT_FACADE` | ACL publicada (OHS) | Primitives-only `answerPolicy/answerStanding` |
 | Events | `EventEmitter2` | Publish after `uow.run()`; `forRoot()` once in `AppModule` |
-| Infra | Sin Strategy | Sin Strategy aqui por spec: la evaluacion de policy vive en Voting; Community solo versiona (`definePolicy` supersede-chain) y publica `VotingPolicyDefined`. No Auth0/OTP/mail; policy math es dominio puro |
+| Infra | Sin Strategy | Sin Strategy aqui por spec: la evaluacion de policy vive en Voting; Community solo versiona (`definePolicy` supersede-chain) y publica `VotingPolicyDefinedEvent`. No Auth0/OTP/mail; policy math es dominio puro |
 
 ---
 
@@ -445,6 +446,9 @@ Fan-out Observer (ver §3.4): Activated/Suspended/Reactivated → gates Membersh
 | 4 | Media | Last-admin removal while ACTIVE | `LastAdministratorError` invariant; ≥1 admin enforced in `activate/removeAdmin` |
 | 5 | Baja | Facade typed with consumer VOs candidate | Primitives-only facade; translation in consumer `ExternalCommunityService` |
 | 6 | Baja | BaseAssembler / Composite candidatos | Rechazados: sin assembler base (assembler dedicado); sin Composite (admins como VO-set `simple-json` es correcto) |
+| V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
+
+Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.
 
 Decisions locked: single Postgres schema-per-BC (`community.communities`); VotingPolicy supersede-chain with future-openings-only reads; ≥1 admin while ACTIVE.
 

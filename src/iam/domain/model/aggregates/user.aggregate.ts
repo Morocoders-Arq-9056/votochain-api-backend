@@ -1,0 +1,159 @@
+import { AggregateRoot } from "../../../../shared/domain/model/aggregate-root.js";
+import { IllegalUserStateError } from "../../exceptions/illegal-user-state.error.js";
+import { LastProofRefusedError } from "../../exceptions/last-proof-refused.error.js";
+import { NoOpenSessionError } from "../../exceptions/no-open-session.error.js";
+import { OutsideProofAlreadyLinkedError } from "../../exceptions/outside-proof-already-linked.error.js";
+import { RoleAlreadyHeldError } from "../../exceptions/role-already-held.error.js";
+import { RoleNotHeldError } from "../../exceptions/role-not-held.error.js";
+import { SuspendedRefusedError } from "../../exceptions/suspended-refused.error.js";
+import { AccessRestoredEvent } from "../events/access-restored.event.js";
+import { AccessSuspendedEvent } from "../events/access-suspended.event.js";
+import { EmailChangedEvent } from "../events/email-changed.event.js";
+import { EmailVerifiedEvent } from "../events/email-verified.event.js";
+import { OutsideIdentityLinkedEvent } from "../events/outside-identity-linked.event.js";
+import { OutsideIdentityUnlinkedEvent } from "../events/outside-identity-unlinked.event.js";
+import { SecretChangedEvent } from "../events/secret-changed.event.js";
+import { SystemRoleGrantedEvent } from "../events/system-role-granted.event.js";
+import { SystemRoleRevokedEvent } from "../events/system-role-revoked.event.js";
+import { UserSignedInEvent } from "../events/user-signed-in.event.js";
+import { UserSignedOutEvent } from "../events/user-signed-out.event.js";
+import { UserSignedUpEvent } from "../events/user-signed-up.event.js";
+import { AccessStandable } from "../valueobjects/access-standable.js";
+import { AccessStanding } from "../valueobjects/access-standing.js";
+import { ContactAddress } from "../valueobjects/contact-address.js";
+import { OutsideProverRef } from "../valueobjects/outside-prover-ref.js";
+import { PersonId } from "../valueobjects/person-id.js";
+import { ProofKind } from "../valueobjects/proof-kind.js";
+import { SessionStanding } from "../valueobjects/session-standing.js";
+import { SignOutReason } from "../valueobjects/sign-out-reason.js";
+import { SystemRole } from "../valueobjects/system-role.js";
+import { UserId } from "../valueobjects/user-id.js";
+
+/**
+ * Aggregate root representing a user in the system.
+ * 
+ * @author Ethan Matias Aliaga Aguirre
+ * @since 2026-09-10
+ */
+export class User extends AggregateRoot implements AccessStandable {
+  private constructor(
+    private readonly _id: UserId,
+    private readonly _personId: PersonId,
+    private _standing: AccessStanding,
+    private _session: SessionStanding,
+    private _contact: ContactAddress,
+    private _roles: SystemRole[],
+    private _outsideProver: OutsideProverRef | null,
+  ) { super(); }
+
+  static signUp(input: { personId: PersonId; contact: ContactAddress }): User {
+    const user = new User(UserId.generate(), input.personId, 'REGISTERED', 'SESSION_CLOSED',
+      input.contact, ['USER'], null);
+    user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
+    return user;
+  }
+
+  static rehydrate(input: { id: UserId; personId: PersonId; standing: AccessStanding;
+    session: SessionStanding; contact: ContactAddress; roles: SystemRole[];
+    outsideProver: OutsideProverRef | null }): User {
+    return new User(input.id, input.personId, input.standing,
+      input.session, input.contact, input.roles, input.outsideProver);
+  }
+
+  protected applyStandingTransition(from: AccessStanding, to: AccessStanding, event: { eventName: string }): void {
+    if (this._standing !== from) throw new IllegalUserStateError(`standing ${this._standing} != ${from}`);
+    this._standing = to;
+    this.registerEvent(event as never);
+  }
+
+  private tearDownSession(reason: SignOutReason): void {
+    if (this._session !== 'SESSION_OPEN') return;
+    this._session = 'SESSION_CLOSED';
+    this.registerEvent(new UserSignedOutEvent(this._id, this._personId, reason));
+  }
+
+  private proofKinds(): ProofKind[] {
+    return ['LOCAL', ...(this._outsideProver ? ['OUTSIDE' as ProofKind] : [])];
+  }
+
+  signIn(kind: ProofKind): void {
+    if (this._standing !== 'ACTIVE') throw new SuspendedRefusedError('not active');
+    if (this._session === 'SESSION_OPEN')
+      this.registerEvent(new UserSignedOutEvent(this._id, this._personId, 'SUPERSEDED'));
+    this._session = 'SESSION_OPEN';
+    this.registerEvent(new UserSignedInEvent(this._id, this._personId, kind));
+  }
+
+  signOut(): void {
+    if (this._session !== 'SESSION_OPEN') throw new NoOpenSessionError('no session');
+    this.tearDownSession('ASKED');
+  }
+
+  changeSecret(): void {
+    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    this.tearDownSession('PROOF_CHANGED');
+    this.registerEvent(new SecretChangedEvent(this._id, this._personId));
+  }
+
+  changeEmail(newEmail: string): void {
+    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    const oldEmail = this._contact.email;
+    this._contact = this._contact.change(newEmail);
+    this.registerEvent(new EmailChangedEvent(this._id, this._personId, oldEmail, newEmail));
+  }
+
+  verifyEmail(): void {
+    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (this._contact.verified) throw new IllegalUserStateError('already verified');
+    this._contact = this._contact.verify();
+    if (this._standing === 'REGISTERED') this._standing = 'ACTIVE';
+    this.registerEvent(new EmailVerifiedEvent(this._id, this._personId, this._contact.email));
+  }
+
+  linkOutsideIdentity(prover: OutsideProverRef): void {
+    if (this._standing !== 'ACTIVE') throw new SuspendedRefusedError('not active');
+    if (this._outsideProver) throw new OutsideProofAlreadyLinkedError('outside proof already linked');
+    this._outsideProver = prover;
+    this.registerEvent(new OutsideIdentityLinkedEvent(this._id, this._personId, prover));
+  }
+
+  unlinkOutsideIdentity(prover: OutsideProverRef): void {
+    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (!this._outsideProver) throw new IllegalUserStateError('no outside proof linked');
+    if (this.proofKinds().length === 1) throw new LastProofRefusedError('last proof refused');
+    this._outsideProver = null;
+    this.registerEvent(new OutsideIdentityUnlinkedEvent(this._id, this._personId, prover));
+  }
+
+  grantSystemRole(role: SystemRole): void {
+    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (this._roles.includes(role)) throw new RoleAlreadyHeldError(`role already held: ${role}`);
+    this._roles = [...this._roles, role];
+    this.registerEvent(new SystemRoleGrantedEvent(this._id, this._personId, role));
+  }
+
+revokeSystemRole(role: SystemRole): void {
+    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (!this._roles.includes(role)) throw new RoleNotHeldError(`role not held: ${role}`);
+    this._roles = this._roles.filter((r) => r !== role);
+    this.registerEvent(new SystemRoleRevokedEvent(this._id, this._personId, role));
+  }
+
+  suspend(reason: string): void {
+    if (this._standing === 'SUSPENDED') throw new IllegalUserStateError('already suspended');
+    this.applyStandingTransition(this._standing, 'SUSPENDED', new AccessSuspendedEvent(this._id, this._personId, reason));
+    this.tearDownSession('SUSPENDED');
+  }
+
+  restore(): void {
+    this.applyStandingTransition('SUSPENDED', 'ACTIVE', new AccessRestoredEvent(this._id, this._personId));
+  }
+
+  answerAccessStanding(): { mayAct: boolean; roles: SystemRole[]; sessionOpen: boolean } {
+    return {
+      mayAct: this._standing === 'ACTIVE',
+      roles: [...this._roles],
+      sessionOpen: this._session === 'SESSION_OPEN',
+    };
+  }
+}

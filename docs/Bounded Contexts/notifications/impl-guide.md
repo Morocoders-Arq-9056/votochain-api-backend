@@ -46,7 +46,7 @@ src/notifications/
 │       ├── queryservices/
 │       │   └── notification-dispatch-query.service.impl.ts
 │       ├── eventhandlers/
-│       │   └── delivery-requested.handler.ts  # in-module: instruye al ejecutor tras commit (los fallos vuelven por webhook UC3, no por handler)
+│       │   └── delivery-requested.event-handler.ts (DeliveryRequestedEventHandler)  # in-module: instruye al ejecutor tras commit (los fallos vuelven por webhook UC3, no por handler)
 │       └── outboundservices/
 │           ├── email/email-sending.service.ts        # EMAIL_SENDING_SERVICE port
 │           ├── template/template-resolver.service.ts # TEMPLATE_RESOLVER port
@@ -83,11 +83,13 @@ Single aggregate; history belongs to the dispatch. Email-only; retries append on
 
 ```typescript
 import { AggregateRoot } from '../../../shared/domain/model/aggregate-root';
-export enum DispatchStanding { REQUESTED = 'REQUESTED', REFUSED = 'REFUSED', CONFIRMED = 'CONFIRMED', FAILED = 'FAILED' }
+export const DispatchStanding = { REQUESTED: 'REQUESTED', REFUSED: 'REFUSED', CONFIRMED: 'CONFIRMED', FAILED: 'FAILED' } as const;
+export type DispatchStanding = (typeof DispatchStanding)[keyof typeof DispatchStanding];
 export function parseDispatchStanding(v: string): DispatchStanding {
-  if (!(v in DispatchStanding)) throw new Error(`invalid dispatch standing: ${v}`);
-  return DispatchStanding[v as keyof typeof DispatchStanding];
+  if (!(Object.values(DispatchStanding) as string[]).includes(v)) throw new Error(`invalid dispatch standing: ${v}`);
+  return v as DispatchStanding;
 }
+// DTOs: @IsIn(Object.values(DispatchStanding)) (nunca forma enum clásica / `@IsEnum` / `as`)
 export interface Dispatchable {
   confirmDelivered(): void;
   recordDeliveryFailure(reason: FailureReason): void;
@@ -106,12 +108,12 @@ export class NotificationDispatch extends AggregateRoot implements Dispatchable 
   ) { super(); }
   static requestDelivery(p: { id: DispatchId; key: IdempotencyKey; address: DeliveryAddress; template: ResolvedTemplate; reason: string }): NotificationDispatch {
     const d = new NotificationDispatch(p.id, p.key, p.address, p.template, p.reason, DispatchStanding.REQUESTED, [{ at: new Date(), outcome: 'REQUESTED' }], null);
-    d.registerEvent(new DeliveryRequested(d._id, d._key, d._address, d._template, d._reason));
+    d.registerEvent(new DeliveryRequestedEvent(d._id, d._key, d._address, d._template, d._reason));
     return d;
   }
   static refuse(p: { id: DispatchId; key: IdempotencyKey; address: DeliveryAddress; template: ResolvedTemplate; reason: RefusalReason }): NotificationDispatch {
     const d = new NotificationDispatch(p.id, p.key, p.address, p.template, '', DispatchStanding.REFUSED, [{ at: new Date(), outcome: 'REFUSED' }], p.reason);
-    d.registerEvent(new DeliveryRefused(d._id, d._key, p.reason));
+    d.registerEvent(new DeliveryRefusedEvent(d._id, d._key, p.reason));
     return d;
   }
   static rehydrate(p: { id: DispatchId; key: IdempotencyKey; address: DeliveryAddress; template: ResolvedTemplate; reason: string; standing: DispatchStanding; history: DeliveryAttempt[]; refusal: RefusalReason | null }): NotificationDispatch {
@@ -134,19 +136,19 @@ export class NotificationDispatch extends AggregateRoot implements Dispatchable 
     this.requireRequested(new AlreadyConfirmedError('only a requested dispatch can be confirmed'));
     this._standing = DispatchStanding.CONFIRMED;
     this.appendOutcome('CONFIRMED');
-    this.registerEvent(new DeliveryConfirmed(this._id, this._key));
+    this.registerEvent(new DeliveryConfirmedEvent(this._id, this._key));
   }
   recordDeliveryFailure(reason: FailureReason): void {
     this.requireRequested(new NoSendInstructedError('no send instructed for the current attempt'));
     this._standing = DispatchStanding.FAILED;
     this.appendOutcome('FAILED', reason.value);
-    this.registerEvent(new DeliveryFailed(this._id, this._key, reason));
+    this.registerEvent(new DeliveryFailedEvent(this._id, this._key, reason));
   }
   requestRetry(): void {
     if (this._standing !== DispatchStanding.FAILED) throw new RetryNotAllowedError('only a failed dispatch can retry');
     this._standing = DispatchStanding.REQUESTED;
     this.appendOutcome('REQUESTED');
-    this.registerEvent(new DeliveryRetried(this._id, this._key, this._history.length));
+    this.registerEvent(new DeliveryRetriedEvent(this._id, this._key, this._history.length));
   }
   answerDeliveryStanding(): { standing: DispatchStanding; attempts: number; refusal: string | null } {
     return { standing: this._standing, attempts: this._history.length, refusal: this._refusal?.value ?? null };
@@ -156,9 +158,9 @@ export class NotificationDispatch extends AggregateRoot implements Dispatchable 
 
 ### 2.2 Value Objects, Commands, Queries, Events
 
-VOs (immutable + `equals()`): `DispatchId`, `IdempotencyKey` (requester-supplied), `DeliveryAddress` (email shape), `ResolvedTemplate` (unknown keys rejected), `RefusalReason` (`DUPLICATE` | `CONTACT_NOT_ALLOWED`), `FailureReason`, `DeliveryAttempt` (append-only). Commands: `RequestDeliveryCommand`, `ConfirmDeliveryCommand`, `RecordDeliveryFailureCommand`, `RetryDeliveryCommand`. Queries: `GetDeliveryStandingByDispatchQuery`, `GetDeliveryStandingByKeyQuery`, `GetDeliveryHistoryQuery`.
+VOs (immutable + `equals()`): `DispatchId`, `IdempotencyKey` (requester-supplied), `DeliveryAddress` (email shape), `ResolvedTemplate` (unknown keys rejected), `RefusalReason` (`DUPLICATE` | `CONTACT_NOT_ALLOWED`), `FailureReason`, `DeliveryAttempt` (append-only). Commands: `RequestNotificationDeliveryCommand` (`request-notification-delivery.command.ts`), `ConfirmNotificationDeliveryCommand` (`confirm-notification-delivery.command.ts`), `RecordNotificationDeliveryFailureCommand` (`record-notification-delivery-failure.command.ts`), `RetryNotificationDeliveryCommand` (`retry-notification-delivery.command.ts`). Queries: `GetDeliveryStandingByDispatchQuery`, `GetDeliveryStandingByKeyQuery`, `GetDeliveryHistoryQuery`.
 
-5 events: `DeliveryRequested`, `DeliveryRefused`, `DeliveryConfirmed`, `DeliveryFailed`, `DeliveryRetried` (all `DomainEvent` + static `eventName`; payloads carry dispatch id, key, template/address/reason — never person identity).
+5 events: `DeliveryRequestedEvent`, `DeliveryRefusedEvent`, `DeliveryConfirmedEvent`, `DeliveryFailedEvent`, `DeliveryRetriedEvent` (all `DomainEvent` + static `eventName`; wire `eventName` inalterado `'DeliveryRequested'`, `'DeliveryRefused'`, `'DeliveryConfirmed'`, `'DeliveryFailed'`, `'DeliveryRetried'`; payloads carry dispatch id, key, template/address/reason — never person identity).
 
 Exceptions: `DuplicateIntentError`, `ContactNotAllowedError`, `TemplateUnknownError`, `AddressMalformedError`, `AlreadyConfirmedError`, `NoSendInstructedError`, `RetryNotAllowedError`.
 
@@ -181,7 +183,7 @@ export class NotificationDispatchCommandServiceImpl implements NotificationDispa
     private readonly consent: ExternalConsentService,
     private readonly events: EventEmitter2,
   ) {}
-  async handleRequest(cmd: RequestDeliveryCommand): Promise<DispatchId> {
+  async handleRequest(cmd: RequestNotificationDeliveryCommand): Promise<DispatchId> {
     const seen = await this.dispatches.findByKey(cmd.key);
     if (seen) {
       const refused = await this.uow.run(async () => {
@@ -218,10 +220,10 @@ In-module handlers instruct the outside world after commit (executor stays outsi
 
 ```typescript
 @Injectable()
-export class DeliveryRequestedHandler {
+export class DeliveryRequestedEventHandler {
   constructor(@Inject(EMAIL_SENDING_SERVICE) private readonly sender: EmailSendingService) {}
-  @OnEvent(DeliveryRequested.eventName, { async: true })
-  async handle(event: DeliveryRequested): Promise<void> {
+  @OnEvent(DeliveryRequestedEvent.eventName, { async: true })
+  async handle(event: DeliveryRequestedEvent): Promise<void> {
     try { await this.sender.send(event.address.value, event.template.key, event.template.values); }
     catch (err) { /* observed back via UC3; never throws to the bus */ }
   }
@@ -283,7 +285,7 @@ export class NotificationDispatchController {
     @Inject(NOTIFICATION_QUERY_SERVICE) private readonly queries: NotificationDispatchQueryService,
   ) {}
   @Post() async request(@Body() r: RequestDeliveryResource): Promise<DeliveryStandingResource> {
-    const cmd = RequestDeliveryCommandFromResourceAssembler.toCommand(r);
+    const cmd = RequestNotificationDeliveryCommandFromResourceAssembler.toCommand(r);
     const id = await this.commands.handleRequest(cmd);
     const standing = await this.queries.getStandingByDispatch(new GetDeliveryStandingByDispatchQuery(id));
     if (!standing) throw new NotFoundException();
@@ -297,7 +299,7 @@ export class NotificationDispatchController {
 
 | Method | Endpoint | Maps to |
 |---|---|---|
-| `POST` | `/api/v1/notifications/dispatches` | `RequestDeliveryCommand` (UC1) |
+| `POST` | `/api/v1/notifications/dispatches` | `RequestNotificationDeliveryCommand` (UC1) |
 | `GET` | `/api/v1/notifications/dispatches/:id/standing` | `GetDeliveryStandingByDispatchQuery` (UC5) |
 | `GET` | `/api/v1/notifications/dispatches/by-key/:key/standing` | `GetDeliveryStandingByKeyQuery` (UC5) |
 | `GET` | `/api/v1/notifications/dispatches/:id/history` | `GetDeliveryHistoryQuery` (scrutiny) |
@@ -348,21 +350,21 @@ CREATE INDEX ix_dispatches_standing ON notifications.dispatches (standing);
 ### 7.1 RequestDelivery anchor (UC1)
 
 ```
-POST /dispatches -> RequestDeliveryCommandFromResourceAssembler.toCommand()
+POST /dispatches -> RequestNotificationDeliveryCommandFromResourceAssembler.toCommand()
  -> handleRequest(): findByKey() (duplicate -> refuse DUPLICATE, 409)
      -> templates.resolve() (unknown -> 422) + DeliveryAddress.of() (malformed -> 400)
     -> ExternalConsentService.mayContactNow() (refused -> persist REFUSED, 403, still history)
-    -> [UoW] requestDelivery() -> save() -> commit -> emit(DeliveryRequested)
- -> @OnEvent(DeliveryRequested, async) -> EmailSendingService.send() (outside)
+    -> [UoW] requestDelivery() -> save() -> commit -> emit(DeliveryRequestedEvent)
+ -> @OnEvent(DeliveryRequestedEvent.eventName, async) -> EmailSendingService.send() (outside)
  -> re-query standing -> 202 DeliveryStandingResource
 ```
 
 ### 7.2 Confirm / Fail / Retry (UC2–UC4)
 
 ```
-Executor webhook -> ConfirmDeliveryCommand -> [UoW] confirmDelivered() -> emit(DeliveryConfirmed) -> 200
-Executor webhook -> RecordDeliveryFailureCommand -> [UoW] recordDeliveryFailure(reason) -> emit(DeliveryFailed)
-POST .../:id/retry (FAILED only) -> [UoW] requestRetry() -> standing=REQUESTED, history appended -> emit(DeliveryRetried) -> re-instruct send
+Executor webhook -> ConfirmNotificationDeliveryCommand -> [UoW] confirmDelivered() -> emit(DeliveryConfirmedEvent) -> 200
+Executor webhook -> RecordNotificationDeliveryFailureCommand -> [UoW] recordDeliveryFailure(reason) -> emit(DeliveryFailedEvent)
+POST .../:id/retry (FAILED only) -> [UoW] requestRetry() -> standing=REQUESTED, history appended -> emit(DeliveryRetriedEvent) -> re-instruct send
 CONFIRMED/REFUSED never retry (AlreadyConfirmedError / RetryNotAllowedError -> 409)
 ```
 
@@ -407,10 +409,13 @@ R10 (Verification/OTP): OTP instructs code delivery with template + address + re
 |---|---|---|---|
 | D5-1 | Alta | Duplicate key delivered twice under race | `findByKey()` check + DB `UNIQUE(idempotency_key)`; second intent refused `DUPLICATE` |
 | D5-2 | Alta | Opt-in judged locally | Gate moved to `ExternalConsentService.mayContactNow()`; refusal persisted as history |
-| D5-3 | Media | Refusals silently dropped | `NotificationDispatch.refuse()` persists `REFUSED` + emits `DeliveryRefused` |
+| D5-3 | Media | Refusals silently dropped | `NotificationDispatch.refuse()` persists `REFUSED` + emits `DeliveryRefusedEvent` |
 | D5-4 | Media | Retry rewrote history | `requestRetry()` appends attempt, re-enters `REQUESTED` on same dispatch |
 | D5-5 | Media | Publishing before commit | Drain + emit only after `uow.run()` resolves; send handler `{ async: true }` with own error handling |
 | D5-6 | Baja | Person identity in payload | Contract limited to template + address + reason + key; no personId field |
+| V1.0.7 | Baja | Naming v1.0.7: forma enum clásica / `in` / `@IsEnum`, eventos sin sufijo `Event`, handlers `<Stem>Handler` / `*.handler.ts`, comandos ambiguos | Enums como `as const` + `type` union + `parseX()` vía `Object.values()` + `@IsIn(Object.values(X))`; eventos con sufijo `Event` (wire `eventName` inalterado, sin doble sufijo); handlers `DeliveryRequestedEventHandler` en `*.event-handler.ts` con `@OnEvent(XEvent.eventName)`; comandos `RequestNotificationDeliveryCommand`/`ConfirmNotificationDeliveryCommand`/`RecordNotificationDeliveryFailureCommand`/`RetryNotificationDeliveryCommand` (`request-notification-delivery.command.ts`, etc.) |
+
+> **Project override (v1.0.7):** sufijo `Event` en TODOS los eventos (no solo en colisión); wire `eventName='X'` inalterado (fix-back tras replaceAll, evitar doble sufijo); comandos ambiguos cualificados con target.
 
 Sin Composite: el historial es lista de VOs `DeliveryAttempt` (append-only) persistida como `jsonb` en la fila del dispatch — componer intentos como entidades hijas añadiría joins sin ningún recorrido por intento; el `jsonb` es la forma correcta aquí.
 

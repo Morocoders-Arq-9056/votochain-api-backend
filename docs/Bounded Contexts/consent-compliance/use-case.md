@@ -40,9 +40,9 @@ whenever the criteria need declaring.
 |---|----------|---------|--------------------|-------------------------|-----------------|
 | UC1 | GrantConsent | Person request for one scope under one policy version | `ConsentRecord` | IAM (person existence) | `ConsentGrantedEvent` |
 | UC2 | RevokeConsent | Person withdraws one scope | `ConsentRecord` | — | `ConsentRevokedEvent` (processing under it stops from that moment) |
-| UC3 | DefineRetentionPolicy | Compliance steward request | `RetentionPolicy` | — | `RetentionPolicyDefinedEvent` (supersedes the previous) |
+| UC3 | DefineRetentionPolicy | Compliance admin request | `RetentionPolicy` | — | `RetentionPolicyDefinedEvent` (supersedes the previous) |
 | UC4 | SubmitErasureRequest | Person request (Law 29733) | `DataSubjectRequest` | IAM (person existence) | `ErasureRequestedEvent` |
-| UC5 | ConfirmErasureRequest | Compliance steward confirms validity | `DataSubjectRequest` | — | `ErasureConfirmedEvent` |
+| UC5 | ConfirmErasureRequest | Compliance admin confirms validity | `DataSubjectRequest` | — | `ErasureConfirmedEvent` |
 | UC6 | **CoordinateErasure** (anchor) | Follows confirmation: ask every owner → collect confirmations → complete | `DataSubjectRequest` | Every owning context holding this person's data (Biometric, Wallet, Membership, Notifications, …) | `RevocationCoordinatedEvent` (one per owner), `RevocationConfirmedEvent` (one per owner), `ErasureCompletedEvent` |
 | UC7 | AnswerConsentState | Biometric / Notifications / OTP / OCR gate check | `ConsentRecord` (answering operation only) | — | — (synchronous answer, no fact) |
 
@@ -189,7 +189,7 @@ moment — past runs under a standing grant are never retroactively tainted.
 | Consent-state answer (`answerState()`, UC7) | Biometric, Notifications, OTP, OCR (`may-process-now?` / `may-contact-now?`) | Granted or not, under which version, since when — fact only, no personal data |
 | Revocation-asked (`RevocationCoordinatedEvent`) | Each owning context | One fact per owner — each deletes its own data |
 | Erasure completion (`ErasureCompletedEvent`) | Person notice via Notifications; scrutiny | Terminal; audit trail stays |
-| Retention terms answer (`answerTerms()`) | Compliance steward | How long kept, under what terms, per category |
+| Retention terms answer (`answerTerms()`) | Compliance admin | How long kept, under what terms, per category |
 
 ## 6. ACL Consumed (What This BC Depends On)
 

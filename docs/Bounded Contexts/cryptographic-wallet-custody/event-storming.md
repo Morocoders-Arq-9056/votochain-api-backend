@@ -38,7 +38,7 @@ flowchart LR
         FK --> KF[KeyForgotten]
     end
 
-    subgraph stewardship [Stewardship]
+    subgraph adminship [Adminship]
         ROT[RotateWallet] --> WRT[WalletRotated]
         SUS[SuspendWallet] --> WS[WalletSuspended]
         RET[RetireWallet] --> WR[WalletRetired]
@@ -76,7 +76,7 @@ flowchart TB
         P4{Retired on erasure:<br/>ends capability,<br/>keeps no secrets}
 
         R1[Signing capability<br/>read need]
-        R2[Stewardship history<br/>read need]
+        R2[Adminship history<br/>read need]
 
         C1 --> E1
         E1 --> R1
@@ -102,8 +102,8 @@ flowchart TB
 | 1 | `ProvisionWallet` | Create one person's signing capability, once, at a unique derivation position | Custodian (on person onboarding) |
 | 2 | `ReconstructKeyForSigning` | Make signing possible transiently for one specific vote content | Voting (signing need) |
 | 3 | `ForgetReconstructedKey` | End the transient use immediately after signing | Signing flow (always follows reconstruction) |
-| 4 | `RotateWallet` | Replace the capability at a new derivation position after compromise or loss | Custody steward |
-| 5 | `SuspendWallet` | Stop signing from this capability while keeping its history | Custody steward |
+| 4 | `RotateWallet` | Replace the capability at a new derivation position after compromise or loss | Custody admin |
+| 5 | `SuspendWallet` | Stop signing from this capability while keeping its history | Custody admin |
 | 6 | `RetireWallet` | End the capability and destroy anything signing-related on coordinated erasure | Consent & Compliance coordination |
 | 7 | `AnswerSigningCapability` | Answer whether the person may sign now, and with which capability | Voting (signing gate) |
 
@@ -132,7 +132,7 @@ flowchart TB
 | Need | Returns |
 |------|---------|
 | Signing capability | Whether the person may sign now, and with which capability |
-| Stewardship history (scrutiny) | Provisioning, rotations, suspensions, and retirement behind a past signature |
+| Adminship history (scrutiny) | Provisioning, rotations, suspensions, and retirement behind a past signature |
 
 ## Needs from Other Contexts (business language, not mechanisms)
 

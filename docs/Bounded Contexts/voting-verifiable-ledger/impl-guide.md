@@ -34,7 +34,7 @@ src/voting-verifiable-ledger/
 │   └── internal/
 │       ├── commandservices/ (proposal, authorization, vote — CastVote ancla + UC5/UC6)
 │       ├── queryservices/ (proposal-query, vote-query — tally, receipt, proof)
-│       ├── eventhandlers/ (vote-cast.handler.ts -> UC5, proposal-closed.handler.ts -> UC8)
+│       ├── eventhandlers/ (vote-cast.event-handler.ts (VoteCastEventHandler) -> UC5, proposal-closed.event-handler.ts (ProposalClosedEventHandler) -> UC8)
 │       └── outboundservices/
 │           ├── acl/ (external-community R1, external-membership R2, external-biometric R3,
 │           │         external-wallet R4, external-relay R5, external-notifications R11)
@@ -47,7 +47,7 @@ src/voting-verifiable-ledger/
 │   │   │                  vote-nonce, quorum-snapshot, eligibility-snapshot, tx-reference)
 │   │   ├── commands/ (draft/open/request-auth/cast/close/...)
 │   │   ├── queries/ (by-id, by-community-status, tally, receipt)
-│   │   └── events/ (19 hechos + ReplayRejected/LateVoteRejected)
+│   │   └── events/ (19 hechos + ReplayRejectedEvent/LateVoteRejectedEvent)
 │   ├── services/ (3 command + 2 query, con tokens)
 │   ├── repositories/ (proposal / authorization / vote + tokens)
 │   └── exceptions/ (una por rechazo de negocio)
@@ -71,23 +71,40 @@ src/voting-verifiable-ledger/
 export interface Proposable { open(quorum: QuorumSnapshot): void; close(): void; tallyVotes(counts: Map<string, number>, turnout: number): void; }
 export interface Authorizable { grant(eligibility: EligibilitySnapshot): void; deny(reason: AuthorizationDenialReason): void; consume(voteId: VoteId): void; expire(): void; }
 export interface VoteTrackable { markQueued(): void; markSent(ref: TransactionReference): void; markConfirmed(ref: TransactionReference, blockNo: number): void; markFailed(reason: string, retryable: boolean): void; }
-export enum ProposalStatus { DRAFT = 'DRAFT', OPEN = 'OPEN', CLOSED = 'CLOSED', TALLIED = 'TALLIED' }
-export enum AuthorizationStatus { PENDING = 'PENDING', CONSUMED = 'CONSUMED', EXPIRED = 'EXPIRED', DENIED = 'DENIED' }
-export enum VoteStatus { SIGNED = 'SIGNED', QUEUED = 'QUEUED', SENT = 'SENT', CONFIRMED = 'CONFIRMED', FAILED = 'FAILED' }
+export const ProposalStatus = { DRAFT: 'DRAFT', OPEN: 'OPEN', CLOSED: 'CLOSED', TALLIED: 'TALLIED' } as const;
+export type ProposalStatus = (typeof ProposalStatus)[keyof typeof ProposalStatus];
+export function parseProposalStatus(v: string): ProposalStatus {
+  if (!(Object.values(ProposalStatus) as string[]).includes(v)) throw new Error(`invalid proposal status: ${v}`);
+  return v as ProposalStatus;
+}
+export const AuthorizationStatus = { PENDING: 'PENDING', CONSUMED: 'CONSUMED', EXPIRED: 'EXPIRED', DENIED: 'DENIED' } as const;
+export type AuthorizationStatus = (typeof AuthorizationStatus)[keyof typeof AuthorizationStatus];
+export function parseAuthorizationStatus(v: string): AuthorizationStatus {
+  if (!(Object.values(AuthorizationStatus) as string[]).includes(v)) throw new Error(`invalid authorization status: ${v}`);
+  return v as AuthorizationStatus;
+}
+export const VoteStatus = { SIGNED: 'SIGNED', QUEUED: 'QUEUED', SENT: 'SENT', CONFIRMED: 'CONFIRMED', FAILED: 'FAILED' } as const;
+export type VoteStatus = (typeof VoteStatus)[keyof typeof VoteStatus];
+export function parseVoteStatus(v: string): VoteStatus {
+  if (!(Object.values(VoteStatus) as string[]).includes(v)) throw new Error(`invalid vote status: ${v}`);
+  return v as VoteStatus;
+}
+// DTOs: @IsIn(Object.values(ProposalStatus | AuthorizationStatus | VoteStatus)) (nunca forma enum clásica / `@IsEnum` / `as`)
 ```
 
-Sin esqueletos: los guards H5 quedan explicitos en cada agregado — replay (`AuthorizationAlreadyConsumed` + unico parcial `PENDING` + unico parcial `CONFIRMED`), late (`ProposalNotOpen`), signer (`SignerMismatch`: `recovered.equals(voter)`), inmutabilidad del voto, y atomicidad consume+cast en un `uow.run`. Enums con `parseX()` al rehidratar, nunca `as`.
+Sin esqueletos: los guards H5 quedan explicitos en cada agregado — replay (`AuthorizationAlreadyConsumed` + unico parcial `PENDING` + unico parcial `CONFIRMED`), late (`ProposalNotOpen`), signer (`SignerMismatch`: `recovered.equals(voter)`), inmutabilidad del voto, y atomicidad consume+cast en un `uow.run`. Enums como `as const` + `type` union con `parseX()` vía `Object.values()` al rehidratar y `@IsIn(Object.values(X))` en DTOs, nunca forma enum clásica / `as` / `@IsEnum`.
 
 ### 2.1 `Proposal` — DRAFT → OPEN → CLOSED → TALLIED
 
 ```typescript
-export enum ProposalStatus { DRAFT = 'DRAFT', OPEN = 'OPEN', CLOSED = 'CLOSED', TALLIED = 'TALLIED' }
+export const ProposalStatus = { DRAFT: 'DRAFT', OPEN: 'OPEN', CLOSED: 'CLOSED', TALLIED: 'TALLIED' } as const;
+export type ProposalStatus = (typeof ProposalStatus)[keyof typeof ProposalStatus];
 export class Proposal extends AggregateRoot implements Proposable {
   private constructor(private readonly _id: ProposalId, private readonly _communityId: CommunityId, private _status: ProposalStatus, private readonly _options: BallotOptions, private _quorum: QuorumSnapshot | null, private _tally: Tally | null) { super(); }
   static create(id: ProposalId, communityId: CommunityId, options: BallotOptions): Proposal {
     if (options.size < 2) throw new InvalidChoiceError('ballot needs >= 2 options');
     const p = new Proposal(id, communityId, ProposalStatus.DRAFT, options, null, null);
-    p.registerEvent(new ProposalDrafted(id, communityId));
+    p.registerEvent(new ProposalDraftedEvent(id, communityId));
     return p;
   }
   static rehydrate(...): Proposal { return new Proposal(...); } // sin eventos
@@ -95,19 +112,19 @@ export class Proposal extends AggregateRoot implements Proposable {
     if (this._status !== ProposalStatus.DRAFT) throw new IllegalProposalTransitionError('open only from DRAFT');
     this._quorum = quorum; // se escribe una vez, nunca cambia
     this._status = ProposalStatus.OPEN;
-    this.registerEvent(new ProposalOpened(this._id, quorum));
+    this.registerEvent(new ProposalOpenedEvent(this._id, quorum));
   }
   close(): void {
     if (this._status !== ProposalStatus.OPEN) throw new IllegalProposalTransitionError('close only from OPEN');
     this._status = ProposalStatus.CLOSED;
-    this.registerEvent(new ProposalClosed(this._id, new Date()));
+    this.registerEvent(new ProposalClosedEvent(this._id, new Date()));
   }
   tallyVotes(counts: Map<string, number>, turnout: number): void {
     if (this._status !== ProposalStatus.CLOSED) throw new IllegalProposalTransitionError('tally only from CLOSED');
     this._tally = new Tally(counts, turnout, this._quorum!.verdictFor(turnout));
     this._status = ProposalStatus.TALLIED;
-    this.registerEvent(new ProposalTallied(this._id, this._tally));
-    this.registerEvent(this._tally.quorumMet ? new QuorumReached(this._id, turnout) : new QuorumNotReached(this._id, turnout));
+    this.registerEvent(new ProposalTalliedEvent(this._id, this._tally));
+    this.registerEvent(this._tally.quorumMet ? new QuorumReachedEvent(this._id, turnout) : new QuorumNotReachedEvent(this._id, turnout));
   }
   assertOpen(): void { if (this._status !== ProposalStatus.OPEN) throw new ProposalNotOpenError('ProposalNotOpen'); }
   assertChoice(c: Choice): void { if (!this._options.contains(c)) throw new InvalidChoiceError('InvalidChoice'); }
@@ -120,16 +137,16 @@ export class Proposal extends AggregateRoot implements Proposable {
 export class VoteAuthorization extends AggregateRoot implements Authorizable {
   static request(id: AuthorizationId, proposalId: ProposalId, voter: VoterAddress, ttlMin: number): VoteAuthorization {
     const a = new VoteAuthorization(id, proposalId, voter, AuthorizationStatus.PENDING, null, expiresAt(ttlMin));
-    a.registerEvent(new VoteAuthorizationRequested(id, proposalId, voter));
+    a.registerEvent(new VoteAuthorizationRequestedEvent(id, proposalId, voter));
     return a;
   }
-  grant(eligibility: EligibilitySnapshot): void { /* exige PENDING + vigente */ this.registerEvent(new VoteAuthorizationGranted(...)); }
-  deny(reason: AuthorizationDenialReason): void { this.registerEvent(new VoteAuthorizationDenied(...)); }
+  grant(eligibility: EligibilitySnapshot): void { /* exige PENDING + vigente */ this.registerEvent(new VoteAuthorizationGrantedEvent(...)); }
+  deny(reason: AuthorizationDenialReason): void { this.registerEvent(new VoteAuthorizationDeniedEvent(...)); }
   consume(voteId: VoteId): void {
     if (this._status !== AuthorizationStatus.PENDING) throw new AuthorizationAlreadyConsumedError('AuthorizationAlreadyConsumed');
     if (this.isExpired()) throw new AuthorizationExpiredError('AuthorizationExpired');
     this._status = AuthorizationStatus.CONSUMED;
-    this.registerEvent(new VoteAuthorizationConsumed(this._id, voteId));
+    this.registerEvent(new VoteAuthorizationConsumedEvent(this._id, voteId));
   }
   expire(): void { /* PENDING + ventana vencida -> EXPIRED */ }
 }
@@ -148,8 +165,8 @@ export class Vote extends AggregateRoot implements VoteTrackable {
   static cast(id: VoteId, proposalId: ProposalId, voter: VoterAddress, choice: Choice, nonce: VoteNonce, sig: EIP712Signature, recovered: VoterAddress): Vote {
     if (!recovered.equals(voter)) throw new SignerMismatchError('SignerMismatch');
     const v = new Vote(id, proposalId, voter, choice, nonce, sig, null, VoteStatus.SIGNED);
-    v.registerEvent(new VoteMessageBuilt(id, proposalId, choice, nonce)); // scrutiny: el mensaje existió antes que la firma
-    v.registerEvent(new VoteCast(id, proposalId, voter, sig));
+    v.registerEvent(new VoteMessageBuiltEvent(id, proposalId, choice, nonce)); // scrutiny: el mensaje existió antes que la firma
+    v.registerEvent(new VoteCastEvent(id, proposalId, voter, sig));
     return v;
   }
   markQueued(): void { /* SIGNED o re-try desde FAILED */ }
@@ -167,7 +184,7 @@ Un solo voto inmutable: un segundo `CONFIRMED` por `(proposal, voter)` es replay
 
 ### 2.5 Events (19 + 2 rechazos)
 
-Proposal: `ProposalDrafted/Opened/Closed/Tallied + QuorumReached/NotReached`. Autorizacion: `Requested/Granted/Denied/Consumed/Expired`. Voto: `VoteMessageBuilt/VoteCast/SignedVoteQueued/TransactionSent/VoteConfirmedOnChain/TransactionFailed + ReplayRejected/LateVoteRejected`. Todos con `static eventName` y payload con VOs.
+Proposal: `ProposalDraftedEvent/ProposalOpenedEvent/ProposalClosedEvent/ProposalTalliedEvent + QuorumReachedEvent/QuorumNotReachedEvent`. Autorizacion: `VoteAuthorizationRequestedEvent/VoteAuthorizationGrantedEvent/VoteAuthorizationDeniedEvent/VoteAuthorizationConsumedEvent/VoteAuthorizationExpiredEvent` (wire `eventName` inalterado). Voto: `VoteMessageBuiltEvent/VoteCastEvent/SignedVoteQueuedEvent/TransactionSentEvent/VoteConfirmedOnChainEvent/TransactionFailedEvent + ReplayRejectedEvent/LateVoteRejectedEvent`. Todos con `static eventName` (wire `'ProposalDrafted'`, `'ProposalOpened'`, `'ProposalClosed'`, `'VoteCast'`, etc. inalterado) y payload con VOs.
 
 ### 2.6 Servicios CQRS (puertos en `domain/services/`, con tokens)
 
@@ -231,7 +248,7 @@ export class VoteCommandServiceImpl implements VoteCommandService {
   async cast(cmd: CastVoteCommand): Promise<VoteId> {
   const auth = await this.auths.findById(cmd.authorizationId) ?? throwNotFound(); // guards antes de firmar
   const proposal = await this.proposals.findById(auth.proposalId) ?? throwNotFound();
-  proposal.assertOpen();            // si no -> LateVoteRejected
+  proposal.assertOpen();            // si no -> LateVoteRejectedEvent
   proposal.assertChoice(cmd.choice); // si no -> InvalidChoice
   if (auth.isConsumedOrExpired()) throw new ReplayRejectedError(...);
   const nonce = VoteNonce.fresh();
@@ -247,7 +264,7 @@ export class VoteCommandServiceImpl implements VoteCommandService {
     await this.auths.save(a); await this.votes.save(v);
     return v;
   });
-  this.publish(vote, auth); // VoteMessageBuilt + VoteCast + AuthorizationConsumed post-commit
+  this.publish(vote, auth); // VoteMessageBuiltEvent + VoteCastEvent + VoteAuthorizationConsumedEvent post-commit
   await this.notifications.voteCast(auth.voterAddress.value, vote.id.value); // R11 vía ExternalNotificationsService → NOTIFICATION_CONTEXT_FACADE
   return vote.id;
   }
@@ -263,13 +280,13 @@ Si persistir falla tras firmar, la firma se descarta: reintento = nuevo `CastVot
 
 | UC | Orquestacion |
 |:--|:--|
-| UC1 Draft | `Proposal.create()` → save → `ProposalDrafted` |
-| UC2 Open | `ExternalCommunityService.getPolicy()` (R1) → `proposal.open(snapshot)` → `ProposalOpened` |
+| UC1 Draft | `Proposal.create()` → save → `ProposalDraftedEvent` |
+| UC2 Open | `ExternalCommunityService.getPolicy()` (R1) → `proposal.open(snapshot)` → `ProposalOpenedEvent` |
 | UC3 RequestAuth | `request()` → `ExternalMembership.isEligible()` (R2, congela snapshot) → `ExternalBiometric.isVerifiedNow()` (R3) → `grant()` / `deny(reason)` |
-| UC5 DeliverVote | `@OnEvent(VoteCast)` → `markQueued()` → `ExternalRelayService.acceptSigned()` (R5) → `markSent(ref)` |
-| UC6 HandleOutcome | Relay `DeliveryConfirmed/Failed` → `markConfirmed()` (solo este cuenta) / `markFailed()` + aviso R11 |
-| UC7/UC8 | `close()` → `ProposalClosed` → handler: tally solo `CONFIRMED` vs snapshot → `Tallied + QuorumReached/NotReached` |
-| UC9 Expire-sweep | cron: `PENDING` vencidos → `expire()` → `VoteAuthorizationExpired` |
+| UC5 DeliverVote | `@OnEvent(VoteCastEvent.eventName)` (VoteCastEventHandler) → `markQueued()` → `ExternalRelayService.acceptSigned()` (R5) → `markSent(ref)` |
+| UC6 HandleOutcome | Relay `DeliveryConfirmedEvent/DeliveryFailedEvent` → `markConfirmed()` (solo este cuenta) / `markFailed()` + aviso R11 |
+| UC7/UC8 | `close()` → `ProposalClosedEvent` → handler (ProposalClosedEventHandler): tally solo `CONFIRMED` vs snapshot → `ProposalTalliedEvent + QuorumReachedEvent/QuorumNotReachedEvent` |
+| UC9 Expire-sweep | cron: `PENDING` vencidos → `expire()` → `VoteAuthorizationExpiredEvent` |
 
 ### 3.3 Queries (read models)
 
@@ -350,7 +367,7 @@ export interface QuorumPolicy { verdictFor(turnout: number, snapshot: QuorumSnap
 | `GET` | `/api/v1/votes/:id` | Verifiable Proof (choice+firma+tx+recovered) |
 | `GET` | `/api/v1/votes/receipt?proposal=&voter=` | Voter Receipt (mi journey, sin choices ajenos) |
 
-Filtro (error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejected`), `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejected`), `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
+Filtro (error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejectedEvent`), `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejectedEvent`), `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
 
 ### 5.1 Fachada publicada `VOTING_CONTEXT_FACADE` (primitivas; primer consumidor futuro: Reporting)
 
@@ -414,7 +431,7 @@ POST /votes { authorizationId, choice }
   -> guards (auth PENDING, proposal OPEN, choice valida)
   -> buildMessage -> Wallet.sign (R4) -> recoverSigner == voter?
   -> [uow.run] consume(auth) + cast(vote) atomico -> commit
-  -> publish(VoteCast, AuthorizationConsumed) -> handler UC5 + aviso R11
+  -> publish(VoteCastEvent, VoteAuthorizationConsumedEvent) -> handler UC5 (VoteCastEventHandler) + aviso R11
   -> 201 receipt { voteId, SIGNED }
 ```
 
@@ -423,9 +440,9 @@ Reintento HTTP del mismo voto (no es concepto de dominio): `POST /votes` exige h
 ### 7.2 UC5 → UC6 → UC8
 
 ```
-@OnEvent(VoteCast) -> markQueued -> Relay.acceptSigned (R5) -> markSent(txHash)
+@OnEvent(VoteCastEvent.eventName) -> markQueued -> Relay.acceptSigned (R5) -> markSent(txHash)
 Relay outcome -> markConfirmed (factura al tally) | markFailed (+retry misma identidad)
-@OnEvent(ProposalClosed) -> tally solo CONFIRMED vs snapshot -> Tallied + QuorumReached/NotReached
+@OnEvent(ProposalClosedEvent.eventName) -> tally solo CONFIRMED vs snapshot -> ProposalTalliedEvent + QuorumReachedEvent/QuorumNotReachedEvent
 ```
 
 ---
@@ -440,7 +457,7 @@ Relay outcome -> markConfirmed (factura al tally) | markFailed (+retry misma ide
 | R2 Membership → Voting | OHS + ACL | UC3: elegibilidad → `EligibilitySnapshot` congelado |
 | R3 Biometric → Voting | Customer/Supplier | UC3: veredicto verified-now (ventana freshness) |
 | R4 Voting → Wallet | Customer/Supplier | UC4: firma de un contenido; de vuelta solo la firma |
-| R5 Voting → Relay | Customer/Supplier + OHS | UC5/UC6: signed-only; solo `DeliveryConfirmed` alimenta tally |
+| R5 Voting → Relay | Customer/Supplier + OHS | UC5/UC6: signed-only; solo `DeliveryConfirmedEvent` alimenta tally |
 | R11 Voting → Notifications | OHS | Avisos cast/queue/confirm/fail (intents, nunca decisiones) |
 
 Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads los consume la UI, no otro BC). Si Reporting se escinde, nace ahi el primer consumidor publicado.
@@ -473,11 +490,14 @@ Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads
 | D2 | Alta | `consume()` y `cast()` en tx separadas | Un `uow.run` atomico (H5); doble-cast imposible |
 | D3 | Alta | Tally contando `SIGNED/QUEUED/SENT` | Solo `CONFIRMED` (H4 intent vs fact) |
 | D4 | Media | Re-preguntar elegibilidad/liveness en UC4 | Prohibido: UC4 confia en la autorizacion congelada |
-| D5 | Media | `as ProposalStatus` / `as VoteStatus` en assemblers | `parseX()` explicitos; dato corrupto falla al leer |
-| D6 | Media | `@OnEvent(VoteCast)` suscrito desde Relay | Prohibido: handler interno llama `ExternalRelayService` |
+| D5 | Media | `as ProposalStatus` / `as VoteStatus` en assemblers | `parseX()` vía `Object.values()` explícitos; enums como `as const` + `type` union + `@IsIn(Object.values(X))`; dato corrupto falla al leer |
+| D6 | Media | `@OnEvent(VoteCastEvent.eventName)` suscrito desde Relay | Prohibido: handler interno (VoteCastEventHandler) llama `ExternalRelayService` |
 | D7 | Baja | VoterAddress sin normalizar | `of()` valida `0x+40hex`, guarda lowercase |
 | D8 | Baja | `choice` como string libre | `assertChoice` contra `BallotOptions` en UC4 |
 | D9 | Media | Tentacion Composite Proposal+votes o assembler base compartido | No Composite (D1/H1/Inv.5): tally guarda counts-no-objetos, tres raices por ID; sin base assembler (cada `toDomain` con su `parseX`) |
+| V1.0.7 | Baja | Naming v1.0.7: forma enum clásica / `in` / `@IsEnum`, eventos sin sufijo `Event`, handlers `<Stem>Handler` / `*.handler.ts` | Enums como `as const` + `type` union + `parseX()` vía `Object.values()` + `@IsIn(Object.values(X))`; eventos con sufijo `Event` (wire `eventName` inalterado, sin doble sufijo); handlers `VoteCastEventHandler`/`ProposalClosedEventHandler` en `*.event-handler.ts` con `@OnEvent(XEvent.eventName)` |
+
+> **Project override (v1.0.7):** sufijo `Event` en TODOS los eventos (no solo en colisión); wire `eventName='X'` inalterado (fix-back tras replaceAll, evitar doble sufijo); comandos Voting UNCHANGED.
 
 ### Decisiones
 

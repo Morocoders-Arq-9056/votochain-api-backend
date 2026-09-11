@@ -61,7 +61,7 @@ confused with the aggregate operations in `domain-model.md`, which are internal.
 
 | Command | Carries | Handled By |
 |---------|---------|------------|
-| `RequestDeliveryCommand` | template key + values, address, reason, idempotency key | UC1 |
+| `RequestNotificationDeliveryCommand` | template key + values, address, reason, idempotency key | UC1 |
 
 UC2–UC4 accept no external command: confirmations and failures are observed executor
 outcomes recorded via `confirmDelivered()` / `recordDeliveryFailure()`, and retries
@@ -99,7 +99,7 @@ sequenceDiagram
     participant Consent as Consent & Compliance BC
     participant Executor as External Executor
 
-    Requester->>NOT: RequestDeliveryCommand(template, address, reason, idempotencyKey)
+    Requester->>NOT: RequestNotificationDeliveryCommand(template, address, reason, idempotencyKey)
     NOT->>NOT: key seen before?
     alt duplicate key
         NOT->>NOT: requestDelivery() → DeliveryRefusedEvent (DUPLICATE)
