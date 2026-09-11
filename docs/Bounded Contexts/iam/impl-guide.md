@@ -123,7 +123,7 @@ export class User extends AggregateRoot implements AccessStandable {
   static signup(input: { personId: PersonId; contact: ContactAddress }): User {
     const user = new User(UserId.generate(), input.personId,
       AccessStanding.REGISTERED, SessionStanding.CLOSED,
-      input.contact, [new SystemRole('USER')], null);
+      input.contact, [SystemRole.USER], null);
     user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
     return user;
   }
@@ -180,7 +180,31 @@ export class User extends AggregateRoot implements AccessStandable {
   }
   // changeEmail(), verifyEmail(), link/unlinkOutsideIdentity(), grant/revokeSystemRole(), answerAccessStanding() igual forma.
 }
-export function parseAccessStanding(v: string): AccessStanding { /* explicit parser, never `as` */ }
+```
+
+Parsers (`Object.values()` guard, never bare `as` on untrusted input):
+
+```typescript
+export function parseAccessStanding(v: string): AccessStanding {
+  if (!(Object.values(AccessStanding) as string[]).includes(v)) throw new Error(`invalid standing: ${v}`);
+  return v as AccessStanding;
+}
+export function parseSessionStanding(v: string): SessionStanding {
+  if (!(Object.values(SessionStanding) as string[]).includes(v)) throw new Error(`invalid session: ${v}`);
+  return v as SessionStanding;
+}
+export function parseSignOutReason(v: string): SignOutReason {
+  if (!(Object.values(SignOutReason) as string[]).includes(v)) throw new Error(`invalid sign-out reason: ${v}`);
+  return v as SignOutReason;
+}
+export function parseSystemRole(v: string): SystemRole {
+  if (!(Object.values(SystemRole) as string[]).includes(v)) throw new Error(`invalid system role: ${v}`);
+  return v as SystemRole;
+}
+export function parseProofKind(v: string): ProofKind {
+  if (!(Object.values(ProofKind) as string[]).includes(v)) throw new Error(`invalid proof kind: ${v}`);
+  return v as ProofKind;
+}
 ```
 
 ### 2.2 Value Objects
@@ -189,8 +213,8 @@ export function parseAccessStanding(v: string): AccessStanding { /* explicit par
 |:--|:--|:--|
 | `UserId` / `PersonId` | `private ctor + of() + generate()` (`usr-` / `per-` prefix) | Never interchangeable; `equals()` by value |
 | `ContactAddress` | `{ email, verified }` immutable class | `change()` → new unverified; `verify()` flips standing |
-| `SystemRole` | `{ value: ADMIN \| USER }` | Set never leaves system without a admin (invariant 4) |
-| `ProofKind` | enum `LOCAL \| OUTSIDE` | Recorded on sign-in fact |
+| `SystemRole` | `ADMIN \| USER` (`as const` union, member access `SystemRole.USER`) | Set never leaves system without a admin (invariant 4) |
+| `ProofKind` | `LOCAL \| OUTSIDE` (`as const` union, member access `ProofKind.LOCAL`) | Recorded on sign-in fact |
 | `OutsideProverRef` | `{ prover: 'auth0' }` class, `of()` validated | At most one linked; Auth0 is the single agreed prover |
 
 ```typescript
