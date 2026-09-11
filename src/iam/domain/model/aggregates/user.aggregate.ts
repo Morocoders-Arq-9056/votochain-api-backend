@@ -1,5 +1,6 @@
 import { AggregateRoot } from "../../../../shared/domain/model/aggregate-root.js";
 import { IllegalUserStateError } from "../../exceptions/illegal-user-state.error.js";
+import { LastAdminRefusedError } from "../../exceptions/last-admin-refused.error.js";
 import { LastProofRefusedError } from "../../exceptions/last-proof-refused.error.js";
 import { NoOpenSessionError } from "../../exceptions/no-open-session.error.js";
 import { OutsideProofAlreadyLinkedError } from "../../exceptions/outside-proof-already-linked.error.js";
@@ -47,8 +48,8 @@ export class User extends AggregateRoot implements AccessStandable {
   ) { super(); }
 
   static signUp(input: { personId: PersonId; contact: ContactAddress }): User {
-    const user = new User(UserId.generate(), input.personId, 'REGISTERED', 'SESSION_CLOSED',
-      input.contact, ['USER'], null);
+    const user = new User(UserId.generate(), input.personId, AccessStanding.REGISTERED, SessionStanding.CLOSED,
+      input.contact, [SystemRole.USER], null);
     user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
     return user;
   }
@@ -67,58 +68,58 @@ export class User extends AggregateRoot implements AccessStandable {
   }
 
   private tearDownSession(reason: SignOutReason): void {
-    if (this._session !== 'SESSION_OPEN') return;
-    this._session = 'SESSION_CLOSED';
+    if (this._session !== SessionStanding.OPEN) return;
+    this._session = SessionStanding.CLOSED;
     this.registerEvent(new UserSignedOutEvent(this._id, this._personId, reason));
   }
 
   private proofKinds(): ProofKind[] {
-    return ['LOCAL', ...(this._outsideProver ? ['OUTSIDE' as ProofKind] : [])];
+    return [ProofKind.LOCAL, ...(this._outsideProver ? [ProofKind.OUTSIDE] : [])];
   }
 
   signIn(kind: ProofKind): void {
-    if (this._standing !== 'ACTIVE') throw new SuspendedRefusedError('not active');
-    if (this._session === 'SESSION_OPEN')
-      this.registerEvent(new UserSignedOutEvent(this._id, this._personId, 'SUPERSEDED'));
-    this._session = 'SESSION_OPEN';
+    if (this._standing !== AccessStanding.ACTIVE) throw new SuspendedRefusedError('not active');
+    if (this._session === SessionStanding.OPEN)
+      this.registerEvent(new UserSignedOutEvent(this._id, this._personId, SignOutReason.SUPERSEDED));
+    this._session = SessionStanding.OPEN;
     this.registerEvent(new UserSignedInEvent(this._id, this._personId, kind));
   }
 
   signOut(): void {
-    if (this._session !== 'SESSION_OPEN') throw new NoOpenSessionError('no session');
-    this.tearDownSession('ASKED');
+    if (this._session !== SessionStanding.OPEN) throw new NoOpenSessionError('no session');
+    this.tearDownSession(SignOutReason.ASKED);
   }
 
   changeSecret(): void {
-    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
-    this.tearDownSession('PROOF_CHANGED');
+    if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
+    this.tearDownSession(SignOutReason.PROOF_CHANGED);
     this.registerEvent(new SecretChangedEvent(this._id, this._personId));
   }
 
   changeEmail(newEmail: string): void {
-    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     const oldEmail = this._contact.email;
     this._contact = this._contact.change(newEmail);
     this.registerEvent(new EmailChangedEvent(this._id, this._personId, oldEmail, newEmail));
   }
 
   verifyEmail(): void {
-    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     if (this._contact.verified) throw new IllegalUserStateError('already verified');
     this._contact = this._contact.verify();
-    if (this._standing === 'REGISTERED') this._standing = 'ACTIVE';
+    if (this._standing === AccessStanding.REGISTERED) this._standing = AccessStanding.ACTIVE;
     this.registerEvent(new EmailVerifiedEvent(this._id, this._personId, this._contact.email));
   }
 
   linkOutsideIdentity(prover: OutsideProverRef): void {
-    if (this._standing !== 'ACTIVE') throw new SuspendedRefusedError('not active');
+    if (this._standing !== AccessStanding.ACTIVE) throw new SuspendedRefusedError('not active');
     if (this._outsideProver) throw new OutsideProofAlreadyLinkedError('outside proof already linked');
     this._outsideProver = prover;
     this.registerEvent(new OutsideIdentityLinkedEvent(this._id, this._personId, prover));
   }
 
   unlinkOutsideIdentity(prover: OutsideProverRef): void {
-    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     if (!this._outsideProver) throw new IllegalUserStateError('no outside proof linked');
     if (this.proofKinds().length === 1) throw new LastProofRefusedError('last proof refused');
     this._outsideProver = null;
@@ -126,34 +127,36 @@ export class User extends AggregateRoot implements AccessStandable {
   }
 
   grantSystemRole(role: SystemRole): void {
-    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+    if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     if (this._roles.includes(role)) throw new RoleAlreadyHeldError(`role already held: ${role}`);
     this._roles = [...this._roles, role];
     this.registerEvent(new SystemRoleGrantedEvent(this._id, this._personId, role));
   }
 
-revokeSystemRole(role: SystemRole): void {
-    if (this._standing === 'SUSPENDED') throw new SuspendedRefusedError('suspended');
+  revokeSystemRole(role: SystemRole): void {
+    if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     if (!this._roles.includes(role)) throw new RoleNotHeldError(`role not held: ${role}`);
+    if (role === SystemRole.ADMIN && this._roles.filter((r) => r === SystemRole.ADMIN).length === 1)
+      throw new LastAdminRefusedError('last admin refused');
     this._roles = this._roles.filter((r) => r !== role);
     this.registerEvent(new SystemRoleRevokedEvent(this._id, this._personId, role));
   }
 
   suspend(reason: string): void {
-    if (this._standing === 'SUSPENDED') throw new IllegalUserStateError('already suspended');
-    this.applyStandingTransition(this._standing, 'SUSPENDED', new AccessSuspendedEvent(this._id, this._personId, reason));
-    this.tearDownSession('SUSPENDED');
+    if (this._standing === AccessStanding.SUSPENDED) throw new IllegalUserStateError('already suspended');
+    this.applyStandingTransition(this._standing, AccessStanding.SUSPENDED, new AccessSuspendedEvent(this._id, this._personId, reason));
+    this.tearDownSession(SignOutReason.SUSPENDED);
   }
 
   restore(): void {
-    this.applyStandingTransition('SUSPENDED', 'ACTIVE', new AccessRestoredEvent(this._id, this._personId));
+    this.applyStandingTransition(AccessStanding.SUSPENDED, AccessStanding.ACTIVE, new AccessRestoredEvent(this._id, this._personId));
   }
 
   answerAccessStanding(): { mayAct: boolean; roles: SystemRole[]; sessionOpen: boolean } {
     return {
-      mayAct: this._standing === 'ACTIVE',
+      mayAct: this._standing === AccessStanding.ACTIVE,
       roles: [...this._roles],
-      sessionOpen: this._session === 'SESSION_OPEN',
+      sessionOpen: this._session === SessionStanding.OPEN,
     };
   }
 }
