@@ -1,4 +1,4 @@
-import { UserId } from "../valueobjects/user-id.js";
+import { UserId } from "../valueobjects/user-id.value-object.js";
 
 export class VerifyEmailCommand {
   constructor(

@@ -1,4 +1,4 @@
-import { PersonId } from "../valueobjects/person-id.js";
+import { PersonId } from "../valueobjects/person-id.value-object.js";
 
 export class GetAccessStandingByPersonQuery {
   constructor(public readonly personId: PersonId) {

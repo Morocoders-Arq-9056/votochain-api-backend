@@ -2,7 +2,7 @@ import { GetAccessStandingByPersonQuery } from "../model/queries/get-access-stan
 import { GetUserByIdQuery } from "../model/queries/get-user-by-id.query.js";
 import { User } from "../model/aggregates/user.aggregate.js"
 import { GetSystemRolesByPersonQuery } from "../model/queries/get-system-roles-by-person.query.js";
-import { SystemRole } from "../model/valueobjects/system-role.js";
+import { SystemRole } from "../model/valueobjects/system-role.value-object.js";
 
 
 /**

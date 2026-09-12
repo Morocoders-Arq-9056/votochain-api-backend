@@ -20,16 +20,16 @@ import { UserSignedInEvent } from "../events/user-signed-in.event.js";
 import { UserSignedOutEvent } from "../events/user-signed-out.event.js";
 import { UserSignedUpEvent } from "../events/user-signed-up.event.js";
 import { SystemRoleAssignment } from "../entities/system-role-assignment.entity.js";
-import { AccessStandable } from "../valueobjects/access-standable.js";
-import { AccessStanding } from "../valueobjects/access-standing.js";
-import { ContactAddress } from "../valueobjects/contact-address.js";
-import { OutsideProverRef } from "../valueobjects/outside-prover-ref.js";
-import { PersonId } from "../valueobjects/person-id.js";
-import { ProofKind } from "../valueobjects/proof-kind.js";
-import { SessionStanding } from "../valueobjects/session-standing.js";
-import { SignOutReason } from "../valueobjects/sign-out-reason.js";
-import { SystemRole } from "../valueobjects/system-role.js";
-import { UserId } from "../valueobjects/user-id.js";
+import { AccessStandable } from "../valueobjects/access-standable.value-object.js";
+import { AccessStanding } from "../valueobjects/access-standing.value-object.js";
+import { ContactAddress } from "../valueobjects/contact-address.value-object.js";
+import { OutsideProverRef } from "../valueobjects/outside-prover-ref.value-object.js";
+import { PersonId } from "../valueobjects/person-id.value-object.js";
+import { ProofKind } from "../valueobjects/proof-kind.value-object.js";
+import { SessionStanding } from "../valueobjects/session-standing.value-object.js";
+import { SignOutReason } from "../valueobjects/sign-out-reason.value-object.js";
+import { SystemRole } from "../valueobjects/system-role.value-object.js";
+import { UserId } from "../valueobjects/user-id.value-object.js";
 
 /**
  * Aggregate root representing a user in the system.

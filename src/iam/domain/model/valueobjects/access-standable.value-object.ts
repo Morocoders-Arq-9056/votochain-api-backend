@@ -1,4 +1,4 @@
-import { ProofKind } from "./proof-kind.js";
+import { ProofKind } from "./proof-kind.value-object.js";
 
 /**
  * Interface defining acessing workflow actions for iam aggregate.

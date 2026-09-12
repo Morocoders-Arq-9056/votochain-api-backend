@@ -10,7 +10,7 @@ import { SignUpCommand } from "../model/commands/sign-up.command.js";
 import { SuspendAccessCommand } from "../model/commands/suspend-access.command.js";
 import { UnlinkOutsideIdentityCommand } from "../model/commands/unlink-outside-identity.command.js";
 import { VerifyEmailCommand } from "../model/commands/verify-email.command.js";
-import { UserId } from "../model/valueobjects/user-id.js";
+import { UserId } from "../model/valueobjects/user-id.value-object.js";
 
 /**
  * Interface for the user command service.

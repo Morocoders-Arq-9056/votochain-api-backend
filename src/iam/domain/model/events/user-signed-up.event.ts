@@ -1,7 +1,7 @@
 import { DomainEvent } from "../../../../shared/domain/model/domain-event.js";
-import { ContactAddress } from "../valueobjects/contact-address.js";
-import { PersonId } from "../valueobjects/person-id.js";
-import { UserId } from "../valueobjects/user-id.js";
+import { ContactAddress } from "../valueobjects/contact-address.value-object.js";
+import { PersonId } from "../valueobjects/person-id.value-object.js";
+import { UserId } from "../valueobjects/user-id.value-object.js";
 
 export class UserSignedUpEvent implements DomainEvent {
   static readonly eventName = 'UserSignedUp';

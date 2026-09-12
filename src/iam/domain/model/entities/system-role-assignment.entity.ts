@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { SystemRole } from "../valueobjects/system-role.js";
+import { SystemRole } from "../valueobjects/system-role.value-object.js";
 
 /**
  * Internal entity representing a single system role held by a user.

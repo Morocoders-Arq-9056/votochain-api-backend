@@ -1,5 +1,5 @@
-import { ContactAddress } from "../valueobjects/contact-address.js";
-import { PersonId } from "../valueobjects/person-id.js";
+import { ContactAddress } from "../valueobjects/contact-address.value-object.js";
+import { PersonId } from "../valueobjects/person-id.value-object.js";
 
 export class SignUpCommand {
   constructor(

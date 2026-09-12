@@ -1,5 +1,5 @@
-import { SystemRole } from "../valueobjects/system-role.js";
-import { UserId } from "../valueobjects/user-id.js";
+import { SystemRole } from "../valueobjects/system-role.value-object.js";
+import { UserId } from "../valueobjects/user-id.value-object.js";
 
 export class RevokeSystemRoleCommand {
   constructor(
