@@ -19,6 +19,7 @@ import { SystemRoleRevokedEvent } from "../events/system-role-revoked.event.js";
 import { UserSignedInEvent } from "../events/user-signed-in.event.js";
 import { UserSignedOutEvent } from "../events/user-signed-out.event.js";
 import { UserSignedUpEvent } from "../events/user-signed-up.event.js";
+import { SystemRoleAssignment } from "../entities/system-role-assignment.entity.js";
 import { AccessStandable } from "../valueobjects/access-standable.js";
 import { AccessStanding } from "../valueobjects/access-standing.js";
 import { ContactAddress } from "../valueobjects/contact-address.js";
@@ -43,22 +44,22 @@ export class User extends AggregateRoot implements AccessStandable {
     private _standing: AccessStanding,
     private _session: SessionStanding,
     private _contact: ContactAddress,
-    private _roles: SystemRole[],
+    private _assignments: SystemRoleAssignment[],
     private _outsideProver: OutsideProverRef | null,
   ) { super(); }
 
   static signUp(input: { personId: PersonId; contact: ContactAddress }): User {
     const user = new User(UserId.generate(), input.personId, AccessStanding.REGISTERED, SessionStanding.CLOSED,
-      input.contact, [SystemRole.USER], null);
+      input.contact, [SystemRoleAssignment.grant(SystemRole.USER)], null);
     user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
     return user;
   }
 
   static rehydrate(input: { id: UserId; personId: PersonId; standing: AccessStanding;
-    session: SessionStanding; contact: ContactAddress; roles: SystemRole[];
+    session: SessionStanding; contact: ContactAddress; assignments: SystemRoleAssignment[];
     outsideProver: OutsideProverRef | null }): User {
     return new User(input.id, input.personId, input.standing,
-      input.session, input.contact, input.roles, input.outsideProver);
+      input.session, input.contact, input.assignments, input.outsideProver);
   }
 
   protected applyStandingTransition(from: AccessStanding, to: AccessStanding, event: { eventName: string }): void {
@@ -128,19 +129,25 @@ export class User extends AggregateRoot implements AccessStandable {
 
   grantSystemRole(role: SystemRole): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
-    if (this._roles.includes(role)) throw new RoleAlreadyHeldError(`role already held: ${role}`);
-    this._roles = [...this._roles, role];
+    if (this.hasRole(role)) throw new RoleAlreadyHeldError(`role already held: ${role}`);
+    this._assignments = [...this._assignments, SystemRoleAssignment.grant(role)];
     this.registerEvent(new SystemRoleGrantedEvent(this._id, this._personId, role));
   }
 
   revokeSystemRole(role: SystemRole): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
-    if (!this._roles.includes(role)) throw new RoleNotHeldError(`role not held: ${role}`);
-    if (role === SystemRole.ADMIN && this._roles.filter((r) => r === SystemRole.ADMIN).length === 1)
+    if (!this.hasRole(role)) throw new RoleNotHeldError(`role not held: ${role}`);
+    if (role === SystemRole.ADMIN && this._assignments.filter((a) => a.role === SystemRole.ADMIN).length === 1)
       throw new LastAdminRefusedError('last admin refused');
-    this._roles = this._roles.filter((r) => r !== role);
+    this._assignments = this._assignments.filter((a) => a.role !== role);
     this.registerEvent(new SystemRoleRevokedEvent(this._id, this._personId, role));
   }
+
+  hasRole(role: SystemRole): boolean {
+    return this._assignments.some((a) => a.role === role);
+  }
+
+  get roleAssignments(): SystemRoleAssignment[] { return [...this._assignments]; }
 
   suspend(reason: string): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new IllegalUserStateError('already suspended');
@@ -155,7 +162,7 @@ export class User extends AggregateRoot implements AccessStandable {
   answerAccessStanding(): { mayAct: boolean; roles: SystemRole[]; sessionOpen: boolean } {
     return {
       mayAct: this._standing === AccessStanding.ACTIVE,
-      roles: [...this._roles],
+      roles: this._assignments.map((a) => a.role),
       sessionOpen: this._session === SessionStanding.OPEN,
     };
   }
