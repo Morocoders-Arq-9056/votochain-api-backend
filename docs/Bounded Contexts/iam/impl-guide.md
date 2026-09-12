@@ -47,7 +47,7 @@ src/iam/
 │       ├── queryservices/
 │       │   └── user-query.service.impl.ts
 │       ├── eventhandlers/
-│   │   └── user-event-logger.ts    # @OnEvent internos, solo log (exempt logger)
+│       │   └── user-event-logger.ts    # @OnEvent internos, solo log (exempt logger)
 │       └── outboundservices/
 │           ├── proof/
 │           │   └── proof-verification.service.ts        # port + token
