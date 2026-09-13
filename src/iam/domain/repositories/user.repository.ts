@@ -1,4 +1,5 @@
 import { User } from "../model/aggregates/user.aggregate.js";
+import { PersonId } from "../model/valueobjects/person-id.value-object.js";
 import { UserId } from "../model/valueobjects/user-id.value-object.js";
 
 /**
@@ -31,7 +32,7 @@ export interface UserRepository {
    * @param personId The person ID associated with the user to find.
    * @returns A promise that resolves to the User if found, or null if not found.
    */
-  findByPersonId(personId: string): Promise<User | null>;
+  findByPersonId(personId: PersonId): Promise<User | null>;
 
   /**
    * Saves a user entity to the repository.
