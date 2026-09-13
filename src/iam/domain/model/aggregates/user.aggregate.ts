@@ -148,6 +148,12 @@ export class User extends AggregateRoot implements AccessStandable {
   }
 
   get roleAssignments(): SystemRoleAssignment[] { return [...this._assignments]; }
+  get id(): UserId { return this._id; }
+  get personId(): PersonId { return this._personId; }
+  get standing(): AccessStanding { return this._standing; }
+  get session(): SessionStanding { return this._session; }
+  get contact(): ContactAddress { return this._contact; }
+  get outsideProver(): OutsideProverRef | null { return this._outsideProver; }
 
   suspend(reason: string): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new IllegalUserStateError('already suspended');
