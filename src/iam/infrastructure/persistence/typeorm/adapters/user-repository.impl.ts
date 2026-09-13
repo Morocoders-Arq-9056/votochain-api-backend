@@ -1,0 +1,50 @@
+import { Repository } from "typeorm";
+import { Injectable } from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { UserOrmEntity } from "../entities/user.orm-entity.js";
+import { UserPersistenceAssembler } from "../assemblers/user-persistence.assembler.js";
+import { TransactionContext } from "../../../../../shared/infrastructure/persistence/typeorm/repositories/transaction-context.js";
+import { UserId } from "../../../../domain/model/valueobjects/user-id.value-object.js";
+import { User } from "../../../../domain/model/aggregates/user.aggregate.js";
+
+@Injectable()
+export class UserRepositoryImpl {
+  constructor(
+    @InjectRepository(UserOrmEntity) private readonly userRepository: Repository<UserOrmEntity>,
+    private readonly assembler: UserPersistenceAssembler,
+  ) {}
+
+  private get repository(): Repository<UserOrmEntity> {
+    const manager = TransactionContext.current;
+    return manager ? manager.getRepository(UserOrmEntity) : this.userRepository;
+  }
+
+  /**
+   * @inheritdoc
+   */
+  async findById(id: UserId): Promise<User | null> {
+    const found = await this.repository.findOne({
+      where: { id: id.value }
+    });
+    return found ? this.assembler.toDomainFromOrm(found) : null;
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    const found = await this.repository.findOne({
+        where : { email }
+    })
+    return found ? this.assembler.toDomainFromOrm(found) : null;
+  }
+
+  async findByPersonId(personId: string): Promise<User | null> {
+    const found = await this.repository.findOne({
+        where : { personId }
+    })
+    return found ? this.assembler.toDomainFromOrm(found) : null;
+  }
+  
+  async save(user: User): Promise<void> {
+    const ormEntity = this.assembler.toOrmFromDomain(user);
+    await this.repository.save(ormEntity);
+  }
+}
