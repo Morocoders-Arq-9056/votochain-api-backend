@@ -48,8 +48,8 @@ export class User extends AggregateRoot implements AccessStandable {
     private _outsideProver: OutsideProverRef | null,
   ) { super(); }
 
-  static signUp(input: { personId: PersonId; contact: ContactAddress }): User {
-    const user = new User(UserId.generate(), input.personId, AccessStanding.REGISTERED, SessionStanding.CLOSED,
+  static signUp(input: { contact: ContactAddress }): User {
+    const user = new User(UserId.generate(), PersonId.generate(), AccessStanding.REGISTERED, SessionStanding.CLOSED,
       input.contact, [SystemRoleAssignment.grant(SystemRole.USER)], null);
     user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
     return user;

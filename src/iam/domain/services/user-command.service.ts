@@ -22,9 +22,11 @@ import { UserId } from "../model/valueobjects/user-id.value-object.js";
 export interface UserCommandService {
   /**
    * Handles the user sign-up process.
-   * 
-   * @param command The command containing the necessary information for signing up a user.
-   * @returns A promise that resolves to the newly created UserId. 
+   * The command carries only the contact address; UserId and PersonId are minted
+   * inside the User.signup factory. Email uniqueness is checked in application.
+   *
+   * @param command The command containing the contact address for signing up a user.
+   * @returns A promise that resolves to the newly created UserId.
    */
   handle(command: SignUpCommand): Promise<UserId>;
 

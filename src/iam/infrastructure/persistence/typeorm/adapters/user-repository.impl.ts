@@ -6,6 +6,7 @@ import { UserPersistenceAssembler } from "../assemblers/user-persistence.assembl
 import { TransactionContext } from "../../../../../shared/infrastructure/persistence/typeorm/repositories/transaction-context.js";
 import { UserId } from "../../../../domain/model/valueobjects/user-id.value-object.js";
 import { User } from "../../../../domain/model/aggregates/user.aggregate.js";
+import { PersonId } from "../../../../domain/model/valueobjects/person-id.value-object.js";
 
 @Injectable()
 export class UserRepositoryImpl {
@@ -36,9 +37,9 @@ export class UserRepositoryImpl {
     return found ? this.assembler.toDomainFromOrm(found) : null;
   }
 
-  async findByPersonId(personId: string): Promise<User | null> {
+  async findByPersonId(personId: PersonId): Promise<User | null> {
     const found = await this.repository.findOne({
-        where : { personId }
+        where : { personId: personId.value }
     })
     return found ? this.assembler.toDomainFromOrm(found) : null;
   }
