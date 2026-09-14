@@ -68,7 +68,7 @@ confused with the aggregate operations in `domain-model.md`, which are internal.
 
 | Command | Carries | Handled By |
 |---------|---------|------------|
-| `SignUpCommand` | personId, contact address | UC1 |
+| `SignUpCommand` | contact address (PersonId minteado en dominio, único origen) | UC1 |
 | `SignInCommand` | userId, offered proof reference | UC2 |
 | `SignOutCommand` | userId | UC3 |
 | `ChangeSecretCommand` | userId, current proof reference | UC4 |

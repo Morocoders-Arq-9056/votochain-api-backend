@@ -119,9 +119,9 @@ export class User extends AggregateRoot implements AccessStandable {
     private _outsideProver: OutsideProverRef | null,
   ) { super(); }
 
-  /** Creates a brand-new identity. Always REGISTERED; always raises UserSignedUpEvent. */
-  static signup(input: { personId: PersonId; contact: ContactAddress }): User {
-    const user = new User(UserId.generate(), input.personId,
+  /** Creates a brand-new identity. Mints UserId + PersonId. Always REGISTERED; always raises UserSignedUpEvent. */
+  static signup(input: { contact: ContactAddress }): User {
+    const user = new User(UserId.generate(), PersonId.generate(),
       AccessStanding.REGISTERED, SessionStanding.CLOSED,
       input.contact, [SystemRole.USER], null);
     user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
@@ -231,7 +231,7 @@ export class UserId {
 
 `domain/model/commands/` — plain classes, self-validating ctor:
 
-`SignUpCommand(personId, contactAddress)`, `SignInCommand(userId, proofKind)`, `SignOutCommand(userId)`, `ChangeSecretCommand`, `ChangeEmailCommand`, `VerifyEmailCommand`, `LinkOutsideIdentityCommand`, `UnlinkOutsideIdentityCommand`, `GrantSystemRoleCommand`, `RevokeSystemRoleCommand`, `SuspendAccessCommand(userId, reason)`, `RestoreAccessCommand`.
+`SignUpCommand(contactAddress)` (IDs minteados en `User.signup()` factory: `UserId.generate() + PersonId.generate()`), `SignInCommand(userId, proofKind)`, `SignOutCommand(userId)`, `ChangeSecretCommand`, `ChangeEmailCommand`, `VerifyEmailCommand`, `LinkOutsideIdentityCommand`, `UnlinkOutsideIdentityCommand`, `GrantSystemRoleCommand`, `RevokeSystemRoleCommand`, `SuspendAccessCommand(userId, reason)`, `RestoreAccessCommand`.
 
 ### 2.4 Queries (CQRS — Read)
 
@@ -447,11 +447,11 @@ CREATE INDEX idx_users_standing ON iam.users (standing);
 ### 7.1 SignUp (UC1)
 
 ```
-POST /api/v1/iam/users/signup { personId, email }
- -> ValidationPipe -> SignupCommandFromResourceAssembler.toCommand()
+POST /api/v1/iam/users/signup { email }
+ -> ValidationPipe -> SignupCommandFromResourceAssembler.toCommand() (mapea email -> ContactAddress, sin generar IDs)
  -> UserCommandServiceImpl.signup() inside UNIT_OF_WORK.run()
-     -> users.findByPersonId() == null else AlreadyRegisteredError
-     -> User.signup({ personId, contact }) -> registerEvent(UserSignedUpEvent)
+     -> users.findByEmail() != null else AddressAlreadyHeldError
+     -> User.signup({ contact }) (factory mintea UserId + PersonId) -> registerEvent(UserSignedUpEvent)
      -> users.save(user)
  -> after commit: emit(UserSignedUpEvent) -> logger + ExternalNotificationsService.welcome()
  -> 201 + UserResource
