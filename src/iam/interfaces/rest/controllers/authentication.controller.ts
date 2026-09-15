@@ -1,0 +1,28 @@
+import { Body, Controller, HttpCode, HttpStatus, Inject, NotFoundException, Post } from '@nestjs/common';
+import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
+import type { UserCommandService } from '../../../domain/services/user-command.service.js';
+import { USER_QUERY_SERVICE } from '../../../domain/services/user-query.service.js';
+import type { UserQueryService } from '../../../domain/services/user-query.service.js';
+import { GetUserByIdQuery } from '../../../domain/model/queries/get-user-by-id.query.js';
+import { AuthenticatedUserResource } from '../resources/authenticated-user.resource.js';
+import { SignUpResource } from '../resources/sign-up.resource.js';
+import { AuthenticatedUserResourceFromEntityAssembler } from '../transform/authenticated-user-resource-from-entity.assembler.js';
+import { SignUpCommandFromResourceAssembler } from '../transform/sign-up-command-from-resource.assembler.js';
+
+@Controller('api/v1/iam/users')
+export class AuthenticationController {
+  constructor(
+    @Inject(USER_COMMAND_SERVICE) private readonly commands: UserCommandService,
+    @Inject(USER_QUERY_SERVICE) private readonly queries: UserQueryService,
+  ) {}
+
+  @Post('signup')
+  @HttpCode(HttpStatus.CREATED)
+  async signUp(@Body() resource: SignUpResource): Promise<AuthenticatedUserResource> {
+    const command = SignUpCommandFromResourceAssembler.toCommandFromResource(resource);
+    const userId = await this.commands.handle(command);
+    const user = await this.queries.handle(new GetUserByIdQuery(userId));
+    if (!user) throw new NotFoundException();
+    return AuthenticatedUserResourceFromEntityAssembler.toResourceFromEntity(user, '');
+  }
+}
