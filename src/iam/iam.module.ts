@@ -18,7 +18,7 @@ import { ConfigModule } from "@nestjs/config";
   imports: [
   TypeOrmModule.forFeature([UserOrmEntity, SystemRoleAssignmentOrmEntity]),
   ConfigModule.forFeature(auth0Config),
-],
+  ],
   controllers: [AuthenticationController], 
   providers: [
     UserPersistenceAssembler,
