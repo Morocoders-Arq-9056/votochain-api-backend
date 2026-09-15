@@ -20,7 +20,7 @@ export class UserPersistenceAssembler {
       standing: parseAccessStanding(entity.standing),
       session: parseSessionStanding(entity.session),
       contact: ContactAddress.of(entity.email, entity.emailVerified),
-      assignments: entity.assignments.map((assignment) =>
+      assignments: entity.assignments?.map((assignment) =>
         SystemRoleAssignment.rehydrate(assignment.id, parseSystemRole(assignment.role), assignment.grantedAt)) ?? [],
       outsideProver: entity.outsideProver ? OutsideProverRef.of(entity.outsideProver) : null,
     });
