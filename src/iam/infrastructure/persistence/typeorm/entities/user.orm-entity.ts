@@ -1,6 +1,5 @@
 import { Entity } from "typeorm/decorator/entity/Entity.js";
 import { AuditableOrmEntity } from "../../../../../shared/infrastructure/persistence/auditable.orm-entity.js";
-import { Index } from "typeorm/decorator/Index.js";
 import { PrimaryColumn } from "typeorm/decorator/columns/PrimaryColumn.js";
 import { Column } from "typeorm";
 import { OneToMany } from "typeorm/decorator/relations/OneToMany.js";
@@ -12,7 +11,7 @@ export class UserOrmEntity extends AuditableOrmEntity {
   @Column({unique: true}) personId: string;
   @Column() standing: string
   @Column() session: string;
-  @Column() email: string;
+  @Column({ unique: true }) email: string
   @Column() emailVerified: boolean;
   @OneToMany(() => SystemRoleAssignmentOrmEntity, (assignment) => assignment.user, { cascade: true, orphanedRowAction: 'delete' })
   assignments: SystemRoleAssignmentOrmEntity[];

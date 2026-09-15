@@ -7,9 +7,10 @@ import { TransactionContext } from "../../../../../shared/infrastructure/persist
 import { UserId } from "../../../../domain/model/valueobjects/user-id.value-object.js";
 import { User } from "../../../../domain/model/aggregates/user.aggregate.js";
 import { PersonId } from "../../../../domain/model/valueobjects/person-id.value-object.js";
+import { UserRepository } from "../../../../domain/repositories/user.repository.js";
 
 @Injectable()
-export class UserRepositoryImpl {
+export class UserRepositoryImpl implements UserRepository {
   constructor(
     @InjectRepository(UserOrmEntity) private readonly userRepository: Repository<UserOrmEntity>,
     private readonly assembler: UserPersistenceAssembler,
@@ -25,21 +26,24 @@ export class UserRepositoryImpl {
    */
   async findById(id: UserId): Promise<User | null> {
     const found = await this.repository.findOne({
-      where: { id: id.value }
+      where: { id: id.value },
+      relations: { assignments: true },
     });
     return found ? this.assembler.toDomainFromOrm(found) : null;
   }
 
   async findByEmail(email: string): Promise<User | null> {
     const found = await this.repository.findOne({
-        where : { email }
+      where : { email },
+      relations: { assignments: true },
     })
     return found ? this.assembler.toDomainFromOrm(found) : null;
   }
 
   async findByPersonId(personId: PersonId): Promise<User | null> {
     const found = await this.repository.findOne({
-        where : { personId: personId.value }
+      where : { personId: personId.value },
+      relations: { assignments: true },
     })
     return found ? this.assembler.toDomainFromOrm(found) : null;
   }
