@@ -10,14 +10,9 @@ import { UserPersistenceAssembler } from "./infrastructure/persistence/typeorm/a
 import { SystemRoleAssignmentOrmEntity } from "./infrastructure/persistence/typeorm/entities/system-role-assignment.orm-entity.js";
 import { UserOrmEntity } from "./infrastructure/persistence/typeorm/entities/user.orm-entity.js";
 import { TypeOrmModule } from "@nestjs/typeorm";
-import { Auth0ProofService } from "./infrastructure/proof/auth0/service/auth0-proof.service.js";
-import { PROOF_VERIFICATION_SERVICE } from "./application/internal/outboundservices/proof/proof-verification.service.js";
-import auth0Config from './infrastructure/proof/auth0/configuration/auth0.config.js';
-import { ConfigModule } from "@nestjs/config";
 @Module({
   imports: [
   TypeOrmModule.forFeature([UserOrmEntity, SystemRoleAssignmentOrmEntity]),
-  ConfigModule.forFeature(auth0Config),
   ],
   controllers: [AuthenticationController], 
   providers: [
@@ -26,8 +21,7 @@ import { ConfigModule } from "@nestjs/config";
     UserQueryServiceImpl,
     { provide: USER_REPOSITORY, useClass: UserRepositoryImpl },
     { provide: USER_COMMAND_SERVICE, useClass: UserCommandServiceImpl },
-    { provide: USER_QUERY_SERVICE, useClass: UserQueryServiceImpl },
-    { provide: PROOF_VERIFICATION_SERVICE, useClass: Auth0ProofService }
+    { provide: USER_QUERY_SERVICE, useClass: UserQueryServiceImpl }
   ],
 })
 export class IamModule {}
