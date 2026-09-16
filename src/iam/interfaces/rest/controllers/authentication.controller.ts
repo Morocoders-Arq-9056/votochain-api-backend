@@ -20,8 +20,8 @@ export class AuthenticationController {
   @HttpCode(HttpStatus.CREATED)
   async signUp(@Body() resource: SignUpResource): Promise<AuthenticatedUserResource> {
     const command = SignUpCommandFromResourceAssembler.toCommandFromResource(resource);
-    const userId = await this.commands.handle(command);
-    const user = await this.queries.handle(new GetUserByIdQuery(userId));
+    const userId = await this.commands.signUp(command);
+    const user = await this.queries.getUserById(new GetUserByIdQuery(userId));
     if (!user) throw new NotFoundException();
     return AuthenticatedUserResourceFromEntityAssembler.toResourceFromEntity(user, '');
   }

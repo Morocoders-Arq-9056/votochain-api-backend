@@ -6,19 +6,24 @@ import { GetAccessStandingByPersonQuery } from '../../../domain/model/queries/ge
 import { GetSystemRolesByPersonQuery } from '../../../domain/model/queries/get-system-roles-by-person.query.js';
 import { GetUserByIdQuery } from '../../../domain/model/queries/get-user-by-id.query.js';
 import { User } from '../../../domain/model/aggregates/user.aggregate.js';
-import { SystemRoleAssignment } from '../../../domain/model/entities/system-role-assignment.entity.js';
-import { AccessStandingAnswer } from '../../../domain/model/valueobjects/access-standing-answer.value-object.js';
+import type { SystemRole } from '../../../domain/model/valueobjects/system-role.value-object.js';
+import type { AccessStandingAnswer } from '../../../domain/model/valueobjects/access-standing-answer.value-object.js';
 
 @Injectable()
 export class UserQueryServiceImpl implements UserQueryService {
   constructor(@Inject(USER_REPOSITORY) private readonly users: UserRepository) {}
 
-  async handle(query: GetUserByIdQuery): Promise<User | null>;
-  async handle(query: GetAccessStandingByPersonQuery): Promise<AccessStandingAnswer | null>;
-  async handle(query: GetSystemRolesByPersonQuery): Promise<SystemRoleAssignment[]>;
+  async getUserById(query: GetUserByIdQuery): Promise<User | null> {
+    return this.users.findById(query.userId);
+  }
 
-  async handle(query: GetSystemRolesByPersonQuery): Promise<SystemRoleAssignment[]> {
+  async getAccessStandingByPerson(query: GetAccessStandingByPersonQuery): Promise<AccessStandingAnswer | null> {
     const user = await this.users.findByPersonId(query.personId);
-    return user ? user.roleAssignments : [];
+    return user ? user.answerAccessStanding() : null;
+  }
+
+  async getSystemRolesByPerson(query: GetSystemRolesByPersonQuery): Promise<SystemRole[]> {
+    const user = await this.users.findByPersonId(query.personId);
+    return user ? user.roleAssignments.map((a) => a.role) : [];
   }
 }

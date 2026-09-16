@@ -21,6 +21,7 @@ import { UserSignedOutEvent } from "../events/user-signed-out.event.js";
 import { UserSignedUpEvent } from "../events/user-signed-up.event.js";
 import { SystemRoleAssignment } from "../entities/system-role-assignment.entity.js";
 import { AccessStandable } from "../valueobjects/access-standable.value-object.js";
+import { AccessStandingAnswer } from "../valueobjects/access-standing-answer.value-object.js";
 import { AccessStanding } from "../valueobjects/access-standing.value-object.js";
 import { ContactAddress } from "../valueobjects/contact-address.value-object.js";
 import { OutsideProverRef } from "../valueobjects/outside-prover-ref.value-object.js";
@@ -165,11 +166,11 @@ export class User extends AggregateRoot implements AccessStandable {
     this.applyStandingTransition(AccessStanding.SUSPENDED, AccessStanding.ACTIVE, new AccessRestoredEvent(this._id, this._personId));
   }
 
-  answerAccessStanding(): { mayAct: boolean; roles: SystemRole[]; sessionOpen: boolean } {
-    return {
-      mayAct: this._standing === AccessStanding.ACTIVE,
-      roles: this._assignments.map((a) => a.role),
-      sessionOpen: this._session === SessionStanding.OPEN,
-    };
+  answerAccessStanding(): AccessStandingAnswer {
+    return new AccessStandingAnswer(
+      this._standing === AccessStanding.ACTIVE,
+      this._assignments.map((a) => a.role),
+      this._session === SessionStanding.OPEN,
+    );
   }
 }
