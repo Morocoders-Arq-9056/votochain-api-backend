@@ -285,7 +285,7 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | Document | Link |
 |----------|------|
 | Event Storming (this bounded context) | `event-storming.md` |
-| Verification (OTP) event storming (sibling — instructs delivery, never delivers) | `../verification-otp/event-storming.md` |
+| Verification (OTP) event storming (sibling — instructs delivery, never delivers) | `../verification/event-storming.md` |
 | IAM event storming (sibling — a requester: welcome, security, address notices) | `../iam/event-storming.md` |
 | Consent & Compliance event storming (sibling — owns opt-in) | `../consent-compliance/event-storming.md` |
 | Voting event storming (sibling — a requester: open/close/receipt/tally notices) | `../voting-verifiable-ledger/event-storming.md` |

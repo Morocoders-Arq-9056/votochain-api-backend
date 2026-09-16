@@ -258,6 +258,9 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     this.publish(a);
   }
   private publish(a: AggregateRoot): void { for (const ev of a.pullDomainEvents()) this.emitter.emit(ev.eventName, ev); }
+  // Desviación intencional documentada (un agregado por tx): revoke() + expire() de attempts
+  // abiertos comparten un uow.run() porque expirar es el efecto terminal del revoke, sin estado
+  // compartido posterior. Orquestado en application (nunca Profile-observes-Attempts).
   async revokeBiometricProfile(cmd: RevokeBiometricProfileCommand): Promise<void> { // UC5 erasure
     const { profile, expired } = await this.uow.run(async () => {
       const p = (await this.profiles.findById(cmd.profileId)) ?? (() => { throw new ReferenceRequiredError('no profile'); })();
@@ -365,7 +368,7 @@ export interface BiometricContextFacade {
 }
 ```
 
-DTOs `class-validator`: `EnrollBiometricResource{personId}`, `StartChallengeResource{personId}`, `CompleteLivenessResource{present}`, `ProfileResource{id,standing}`, `AttemptResource{id,standing,freshness}`, `VerifiedNowResource{verifiedNow,reason}`. Assemblers envuelven a VOs. Filtro: `ReferenceRequired→404`, `ConsentRequired→403`, `AttemptConcluded→409`, `LivenessRequired/ReferenceEnded→422`.
+DTOs `class-validator`: `EnrollBiometricResource{personId}`, `StartChallengeResource{personId}`, `CompleteLivenessResource{present}`, `ProfileResource{id,standing}`, `AttemptResource{id,standing,freshness}`, `VerifiedNowResource{verifiedNow,reason}`. Assemblers envuelven a VOs. Filtro `BiometricExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `ReferenceRequired→404`, `ConsentRequired→403`, `ReferenceAlreadyExists→409` (un live por persona, `uq_live_profile`), `AttemptConcluded→409`, `LivenessRequired/ReferenceEnded→422`.
 
 ---
 
@@ -451,3 +454,10 @@ biometric.freshness.minutes=${FACE_FRESHNESS_MINUTES:15}
 biometric.match.threshold=${FACE_MATCH_THRESHOLD:0.82}
 biometric.match.matcher=${FACE_MATCHER:vendor-a}
 ```
+
+## Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `enroll()` → doble enroll → `ReferenceAlreadyExistsError`; `start()` → `completeLiveness` → `requestComparison` → `recordVerdict`; comparación sin liveness → `LivenessRequiredError`; `revoke()` + expire de attempts abiertos.
+- **application**: mocks de repos + `CONSENT_PORT`/`OCR_PORT`/`MATCHING_PORT` (fakes), o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `uq_live_profile`, `ix_attempt_person`, round-trip + parsers corruptos.
+- **interfaces**: supertest (`POST profiles → :id/liveness,comparison,verdict → standing`).

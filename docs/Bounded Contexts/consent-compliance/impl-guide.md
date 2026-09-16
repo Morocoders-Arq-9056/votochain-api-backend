@@ -340,6 +340,8 @@ export class ConsentController {
 }
 ```
 
+Filtro `ConsentExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`, en `interfaces/rest/filters/`): `RequestNotFoundError → 404`, `UnknownOwnerConfirmationError → 422`, `ConsentAlreadyGrantedError → 409`, `ConsentNotGrantedError → 409`, `ErasureAlreadyOpenError → 409`, `ErasureNotConfirmedError → 409`, `ErasureIncompleteError → 409`.
+
 | Method | Endpoint | Maps to |
 |---|---|---|
 | `POST` | `/api/v1/consents` | `GrantConsentCommand` (UC1) |
@@ -448,7 +450,8 @@ R12 partnership/coordination: this BC coordinates, never executes. `RevocationCo
 |---|---|---|
 | Consumes IAM | `ExternalIamService` → `IAM_CONTEXT_FACADE` | `assertPersonExists(personId)` (UC1, UC4) |
 | Consumes owners | `External{Biometric,Wallet,Membership,Notifications}Service` → owner facades | `askOwnerToRevoke(personId, requestId)` per owner, partnership R12 |
-| Publishes ACL | `CONSENT_CONTEXT_FACADE` (`exports`) | `mayProcessNow`, `mayContactNow`, `getErasureStanding` |
+| Publishes ACL | `CONSENT_CONTEXT_FACADE` (`exports`) | `mayProcessNow`, `mayContactNow`, `getErasureStanding` — solo el facade se exporta, nunca internals |
+| Ciclos bidireccionales | `forwardRef()` en ambos lados | Wallet↔Consent y Biometric↔Consent declaran `forwardRef(() => ...)` en `imports` de ambos módulos (skill: circularidad entre exactamente 2 módulos, solo vía interfaces+tokens; un tercer módulo en el ciclo obligaría a desacoplar por eventos) |
 | Events | `EventEmitter2` in-module only | 8 events; `forRoot()` once in `AppModule` |
 | Infra | TypeORM + UoW | `TypeOrmUnitOfWork`, `TransactionContext`; no Redis — expiry/standing judged in domain |
 
@@ -473,3 +476,10 @@ R12 partnership/coordination: this BC coordinates, never executes. `RevocationCo
 Sin Composite: las confirmaciones son el VO `RevocationConfirmations` (listas asked/confirmed + `allConfirmed()`) persistido como `jsonb` — no hay árbol de componentes que lo justifique. Sin base assembler: un assembler por agregado (`consent` / `erasure-persistence`) con `parse*Standing()` + `of()` explícitos; una clase base solo ocultaría el parseo estricto.
 
 Open questions (from domain-model.md): scope catalog ownership; who confirms/refuses erasure; legal-hold form and expiry; in-flight votes at erasure time; whether refusal reasons are told to the person. Defaults: confirmed erasure beats retention; per-scope revocation allowed; history append-only and auditable.
+
+## Testing (skill §Testing cada capa)
+
+- **domain** (plain unit): doble `grant` vivo → `ConsentAlreadyGrantedError`; `submit→confirm→coordinate→recordConfirmation×N→complete()`; `complete()` sin `allConfirmed()` → `ErasureIncompleteError`; `define()` supersede-chain.
+- **application**: mocks de repos + `External{Biometric,Wallet,Membership,Notifications}Service` (fakes askOwnerToRevoke), o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `uq_consents_live`, `uq_requests_open` parciales, assemblers con `parse*Standing()` corruptos.
+- **interfaces**: supertest (consents/revoke/erasure-requests/confirm/confirmations/retention-policies).

@@ -278,7 +278,7 @@ export const CONSENT_PORT = Symbol('CONSENT_PORT');
 export interface ExternalConsentService { mayProcessNow(personId: string): Promise<boolean>; }
 ```
 
-Executor-first: mismo puerto, adaptadores Rekognition/GDocAI intercambiables; el vocabulario no cambia.
+Executor-first: mismo puerto, adaptadores Rekognition/GDocAI intercambiables; el vocabulario no cambia. Nota Strategy (skill: un algoritmo por puerto): extracción y comparación viajan juntas porque comparten la sesión del vendor por examination (un adaptador válido implementa ambas); si un vendor separara OCR de face-match, se divide en `ExtractionStrategy` + `MatchingStrategy` (parked).
 
 ### 3.4 Handlers + 3.5 Facade ACL
 
@@ -444,3 +444,10 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 ocr.window.ttl-minutes=${OCR_TTL_MINUTES:30}
 ocr.executor=${OCR_EXECUTOR:rekognition}
 ```
+
+## Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `request()` → segundo `request` con OPEN → `noteRefused(DUPLICATE)`; pipeline `recordExtraction→recordComparison→recordVerdict(MATCH)`; `expire(now)`; `requestReexamination(newId)` con ID fresco.
+- **application**: mocks de repo + `DocumentExecutorService` (Fake observaciones) + `ExternalMembershipService` + `ExternalConsentService`, o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `uq_open_exam` parcial, round-trip + `parseVerdict()` corrupto.
+- **interfaces**: supertest (`POST examinations → 201; :id/examine → MATCH; standing/history`).

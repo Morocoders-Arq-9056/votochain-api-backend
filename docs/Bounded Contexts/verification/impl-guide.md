@@ -157,7 +157,7 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 
 ### 2.2 Value Objects
 
-`ChallengeId`/`PersonId`: `private` + `of()`/`generate()` + `equals()` (nunca intercambiables). `Purpose`: enum cerrado `LOGIN | EMAIL_VERIFICATION | PASSWORD_RESET` + `parsePurpose()` (nuevo propósito = nuevo mapeo, no cambio de modelo). `AttemptCount(count, max=5)`: `fresh()`, `counted()`, `remaining()`, `isExhausted()`. `ValidityWindow(requestedAt, minutes=5)`: `isElapsed(now)`. `InvalidationReason`: `ATTEMPTS_EXHAUSTED | SUPERSEDED` con fábricas. Propuesta inicial (5 intentos / 5 min / código numérico corto) pendiente de producto: los números cambian sin tocar la forma.
+`ChallengeId`/`PersonId`: `private` + `of()`/`generate()` + `equals()` (nunca intercambiables). `Purpose`: cerrado `login | email-verification | password-reset` (`as const` + type union, nunca `export enum`; skill) + `parsePurpose()` con guard `Object.values()` (nuevo propósito = nuevo mapeo, no cambio de modelo). Alineado a `domain-model.md` y UL §10 (fuentes de verdad). `AttemptCount(count, max=5)`: `fresh()`, `counted()`, `remaining()`, `isExhausted()`. `ValidityWindow(requestedAt, minutes=5)`: `isElapsed(now)`. `InvalidationReason`: `ATTEMPTS_EXHAUSTED | SUPERSEDED` con fábricas. Propuesta inicial (5 intentos / 5 min / código numérico corto) pendiente de producto: los números cambian sin tocar la forma.
 
 ### 2.3 Commands
 
@@ -210,9 +210,11 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
   ) {}
   async requestVerificationChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId> {
     let plain: string; // vive solo en este método; jamás persiste ni viaja en eventos
+    // Gates ACL ANTES del run(): el tx solo agrupa statements DB, nunca llamadas a otros BCs
+    // (skill nestjs.md pitfalls). El chequeo findOpen + uq_open_pair siguen dentro: la constraint es la autoridad.
+    if (!(await this.iam.personExists(c.personId.value))) throw new NoUsableChallengeError('persona desconocida');
+    if (!(await this.consent.mayContactNow(c.personId.value))) throw new ContactNotAllowedError('contacto no permitido');
     const created = await this.uow.run(async () => {
-      if (!(await this.iam.personExists(c.personId.value))) throw new NoUsableChallengeError('persona desconocida');
-      if (!(await this.consent.mayContactNow(c.personId.value))) throw new ContactNotAllowedError('contacto no permitido');
       const open = await this.repo.findOpenByPersonAndPurpose(c.personId, c.purpose);
       if (open) { open.supersede(); await this.repo.save(open); }   // mismo UoW: invalida + abre
       plain = generateNumericCode(6);
@@ -312,7 +314,7 @@ Controller delgado + filtro BC. Rate-limit en `request` (guardia de ejecución, 
 | `GET` | `/api/v1/verifications/history?personId=&purpose=` | Scrutiny |
 
 ```json
-POST /api/v1/verifications/challenges        { "personId": "per-uuid", "purpose": "LOGIN" }  → 201 { "challengeId": "ch-xxx", "expiresAt": "..." }
+POST /api/v1/verifications/challenges        { "personId": "per-uuid", "purpose": "login" }  → 201 { "challengeId": "ch-xxx", "expiresAt": "..." }
 POST /api/v1/verifications/challenges/:id/answer  { "code": "482913" }  → 200 { "standing": "CONFIRMED" } | 409 { "standing": "OPEN", "remaining": 3 } | 410 gone
 ```
 
@@ -327,7 +329,7 @@ CREATE SCHEMA IF NOT EXISTS verification;
 CREATE TABLE verification.challenges (
   id VARCHAR(36) PRIMARY KEY,
   person_id VARCHAR(36) NOT NULL,
-  purpose VARCHAR(24) NOT NULL,          -- LOGIN|EMAIL_VERIFICATION|PASSWORD_RESET
+  purpose VARCHAR(24) NOT NULL,          -- login|email-verification|password-reset
   standing VARCHAR(12) NOT NULL,         -- OPEN|CONFIRMED|INVALIDATED|EXPIRED
   attempts INT NOT NULL DEFAULT 0,
   max_attempts INT NOT NULL DEFAULT 5,
@@ -374,3 +376,10 @@ Abiertas (de `domain-model.md`): supersede vs rechazar (#1), ventana/intentos/lo
 | V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
 
 Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.
+
+## Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `request()` → `answer` wrong ×5 → `INVALIDATED`; `request()` → `answer` correct → `CONFIRMED`; segundo `request` supersede el OPEN previo; `answerChallengeStanding()` no muta ni emite.
+- **application**: mocks de repo + `CODE_COMPARE_SERVICE` (Fake) + `ExternalIamService`/`ExternalConsentService`, o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `uq_open_pair` parcial, round-trip + `parsePurpose()` corrupto.
+- **interfaces**: supertest (`POST challenges → answer ×5 → INVALIDATED`; `request → answer → CONFIRMED`).

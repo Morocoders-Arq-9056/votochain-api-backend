@@ -254,6 +254,8 @@ Confirmacion y reintento en carrera se resuelven por standing: si `recordConfirm
 
 ### 3.2 Queries, ports y handlers
 
+`EventEmitterModule.forRoot()` una sola vez en `AppModule` (raíz); este módulo solo inyecta `EventEmitter2` (skill pitfalls: doble `forRoot()` reconfigura estado global).
+
 `getDeliveryOrderStandingById(GetDeliveryOrderStandingByIdQuery)` → `answerDeliveryStanding()`; `getDeliverySendingOrderByPayer(GetDeliverySendingOrderByPayerQuery)` (por que espera una orden tardia); `getDeliveryAttemptHistoryByOrder(GetDeliveryAttemptHistoryByOrderQuery)` (scrutiny). Ports: `LedgerGatewayService.submit()` → `{ confirmed, reason, retryable }`; `DeliveryQueueService.enqueue()`. `DeliveryConfirmedEventHandler` (`delivery-confirmed.event-handler.ts`) + `DeliveryFailedEventHandler` (`delivery-failed.event-handler.ts`) + `DeliveryAbandonedEventHandler` (`delivery-abandoned.event-handler.ts`): `@OnEvent(DeliveryConfirmedEvent.eventName / DeliveryFailedEvent.eventName / DeliveryAbandonedEvent.eventName, { async: true })` en este modulo → `ExternalVotingService.notifyConfirmed/Failed/Abandoned()` (R5, ACL en proceso, con `try/catch` + log; fallo de aviso no revierte la orden). Ningun `@OnEvent` vive en otro modulo.
 
 ---
@@ -335,7 +337,7 @@ Unico Template fuera de agregados. `PolygonAmoyGateway extends BaseLedgerGateway
 | `GET` | `/api/v1/deliveries?payer=` | sending order por pagador |
 | `GET` | `/api/v1/deliveries/:id/attempts` | historial de intentos |
 
-`RelayContextFacade.answerStanding(orderId)` en primitivos (Voting traduce). `export const RELAY_CONTEXT_FACADE = Symbol('RELAY_CONTEXT_FACADE')`; `blockchain-relay-transaction-delivery.module.ts` `exports: [RELAY_CONTEXT_FACADE]`. Filtro: `OrderNotFound → 404`, `UnsignedContentRefused → 422`, `IllegalDeliveryState → 409`.
+`RelayContextFacade.answerStanding(orderId)` en primitivos (Voting traduce). `export const RELAY_CONTEXT_FACADE = Symbol('RELAY_CONTEXT_FACADE')`; `blockchain-relay-transaction-delivery.module.ts` `exports: [RELAY_CONTEXT_FACADE]`. Filtro `RelayExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `OrderNotFoundError → 404`, `UnsignedContentRefusedError → 422`, `OrderAlreadyAcceptedError → 409` (carrera accept, la gana el UNIQUE parcial), `OvertakingRefusedError → 409`, `OrderConcludedError → 409` (mutación sobre terminal), `IllegalDeliveryStateError → 409` (causas `RetryAfterConfirmationRefused`, `RetryLimitReached`).
 
 ---
 
@@ -452,3 +454,10 @@ Solo `CONFIRMED` cuenta para el tally (R5: intent vs fact).
 ### Preguntas abiertas
 
 OQ1 cota de reintentos · OQ2 costo incobrable: esperar/abandonar/pedir mas · OQ3 entregas en vuelo al borrar (el ledger no se des-hace) · OQ4 razones visibles al votante · OQ5 alcance del sending order (por pagador vs global).
+
+## Testing (skill §Testing cada capa)
+
+- **domain** (plain unit): `accept()` rechaza sin firma; `order→recordSending→observeOutcome` confirma o falla→retry→abandon; `CONFIRMED`/`ABANDONED` terminales (mutación posterior rechazada).
+- **application**: mocks de repo + `LEDGER_GATEWAY`/`DELIVERY_QUEUE`/`RETRY_POLICY`/`FEE_POLICY` (fakes), o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `UNIQUE(payer,position)`, `uq_orders_open_content` parcial, 23505 → `OrderAlreadyAccepted`.
+- **interfaces**: supertest (intake 202 + `Location`; standing/order/attempts GETs).

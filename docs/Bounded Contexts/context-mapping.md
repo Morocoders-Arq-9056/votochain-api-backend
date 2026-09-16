@@ -117,16 +117,35 @@ and the translation rule at the boundary — what crosses, and what explicitly d
 | R6 | Wallet ⋮ Relay (signer / payer split) | Separate Ways | No direct integration. The person's signing capability and the payer capability are distinct; Voting's flow keeps them apart — the two are never mixed |
 | R7 | Document OCR → Biometric (`MATCH` once) | Customer/Supplier (Biometric customer) | The verdict crosses once, single-use, and seeds the lasting reference. Closed verdict set of 3; closed unreadable reasons of 5. Portraits die with the examination — nothing image-like crosses |
 | R8 | Membership → Document OCR (precondition) | Conformist (OCR checks, Membership judges) | Belonging is answered outside; OCR refuses with `NoEligibleMembership` when the person belongs nowhere. OCR never judges membership itself |
-| R9 | Verification → IAM (`ChallengeConfirmed`) | Open Host Service (Verification) + Anti-Corruption Layer (IAM side) | The confirmation fact crosses; the code itself never does. IAM judges standing, never re-judges the code |
+| R9 | Verification → IAM (`ChallengeConfirmed`) | Open Host Service (Verification) + Anti-Corruption Layer (IAM side) | The confirmation fact crosses via `IamContextFacade.markVerified(personId)` — primitives at the boundary; the code itself never crosses. Verification's own `ChallengeConfirmedEventHandler` calls the facade; IAM never subscribes to Verification's event (skill: `@OnEvent` only in the emitting module). IAM judges standing, never re-judges the code |
 | R10 | Verification → Notifications | Customer/Supplier (Verification customer) | Code delivery crosses as a delivery instruction (template + address + reason). Verification never delivers itself |
 | R11 | Any context → Notifications | Open Host Service (Notifications) | Only template + address + reason + idempotency key cross. When/why stay with the requester. No business rule leaks in; same key never delivers twice |
 | R12 | Consent ↔ every owning context | Partnership (coordination) + Published Language (`ErasureRequested` / `RevocationConfirmed` / `ErasureComplete`) | Gates (`may-process-now?`, `may-contact-now?`) and revocation coordination cross. Completion is answerable only when every owner confirms its own deletion. Consent never touches another context's data |
 | R13 | IAM ⋮ Membership / Community / Biometric | Separate Ways (identity reference only) | Only the person identity crosses. Suspension in IAM never rewrites membership, community, or biometric standing. One `User` : N `Membership`s |
 | R14 | IAM → Notifications (person notices) | Customer/Supplier (IAM customer) | Welcome, security, address-change, and standing notices cross as delivery intents. Sending is executed outside; IAM judges the standing behind the notice |
+| R15 | Community → Membership (admission gate) | Open Host Service (Community) + Anti-Corruption Layer (Membership side) | `acceptsMembers` / `answerStanding` answered per registration (UC1); Membership never caches policy, only its own pair state. Standing changes never rewrite live memberships |
+| R16 | Membership / Community / Verification / Biometric / OCR → IAM (existence gate) | Open Host Service (IAM) + Anti-Corruption Layer (consumer side) | `personExists` answered per gated use case, called BEFORE the unit of work (never inside `run()`); only a boolean crosses, existence never implies standing |
 
 What never crosses a boundary: raw images, portraits, comparison artifacts, plain
 codes, signing secrets, member lists, community configuration (only frozen copies),
 and business rules belonging to another context.
+
+## Shared Kernel (explicit, skill threshold 3+ contexts)
+
+Per the skill, a VO independently needed by 3+ bounded contexts is promoted to the
+Shared Kernel instead of being duplicated per BC or smuggled through facade
+signatures. Facades stay primitives-only (strings); each consumer wraps with the
+shared VO at its own boundary.
+
+| Shared VO | Location | Consumed by | Rule |
+|---|---|---|---|
+| `PersonId` (`per-` + `of()/generate()/equals()`) | `shared/domain/model/valueobjects/person-id.value-object.ts` | IAM, Community, Membership, Verification, OCR, Biometric, Wallet, Consent (8) | Identity by reference only; suspension/revocation in one context never rewrites another's standing (R13) |
+| `SignedContentRef` (opaque, owned by Voting) | `shared/domain/model/valueobjects/signed-content-ref.value-object.ts` | Voting (owner), Wallet, Relay (3) | Opaque outside Voting: carriers never inspect or sign on their own (R4/R5/R6) |
+
+Deliberately NOT kernel (frozen copies, not shared code): `EligibilitySnapshot`
+(Membership → Voting, frozen at grant), `QuorumSnapshot` (Community → Voting,
+frozen at open). Past judgments/copies are never rewritten, so sharing the class
+would couple lifecycles that must stay independent.
 
 ## Deviations from the Reference Map
 

@@ -108,7 +108,7 @@ Source of truth per context: its `domain-model.md`. This file consolidates; it d
 | **ConsentScope** | The specific scope of consent (e.g. biometric processing, email notices); one scope per record, never blanket |
 | **PolicyVersion** | The policy version frozen at grant |
 | **DataSubjectRequest** | One erasure flow, request → completion, with per-owner confirmations |
-| **ErasureStanding** | `REQUESTED, CONFIRMED, COORDINATED, AWAITING_CONFIRMATIONS, COMPLETE` |
+| **ErasureStanding** | `REQUESTED, CONFIRMED, COORDINATED, AWAITING_CONFIRMATIONS, COMPLETED` |
 | **RetentionPolicy** | The keeping rule for one data category; supersedes, never edits past |
 | **Revocation / Erasure** | Invalidating a consent / executing an erasure request (coordinated here, executed by owners) |
 | **ConsentStanding** | `GRANTED / REVOKED` |
@@ -177,7 +177,13 @@ Source of truth per context: its `domain-model.md`. This file consolidates; it d
 7. **Delivery takes minimal intent.** Template + address + reason + idempotency key; never person identity, never business rules.
 8. **Mechanism-free phrasing everywhere.** Kept-apart secrets, unique derivation positions, payer's sending order, sending cost — the same plain words in every context.
 
-## 14. Deviations from the Reference Glossary
+## 14. Project-wide naming overrides (skill ddd-guideliness)
+
+- **Events: ALL carry `Event` suffix** (deviates from skill collision-only rule; adopted project-wide for grep-ability — see Plan conventions §§0.1 and `iam/impl-guide.md` §10). Wire `eventName` strings unchanged (`'ChallengeConfirmed'`, never doubled).
+- **Service methods (skill v1.0.11):** un método por comando/query, `methodName = lowerCamel(ClassName sin sufijo Command|Query)`, que recibe el objeto comando/query.
+- **Shared Kernel (explicit):** `PersonId`, `SignedContentRef` — see `context-mapping.md` §Shared Kernel.
+
+## 15. Deviations from the Reference Glossary
 
 The reference map's §§2–11 glossary was hypothesis. Kept, corrected, or rejected per
 the modeled contexts — full log in `context-mapping.md` (D1–D7). Headlines: OCR is a

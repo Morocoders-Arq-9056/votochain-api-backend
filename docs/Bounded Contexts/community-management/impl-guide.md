@@ -142,14 +142,14 @@ export class Community extends AggregateRoot implements CommunityStandable {
     this.registerEvent(new CommunityAdminRemovedEvent(this._id, person));
   }
 
-  /** Template de transicion de standing; skeleton reusado por activate/suspend/reactivate/archive. */
+  /** Guard compartido de transicion de standing, reusado por activate/suspend/reactivate/archive (nota: no es Template Method del catálogo — sin familia de subtipos con hooks). */
   protected applyStandingTransition(from: CommunityStanding, to: CommunityStanding, event: { eventName: string }): void {
     if (this._standing !== from) throw new IllegalCommunityTransitionError(`standing ${this._standing} != ${from}`);
     this._standing = to;
     this.registerEvent(event as never);
   }
 
-  /** Skeleton: toda mutacion salvo rehydrate exige no-ARCHIVED. */
+  /** Guard: toda mutacion salvo rehydrate exige no-ARCHIVED. */
   protected assertMutable(): void {
     if (this._standing === CommunityStanding.ARCHIVED) throw new ArchivedIsTerminalError('terminal');
   }
@@ -325,6 +325,8 @@ Admins as `simple-json` (small, always loaded with root, never queried per-child
 
 `@Controller('api/v1/communities')`, `@UseFilters(CommunityExceptionFilter)`.
 
+Filtro `CommunityExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `CommunityNotFoundError → 404`, `AdminNotHeldError → 404`, `PolicyUndefinedError → 422`, `CommunityAlreadyExistsError → 409`, `LastAdministratorError → 409` (incluye `last admin while active`), `AdminAlreadyAppointedError → 409`, `CommunityNotActiveError → 409`, `ArchivedIsTerminalError → 409`, `IllegalCommunityTransitionError → 409`.
+
 | Method | Endpoint | Command |
 |:--|:--|:--|
 | `POST` | `/api/v1/communities` | `RegisterCommunityCommand` |
@@ -418,7 +420,7 @@ Fan-out Observer (ver §3.4): Activated/Suspended/Reactivated → gates Membersh
 - **Out — R1 Voting (OHS `answerPolicy` → Voting):** Voting calls `CommunityContextFacade.answerPolicy()` at each proposal opening and freezes its own `QuorumSnapshot`. Never pushed; never re-read mid-vote.
 - **Out — `answerStanding`:** Voting (proposals allowed?) + Membership (registrations allowed?) consume `answerStanding()`. Suspended refuses beginnings; in-flight votes close under frozen rule (default).
 - **In — IAM → Community (UC5):** `ExternalIamService` checks person existence via `IAM_CONTEXT_FACADE`; only the reference is stored.
-- **Out — lifecycle facts:** Community only emits. Membership, Voting, Notifications observe via *their own* in-module handlers, which pull `answerStanding()`/`answerPolicy()` or react through *their own* `ExternalCommunityService` ACL calls — Community holds no `ExternalMembership/ExternalVotingService` (pull is one-directional).
+- **Out — lifecycle facts:** Community only emits. Ningún otro módulo suscribe sus eventos (`@OnEvent` solo en el módulo emisor, skill): Membership, Voting, Notifications hacen pull vía `COMMUNITY_CONTEXT_FACADE.answerStanding()/answerPolicy()` a través de su propio `ExternalCommunityService` — Community holds no `ExternalMembership/ExternalVotingService` (pull is one-directional). Si un flujo necesitara push, el handler in-module de Community llamaría al facade ajeno, nunca al revés.
 
 ---
 
@@ -455,3 +457,10 @@ Project override: ALL events carry Event suffix (deviates from skill collision-o
 Decisions locked: single Postgres schema-per-BC (`community.communities`); VotingPolicy supersede-chain with future-openings-only reads; ≥1 admin while ACTIVE.
 
 Open questions carried: who may define policy/suspend (product+legal); suspension vs in-flight votes (product); fixed vs custom role/majority catalog (product); allowed quorum bases (constrains policy shape); dissolved/merged handling (parked, product+legal).
+
+## Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `register()` → `defineVotingPolicy()` (supersede-chain, copias congeladas intactas) → `activate` (exige policy + ≥1 admin) → `archive` terminal (`assertMutable()` rechaza todo después).
+- **application**: mocks de `CommunityRepository` + `ExternalIamService`, o `overrideProvider(COMMUNITY_REPOSITORY)`.
+- **infrastructure**: Testcontainers Postgres — round-trip `community.communities` (`policy`/`admins` JSONB), parsers con dato corrupto.
+- **interfaces**: supertest (`POST communities → PUT policy → POST activate → GET standing{acceptsMembers:true}`).

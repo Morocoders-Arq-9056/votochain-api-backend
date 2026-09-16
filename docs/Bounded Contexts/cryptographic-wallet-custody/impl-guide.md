@@ -246,6 +246,8 @@ export interface KeyCustodyService {
 }
 ```
 
+Nota Strategy (skill: un algoritmo intercambiable por puerto): `derivePosition` + `signTransient` viajan juntos porque la ceremonia de custodia los acopla (derivar sin custodiar, o custodiar sin firmar-transitorio, no es un adaptador válido — HSM vs memoria cambian ambos a la vez). Si un vendor separara derivación de firma, se divide en `KeyDerivationStrategy` + `SigningPolicy` (parked, con test que lo exija).
+
 ### 3.4 Event handler y ACL publicada
 
 `WalletEventLogger` — `@OnEvent(...)` solo log, nunca suscrito desde otro modulo (bus global sin aislamiento; exento de renombre `*EventHandler`, se mantiene + nota). `WalletContextFacadeImpl` expone `sign(contentRef)` + `answerCapability(personId)`; Voting la consume via `ExternalWalletService`. Handler `Retired → Consent`: `@OnEvent(WalletRetiredEvent.eventName, { async: true })` en modulo propio, inyecta `ExternalConsentService.notifyRetired()` (ACL → `CONSENT_CONTEXT_FACADE`), con `try/catch` (fallo de aviso no revierte el `retire` ya commiteado; log + reintento de transporte, nunca re-apertura del agregado). Ciclo Wallet↔Consent (Consent coordina `retire`, Wallet confirma): `forwardRef(() => ConsentModule)` en ambos lados.
@@ -410,3 +412,10 @@ Handler interno ante `WalletRetiredEvent`: notifica a Consent via su fachada (ll
 ### Preguntas abiertas (de domain-model.md)
 
 OQ1 resume vs rotar/retirar · OQ2 rotacion verificable del pasado · OQ3 razones visibles a la persona · OQ4 firma en vuelo al borrar · OQ5 frontera exacta de auditoria de "nada firmable".
+
+## Testing (skill §Testing cada capa)
+
+- **domain** (plain unit): `provision()` → `reconstructForSigning` → `forget()`; segundo sign concurrente → `ReconstructionAlreadyOpen`; `rotate` deja `ROTATED` + sucesora `PROVISIONED`.
+- **application**: mocks de `WalletRepository` + `KEY_CUSTODY_SERVICE` (memoria), o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `UNIQUE(position)`, `wallet.events` anexados en mismo UoW, sin columna de material firmable.
+- **interfaces**: supertest (`POST wallets → :id/sign → rotate/suspend/retire`).

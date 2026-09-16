@@ -295,7 +295,7 @@ Swap SES ↔ SendGrid ↔ LogOnly by changing one provider line; application cod
 ## 5. Interfaces Layer
 
 ```typescript
-@UseFilters(NotificationExceptionFilter)
+@UseFilters(NotificationExceptionFilter) // interfaces/rest/filters/, @Catch de las 7 de §2.2 (skill: sin excepción sin entrada)
 @Controller('api/v1/notifications/dispatches')
 export class NotificationDispatchController {
   constructor(
@@ -321,6 +321,8 @@ export class NotificationDispatchController {
 | `GET` | `/api/v1/notifications/dispatches/:id/standing` | `GetDeliveryStandingByDispatchQuery` (UC5) |
 | `GET` | `/api/v1/notifications/dispatches/by-key/:key/standing` | `GetDeliveryStandingByKeyQuery` (UC5) |
 | `GET` | `/api/v1/notifications/dispatches/:id/history` | `GetDeliveryHistoryQuery` (scrutiny) |
+
+Filtro (error → HTTP): `AddressMalformedError → 400`, `ContactNotAllowedError → 403`, `TemplateUnknownError → 422`, `NoSendInstructedError → 422`, `DuplicateIntentError → 409` (idempotency), `AlreadyConfirmedError → 409`, `RetryNotAllowedError → 409`.
 
 Inbound contract is only template + address + reason + key (R11: no requester rule leaks in). Outbound ACL publishes standing answers:
 
@@ -438,3 +440,10 @@ R10 (Verification/OTP): OTP instructs code delivery with template + address + re
 Sin Composite: el historial es lista de VOs `DeliveryAttempt` (append-only) persistida como `jsonb` en la fila del dispatch — componer intentos como entidades hijas añadiría joins sin ningún recorrido por intento; el `jsonb` es la forma correcta aquí.
 
 Open questions (from domain-model.md): retry limits per intent; template catalog ownership; SMS/push as new intent vs new attempt (parked); bounce vs failure vocabulary; in-app inbox as channel vs external read model. Parked: device registry, local preference (Consent owns opt-in), multi-channel.
+
+## Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `requestDelivery()` → `confirmDelivered()`; duplicado por key → `refuse(DUPLICATE)`; retry solo desde `FAILED`; `answerDeliveryStanding()`.
+- **application**: mocks de repo + `EMAIL_SENDING_SERVICE` (LogOnly) + `TEMPLATE_RESOLVER` + `ExternalConsentService`, o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `UNIQUE(idempotency_key)` autoridad (23505 → `DUPLICATE`), historial `jsonb` append-only.
+- **interfaces**: supertest (UC1 request → 202; webhooks UC2–4; UC5 standing/history).

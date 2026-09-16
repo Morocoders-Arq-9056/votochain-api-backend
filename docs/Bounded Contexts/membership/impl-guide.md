@@ -170,7 +170,11 @@ export class Membership extends AggregateRoot implements MembershipStandable {
     this.registerEvent(new EligibilityJudgedEvent(this._personId, this._communityId, snap));
     return snap;
   }
-  /** Fábrica fantasma única: ausencia responde NOT_A_MEMBER, nunca 404. Sin persistir. */
+  /** Fábrica fantasma única: ausencia responde NOT_A_MEMBER, nunca 404. Sin persistir.
+   * Desviación intencional documentada (Factories deben producir identidades persistibles):
+   * el `MembershipId` mintado se descarta —nunca se guarda ni se publica como identidad—;
+   * solo el `EligibilitySnapshot` del juicio se consume (`judgeEligibility` hace save solo si found).
+   * Alternativa (snapshot huérfano sin agregado) rechazada: el juicio vive en el agregado por spec. */
   static ghost(p: PersonId, c: CommunityId): Membership {
     return new Membership(MembershipId.generate(), p, c, MembershipStatus.REQUESTED, CommunityRole.owner(), null,
       EligibilitySnapshot.now(p, c, MembershipStatus.REQUESTED).withVerdict(false));
@@ -251,9 +255,11 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
     @Inject(ELIGIBILITY_POLICY) private readonly policy: EligibilityPolicyService, // Strategy §4
   ) {}
   async registerMembership(c: RegisterMembershipCommand): Promise<MembershipId> {
+    // Gates ACL ANTES del run(): el tx solo agrupa statements DB, nunca llamadas a otros BCs
+    // (skill nestjs.md pitfalls). El chequeo DB + índice parcial uq_live_pair siguen dentro: la constraint es la autoridad.
+    if (!(await this.iam.personExists(c.personId.value))) throw new Error('persona desconocida');
+    if (!(await this.communities.acceptsMembers(c.communityId.value))) throw new CommunityNotAcceptingMembersError('comunidad no acepta');
     const m = await this.uow.run(async () => {
-      if (!(await this.iam.personExists(c.personId.value))) throw new Error('persona desconocida');
-      if (!(await this.communities.acceptsMembers(c.communityId.value))) throw new CommunityNotAcceptingMembersError('comunidad no acepta');
       if (await this.repo.findLiveByPersonAndCommunity(c.personId, c.communityId)) throw new MembershipAlreadyExistsError('par ya cubierto');
       const created = Membership.register(c.personId, c.communityId, c.unit ?? null);
       await this.repo.save(created); return created;
@@ -410,3 +416,10 @@ Abiertas (de `domain-model.md`): inmediatez de mora (#1), venta de unidad (#2), 
 | V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
 
 Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.
+
+## Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `register()` → `activate`/`suspend`/`reinstate`/`terminate` (terminal); `judgeEligibility(policy)` congela snapshot + emite; ghost responde `NOT_A_MEMBER` sin persistir.
+- **application**: mocks de repo + `ExternalIamService`/`ExternalCommunityService` + `ELIGIBILITY_POLICY` (Fake veredicto configurable), o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `uq_live_pair` parcial, `ix_roster`, round-trip + parsers corruptos.
+- **interfaces**: supertest (`POST memberships → 201; duplicado vivo → 409; POST judge-eligibility`).

@@ -1,7 +1,7 @@
 ---
 title: "Application Layer — Verification (OTP)"
 layer: "application"
-bounded-context: "verification-otp"
+bounded-context: "verification"
 last-reviewed: "2026-09-08"
 owner: "morocoders-team"
 status: "draft"

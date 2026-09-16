@@ -265,7 +265,7 @@ graph TD
 | Document | Link |
 |----------|------|
 | Subdomain map (input, hypothesis) | `docs/BrainStorming/VotoChain_DDD_Subdomains.md` §11 + §15 |
-| Verification (OTP) event storming (sibling — instructs delivery, never delivers) | `../verification-otp/event-storming.md` |
+| Verification (OTP) event storming (sibling — instructs delivery, never delivers) | `../verification/event-storming.md` |
 | IAM event storming (sibling — a requester: welcome, security, address notices) | `../iam/event-storming.md` |
 | Consent & Compliance event storming (sibling — owns opt-in, answers may-contact-now) | `../consent-compliance/event-storming.md` |
 | Voting event storming (sibling — a requester: open/close/receipt/tally notices) | `../voting-verifiable-ledger/event-storming.md` |

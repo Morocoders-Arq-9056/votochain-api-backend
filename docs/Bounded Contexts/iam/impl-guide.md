@@ -54,8 +54,8 @@ src/iam/
 │           ├── session/
 │           │   └── session-artifact.service.ts          # port + token
 │           └── acl/
-│               ├── external-verification.service.ts     # consume Verification facade (UC6)
 │               └── external-notifications.service.ts    # consume Notifications facade (avisos)
+│                   # R9: IAM no consume Verification — Verification consume IAM (markVerified); sin external-verification aquí
 ├── domain/
 │   ├── model/
 │   │   ├── aggregates/
@@ -239,7 +239,7 @@ export class UserId {
 
 ### 2.5 Domain Exceptions (rejections)
 
-`AlreadyRegisteredError`, `ProofNotHeldError`, `SuspendedRefusedError`, `NoOpenSessionError`, `LastProofRefusedError`, `LastAdminRefusedError`, `OutsideProofAlreadyLinkedError`, `AddressAlreadyHeldError`, `RoleAlreadyHeldError/RoleNotHeldError` — all `Error` subclasses with `Object.setPrototypeOf`.
+`AlreadyRegisteredError`, `ProofNotHeldError`, `SuspendedRefusedError`, `NoOpenSessionError`, `LastProofRefusedError`, `LastAdminRefusedError`, `OutsideProofAlreadyLinkedError`, `AddressAlreadyHeldError`, `RoleAlreadyHeldError/RoleNotHeldError`, `IllegalUserStateError` (standing/session transitions), `UserNotFoundError` (read/update on unknown id) — all `Error` subclasses with `Object.setPrototypeOf`. `IamExceptionFilter` (`interfaces/rest/filters/`, `@UseFilters` on controller) mapea las 11: `UserNotFound → 404`, resto de guards → `409`/`422` según §5 (skill: sin excepción sin entrada `@Catch`).
 
 ### 2.6 Domain Events (12)
 
@@ -268,7 +268,7 @@ export interface UserCommandService {
 export const USER_QUERY_SERVICE = Symbol('USER_QUERY_SERVICE');
 export interface UserQueryService {
   getUserById(q: GetUserByIdQuery): Promise<User | null>;
-  getAccessStandingByPerson(q: GetAccessStandingByPersonQuery): Promise<AccessStandingAnswer>;
+  getAccessStandingByPerson(q: GetAccessStandingByPersonQuery): Promise<AccessStandingAnswer | null>;
   getIdentityHistoryByPerson(q: GetIdentityHistoryByPersonQuery): Promise<UserHistoryEntry[]>;
   getSystemRolesByPerson(q: GetSystemRolesByPersonQuery): Promise<SystemRole[]>;
 }
@@ -295,11 +295,13 @@ export class UserCommandServiceImpl implements UserCommandService {
   ) {}
 
   async signIn(command: SignInCommand): Promise<void> {
+    // Gates externos ANTES del run(): el tx solo agrupa statements DB, nunca I/O de red
+    // (skill nestjs.md pitfalls: la transacción no debe abarcar llamadas externas).
+    const holds = await this.proofs.holds(command.userId.value); // executor verdict, observed
+    if (!holds) throw new ProofNotHeldError('proof does not hold');
     const user = await this.uow.run(async () => {
       const u = await this.users.findById(command.userId);
       if (!u) throw new UserNotFoundError('not found');
-      const holds = await this.proofs.holds(command.userId.value); // executor verdict, observed
-      if (!holds) throw new ProofNotHeldError('proof does not hold');
       u.signIn(command.proofKind);
       await this.users.save(u);
       return u;
@@ -341,7 +343,7 @@ export interface SessionArtifactService {
 
 ### 3.5 ACL Facade (application)
 
-`application/acl/iam-context-facade.impl.ts` implements `IamContextFacade`: `answerAccessStanding(personId: string)`, `getSystemRoles(personId: string)` — primitives at the boundary.
+`application/acl/iam-context-facade.impl.ts` implements `IamContextFacade`: `answerAccessStanding(personId: string)`, `getSystemRoles(personId: string)`, `markVerified(personId: string)` (R9 reception → dispatches `VerifyEmailCommand` to `verifyEmail()`) — primitives at the boundary.
 
 ---
 
@@ -412,6 +414,14 @@ export class UserRepositoryImpl implements UserRepository {
 
 Resources carry `class-validator` decorators (`SignupUserResource`, `UserResource`). Assemblers: `SignupCommandFromResourceAssembler.toCommand()`, `UserResourceFromEntityAssembler.toResource()`.
 
+`IamExceptionFilter` (`interfaces/rest/filters/iam-exception.filter.ts`, `@UseFilters` on the controller) maps domain rejections — no exception without a `@Catch` entry:
+
+| Domain error | HTTP |
+|:--|:--|
+| `UserNotFoundError` | 404 Not Found |
+| `IllegalUserStateError` | 422 Unprocessable Entity |
+| `AddressAlreadyHeldError`, `AlreadyRegisteredError`, `ProofNotHeldError`, `SuspendedRefusedError`, `NoOpenSessionError`, `LastProofRefusedError`, `LastAdminRefusedError`, `OutsideProofAlreadyLinkedError`, `RoleAlreadyHeldError`, `RoleNotHeldError` | 409 Conflict |
+
 ### 5.3 ACL
 
 ```typescript
@@ -419,6 +429,7 @@ export const IAM_CONTEXT_FACADE = Symbol('IAM_CONTEXT_FACADE');
 export interface IamContextFacade {
   answerAccessStanding(personId: string): Promise<{ mayAct: boolean; roles: string[]; sessionOpen: boolean }>;
   getSystemRoles(personId: string): Promise<string[]>;
+  markVerified(personId: string): Promise<void>; // R9: Verification's handler calls here; impl dispatches VerifyEmailCommand
 }
 ```
 
@@ -489,7 +500,7 @@ Fan-out Observer (ver §3.4): publish() solo tras commit; `@OnEvent` in-module; 
 
 ## 8. Integracion con otros BCs
 
-- **R9 Verification OTP → IAM (UC6):** `ChallengeConfirmedEvent` observed via in-module `@OnEvent` handler → `ExternalVerificationService` ACL call returns primitives → `VerifyEmailCommand` records `EmailVerifiedEvent`. The code itself never crosses.
+- **R9 Verification OTP → IAM (UC6):** Verification's own `ChallengeConfirmedEventHandler` (in-module, Verification side) calls `IamContextFacade.markVerified(personId)` — primitives at the boundary. IAM never subscribes to Verification's event (skill: `@OnEvent` handlers live only in the emitting module). Reception: facade → `VerifyEmailCommand` → `verifyEmail()` records `EmailVerifiedEvent`. The code itself never crosses.
 - **R13/R14 IAM → Membership/Community:** `IamContextFacade.answerAccessStanding()` consumed by every gated use case; person identity held by reference only. Suspension here never rewrites membership/community state.
 - **IAM → Notifications:** welcome/security/suspension notices via `ExternalNotificationsService` (facade token, primitives).
 
@@ -501,9 +512,9 @@ Fan-out Observer (ver §3.4): publish() solo tras commit; `@OnEvent` in-module; 
 
 | Direccion | Tipo | Detalle |
 |:--|:--|:--|
-| IAM → Shared kernel | Legitima | `AggregateRoot`, `DomainEvent`, `UNIT_OF_WORK`, `TransactionContext` |
+| IAM → Shared kernel | Legitima | `AggregateRoot`, `DomainEvent`, `UNIT_OF_WORK`, `TransactionContext`, `PersonId` (explicit kernel, context-mapping §Shared Kernel) |
 | IAM → Auth0 | Strategy real | `ProofVerificationService` port → `Auth0ProofAdapter`; tests usan `FakeProofVerificationService` (swap una linea / `overrideProvider`) |
-| IAM → Verification BC | ACL consumida | `ExternalVerificationService` → Verification facade (UC6) |
+| Verification → IAM BC | ACL publicada (R9) | Verification consume `IAM_CONTEXT_FACADE.markVerified` (UC6); IAM no importa modelo de Verification |
 | `IAM_CONTEXT_FACADE` | ACL publicada | Primitives-only, `exports` from `IamModule` |
 | Events | `EventEmitter2`, `forRoot()` once in `AppModule` | Publish after `uow.run()` resolves; async handlers need own error handling |
 
@@ -519,11 +530,20 @@ Fan-out Observer (ver §3.4): publish() solo tras commit; `@OnEvent` in-module; 
 | 1 | Alta | Session modeled as separate aggregate candidate | Kept as facet of `User`; supersede atomic in `signIn()` |
 | 2 | Media | Bare-string ids across boundaries | Typed VOs `UserId/PersonId/ContactAddress/SystemRole/OutsideProverRef` everywhere in domain |
 | 3 | Media | Risk of publishing before commit | `publish()` strictly after `UNIT_OF_WORK.run()` resolves |
-| 4 | Baja | BaseAssembler / Composite candidatos | Rechazados: sin `BaseAssembler` (assemblers dedicados por BC); sin Composite (VO-sets + ID-ref son correctos); skeleton (`applyStandingTransition`/`tearDownSession`) solo aqui por spec |
+| 4 | Baja | BaseAssembler / Composite candidatos | Rechazados: sin `BaseAssembler` (assemblers dedicados por BC); sin Composite (VO-sets + ID-ref son correctos); guards compartidos (`applyStandingTransition`/`tearDownSession`) solo aqui por spec — nota: NO es Template Method del catálogo (sin familia de subtipos con hooks; si aparece una segunda variante se extrae Strategy) |
 | V1.0.7 | — | Naming: <Stem>Event + <Stem>EventHandler in *.event-handler.ts; as const sets; ambiguous-only command renames | Applied |
+| V1.0.11 | Alta | Skill exige métodos derivados + sin `handle` + gates fuera del `run()` | `signUp/signIn/...`, `getUserById/getAccessStandingByPerson/...`; `proofs.holds()` antes del `run()`; R9 movido a Verification (`markVerified` en facade) |
+| V1.0.11 | Alta | `IamExceptionFilter` declarado en docs pero `src/iam/interfaces/rest/filters/` vacío y sin `@UseFilters` en código (drift docs-vs-código) | Pendiente código: crear `iam-exception.filter.ts` con `@Catch` de las 11 y cablear `@UseFilters(IamExceptionFilter)` |
 
 Project override: ALL events carry Event suffix (deviates from skill collision-only rule) for grep-ability; wire eventName strings unchanged.
 
 Decisions locked: single Postgres schema-per-BC (`iam.users`); Auth0 as the one outside prover (`OutsideProverRef`); foundation-first (judgment + history here, execution outside).
 
 Open questions carried: supersede-vs-refuse confirmation; failed-proof threshold + reset-on-success; role catalog beyond ADMIN/USER; notice content channel; per-device presence (parked); multi-prover break-point (parked).
+
+## 11. Testing (skill §Testing each layer)
+
+- **domain** (plain unit, sin `Test.createTestingModule`): `User.signup()` → `signIn` (2º supersede `SUPERSEDED`) → `signOut` → `suspend` (cierra sesión) → `restore`; `cancel`-like guards (`NoOpenSessionError`, `LastAdminRefusedError`); eventos drenados vía `pullDomainEvents()`.
+- **application**: mocks a mano de `UserRepository`/`ProofVerificationService`, o `overrideProvider(USER_REPOSITORY)` / `overrideProvider(PROOF_VERIFICATION_SERVICE)` (Fake sigue como double de test).
+- **infrastructure**: Testcontainers Postgres real — round-trip `iam.users`, `parseAccessStanding()` con fila corrupta (lanza, nunca `as`), `findByEmail` único.
+- **interfaces**: supertest (`POST signup → signin → signout → suspend → restore`) o controller con tokens mockeados.

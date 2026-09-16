@@ -1,7 +1,7 @@
 ---
 title: "Domain Model — Verification (OTP)"
 layer: "domain"
-bounded-context: "verification-otp"
+bounded-context: "verification"
 last-reviewed: "2026-09-07"
 owner: "morocoders-team"
 status: "draft"

@@ -369,7 +369,7 @@ export interface QuorumPolicy { verdictFor(turnout: number, snapshot: QuorumSnap
 | `GET` | `/api/v1/votes/:id` | Verifiable Proof (choice+firma+tx+recovered) |
 | `GET` | `/api/v1/votes/receipt?proposal=&voter=` | Voter Receipt (mi journey, sin choices ajenos) |
 
-Filtro (error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejectedEvent`), `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejectedEvent`), `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
+Filtro `VotingExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`; error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejectedEvent`), `InvalidChoiceError → 422`, `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejectedEvent`), `AuthorizationAlreadyConsumedError → 409`, `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
 
 ### 5.1 Fachada publicada `VOTING_CONTEXT_FACADE` (primitivas; primer consumidor futuro: Reporting)
 
@@ -489,7 +489,7 @@ Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads
 | # | Severidad | Hallazgo | Correccion |
 |:--|:--|:--|:--|
 | D1 | Alta | `Proposal` owneando `Vote[]` embebidos | Rechazado (H1): 3 agregados por ID; sin contencion |
-| D2 | Alta | `consume()` y `cast()` en tx separadas | Un `uow.run` atomico (H5); doble-cast imposible |
+| D2 | Alta | `consume()` y `cast()` en tx separadas | Un `uow.run` atomico (H5); doble-cast imposible. Desviación intencional documentada de tactical-patterns (un agregado por tx): la autorización se consume —su lifecycle termina— y el voto nace en el mismo paso indivisible; sin estado compartido posterior ni segunda escritura. Alternativa eventual-consistente rechazada: reabriría la ventana de doble-cast |
 | D3 | Alta | Tally contando `SIGNED/QUEUED/SENT` | Solo `CONFIRMED` (H4 intent vs fact) |
 | D4 | Media | Re-preguntar elegibilidad/liveness en UC4 | Prohibido: UC4 confia en la autorizacion congelada |
 | D5 | Media | `as ProposalStatus` / `as VoteStatus` en assemblers | `parseX()` vía `Object.values()` explícitos; enums como `as const` + `type` union + `@IsIn(Object.values(X))`; dato corrupto falla al leer |
@@ -510,3 +510,10 @@ Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads
 ### Preguntas abiertas
 
 OQ1 re-vote · OQ2 TTL de autorizacion · OQ3 quien cierra · OQ4 confirmaciones chain antes de CONFIRMED (reorgs) · OQ5 secreto vs transparencia · OQ6 suficiencia del tally minimo (Reporting escindido o no).
+
+## 11. Testing (skill §Testing each layer)
+
+- **domain** (plain unit): `Proposal` DRAFT→OPEN→CLOSED→TALLIED (transiciones ilegales rechazadas); `consume()` + `Vote.cast()` atómico (H5); replay/late/signer-mismatch rechazados; tally solo `CONFIRMED` (regresión TECH-DEBT-01).
+- **application**: mocks de los 3 repos + `ExternalWalletService`/`SIGNATURE_POLICY` (Fake echo), o `overrideProvider(...)`.
+- **infrastructure**: Testcontainers Postgres — `uq_auth_pending`, `uq_vote_confirmed`, round-trip + `parseProposalStatus()` corrupto.
+- **interfaces**: supertest (UC1–UC4 + UC5/UC6/UC8; `Idempotency-Key` en `POST /votes`).
