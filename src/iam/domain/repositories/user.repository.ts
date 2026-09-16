@@ -1,5 +1,5 @@
 import { User } from "../model/aggregates/user.aggregate.js";
-import { PersonId } from "../model/valueobjects/person-id.value-object.js";
+import { PersonId } from "../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { UserId } from "../model/valueobjects/user-id.value-object.js";
 
 /**

@@ -6,7 +6,7 @@ import { UserPersistenceAssembler } from "../assemblers/user-persistence.assembl
 import { TransactionContext } from "../../../../../shared/infrastructure/persistence/typeorm/repositories/transaction-context.js";
 import { UserId } from "../../../../domain/model/valueobjects/user-id.value-object.js";
 import { User } from "../../../../domain/model/aggregates/user.aggregate.js";
-import { PersonId } from "../../../../domain/model/valueobjects/person-id.value-object.js";
+import { PersonId } from "../../../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { UserRepository } from "../../../../domain/repositories/user.repository.js";
 
 @Injectable()

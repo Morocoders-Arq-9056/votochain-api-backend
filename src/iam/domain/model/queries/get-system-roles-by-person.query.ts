@@ -1,4 +1,4 @@
-import { PersonId } from "../valueobjects/person-id.value-object.js";
+import { PersonId } from "../../../../shared/domain/model/valueobjects/person-id.value-object.js";
 
 export class GetSystemRolesByPersonQuery {
   constructor(public readonly personId: PersonId) {

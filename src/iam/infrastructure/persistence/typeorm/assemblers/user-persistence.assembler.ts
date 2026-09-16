@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { User } from "../../../../domain/model/aggregates/user.aggregate.js";
 import { UserId } from "../../../../domain/model/valueobjects/user-id.value-object.js";
-import { PersonId } from "../../../../domain/model/valueobjects/person-id.value-object.js";
+import { PersonId } from "../../../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { parseAccessStanding } from "../../../../domain/model/valueobjects/access-standing.value-object.js";
 import { UserOrmEntity } from "../entities/user.orm-entity.js";
 import { parseSessionStanding } from "../../../../domain/model/valueobjects/session-standing.value-object.js";
