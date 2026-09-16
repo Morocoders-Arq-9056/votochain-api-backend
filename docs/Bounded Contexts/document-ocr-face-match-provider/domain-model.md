@@ -147,11 +147,11 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `request()` | Person belongs to at least one community (answered outside); processing allowed now (opt-in answered outside); no other `OPEN` examination for this (person, document) | `ExaminationRequested` — or `ExaminationRefused` (precondition fails) |
-| `recordExtraction()` | Examination is `OPEN` and within its window | `DocumentExtracted` (readable) — or `DocumentExtracted` with unreadable reason |
-| `recordComparison()` | Extraction read cleanly; examination still `OPEN` | `FacesCompared` (holds / does not hold) |
-| `recordVerdict()` | Extraction + comparison recorded; examination still `OPEN` | `ExaminationConcluded` (carries verdict) |
-| `expire()` | The validity window elapsed while `OPEN` | `ExaminationExpired` |
+| `request()` | Person belongs to at least one community (answered outside); processing allowed now (opt-in answered outside); no other `OPEN` examination for this (person, document) | `ExaminationRequestedEvent` — or `ExaminationRefusedEvent` (precondition fails) |
+| `recordExtraction()` | Examination is `OPEN` and within its window | `DocumentExtractedEvent` (readable) — or `DocumentExtractedEvent` with unreadable reason |
+| `recordComparison()` | Extraction read cleanly; examination still `OPEN` | `FacesComparedEvent` (holds / does not hold) |
+| `recordVerdict()` | Extraction + comparison recorded; examination still `OPEN` | `ExaminationConcludedEvent` (carries verdict) |
+| `expire()` | The validity window elapsed while `OPEN` | `ExaminationExpiredEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -209,24 +209,24 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- ExaminationRequested
-    DomainFact <|-- ExaminationRefused
-    DomainFact <|-- DocumentExtracted
-    DomainFact <|-- FacesCompared
-    DomainFact <|-- ExaminationConcluded
-    DomainFact <|-- ExaminationExpired
-    DomainFact <|-- ReexaminationRequested
+    DomainFact <|-- ExaminationRequestedEvent
+    DomainFact <|-- ExaminationRefusedEvent
+    DomainFact <|-- DocumentExtractedEvent
+    DomainFact <|-- FacesComparedEvent
+    DomainFact <|-- ExaminationConcludedEvent
+    DomainFact <|-- ExaminationExpiredEvent
+    DomainFact <|-- ReexaminationRequestedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `ExaminationRequested` | examination, person, document reference | `DocumentExamination.request()` | Examination standing, scrutiny history |
-| `ExaminationRefused` | examination, person, refusal reason | `DocumentExamination.request()` | Scrutiny history |
-| `DocumentExtracted` | examination, readable / unreadable + reason | `DocumentExamination.recordExtraction()` | Scrutiny history |
-| `FacesCompared` | examination, holds / does not hold | `DocumentExamination.recordComparison()` | Scrutiny history |
-| `ExaminationConcluded` | examination, verdict | `DocumentExamination.recordVerdict()` | Biometric enrollment (consumes `MATCH` once), scrutiny history |
-| `ExaminationExpired` | examination, person | `DocumentExamination.expire()` | Scrutiny history |
-| `ReexaminationRequested` | prior examination, new examination | `DocumentExamination.request()` (fresh, linked to prior) | Scrutiny history |
+| `ExaminationRequestedEvent` | ExaminationId, PersonId, DocumentRef | `DocumentExamination.request()` | Examination standing, scrutiny history |
+| `ExaminationRefusedEvent` | ExaminationId, PersonId, refusal reason | `DocumentExamination.request()` | Scrutiny history |
+| `DocumentExtractedEvent` | ExaminationId, readable / UnreadableReason | `DocumentExamination.recordExtraction()` | Scrutiny history |
+| `FacesComparedEvent` | ExaminationId, holds / does not hold | `DocumentExamination.recordComparison()` | Scrutiny history |
+| `ExaminationConcludedEvent` | ExaminationId, Verdict | `DocumentExamination.recordVerdict()` | Biometric enrollment (consumes `MATCH` once), scrutiny history |
+| `ExaminationExpiredEvent` | ExaminationId, PersonId | `DocumentExamination.expire()` | Scrutiny history |
+| `ReexaminationRequestedEvent` | ExaminationId (prior), ExaminationId (new) | `DocumentExamination.request()` (fresh, linked to prior) | Scrutiny history |
 
 ---
 
@@ -275,6 +275,16 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | # | Question | Standing |
 |---|----------|----------|
 | — | None remaining | All workshop questions resolved during storming |
+
+## Repository
+
+`ExaminationRepository` (domain port): `findOpenByPersonAndDocument`, `findByIdOrThrow`, `findAllByPersonAndDocument` (history, in order), `findOpen` / `findLatestConcluded` (standing), `save`. At most one `OPEN` per (person, document); the partial unique index is the backstop.
+
+## Factory / creation
+
+Named creation is `DocumentExamination.request({ id, personId, documentRef, window })`, which emits `ExaminationRequestedEvent`. Reexamination is `requestReexamination(newId, window)` on a terminal examination — a new identity linked to the prior, emitting `ReexaminationRequestedEvent`. Reconstitution is only via `DocumentExamination.rehydrate({...})` and emits nothing.
+
+---
 
 ## Related Documentation
 

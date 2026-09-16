@@ -157,13 +157,13 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `accept()` | Content arrives already signed; no open order for the same content | `AcceptedForDelivery` |
-| `order()` | Standing is `ACCEPTED` or `RETRIED`; position is the payer's next free position | `OrderedForSending` |
-| `recordSending()` | Standing is `ORDERED` | `SendingRecorded` |
-| `recordConfirmation()` | Standing is `SENT`; ledger confirms exactly this order | `DeliveryConfirmed` |
-| `recordFailure()` | Standing is `SENT`; ledger outcome observed as failure | `DeliveryFailed` |
-| `retry()` | Standing is `FAILED`; failure is retryable; retry bound not reached | `DeliveryRetried` |
-| `abandon()` | Standing is `FAILED`; failure is terminal or retry bound reached; reason recorded | `DeliveryAbandoned` |
+| `accept()` | Content arrives already signed; no open order for the same content | `AcceptedForDeliveryEvent` |
+| `order()` | Standing is `ACCEPTED` or `RETRIED`; position is the payer's next free position | `OrderedForSendingEvent` |
+| `recordSending()` | Standing is `ORDERED` | `SendingRecordedEvent` |
+| `recordConfirmation()` | Standing is `SENT`; ledger confirms exactly this order | `DeliveryConfirmedEvent` |
+| `recordFailure()` | Standing is `SENT`; ledger outcome observed as failure | `DeliveryFailedEvent` |
+| `retry()` | Standing is `FAILED`; failure is retryable; retry bound not reached | `DeliveryRetriedEvent` |
+| `abandon()` | Standing is `FAILED`; failure is terminal or retry bound reached; reason recorded | `DeliveryAbandonedEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -229,24 +229,24 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- AcceptedForDelivery
-    DomainFact <|-- OrderedForSending
-    DomainFact <|-- SendingRecorded
-    DomainFact <|-- DeliveryConfirmed
-    DomainFact <|-- DeliveryFailed
-    DomainFact <|-- DeliveryRetried
-    DomainFact <|-- DeliveryAbandoned
+    DomainFact <|-- AcceptedForDeliveryEvent
+    DomainFact <|-- OrderedForSendingEvent
+    DomainFact <|-- SendingRecordedEvent
+    DomainFact <|-- DeliveryConfirmedEvent
+    DomainFact <|-- DeliveryFailedEvent
+    DomainFact <|-- DeliveryRetriedEvent
+    DomainFact <|-- DeliveryAbandonedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `AcceptedForDelivery` | order, content reference, payer reference | `DeliveryOrder.accept()` | Sending order, scrutiny record |
-| `OrderedForSending` | order, payer reference, order position | `DeliveryOrder.order()` | Sending order (why a later order waits) |
-| `SendingRecorded` | order, attempt | `DeliveryOrder.recordSending()` | Attempt history (awaiting outcome) |
-| `DeliveryConfirmed` | order, content reference | `DeliveryOrder.recordConfirmation()` | Voting (counts only confirmed), scrutiny record |
-| `DeliveryFailed` | order, attempt, reason | `DeliveryOrder.recordFailure()` | Delivery flow (retry or abandon), person notice |
-| `DeliveryRetried` | order, new attempt | `DeliveryOrder.retry()` | Sending order, attempt history |
-| `DeliveryAbandoned` | order, reason | `DeliveryOrder.abandon()` | Voting (abandoned with reason), person notice |
+| `AcceptedForDeliveryEvent` | `DeliveryOrderId`, `SignedContentRef`, `PayerRef` | `DeliveryOrder.accept()` | Sending order, scrutiny record |
+| `OrderedForSendingEvent` | `DeliveryOrderId`, `PayerRef`, `SendingOrderPosition` | `DeliveryOrder.order()` | Sending order (why a later order waits) |
+| `SendingRecordedEvent` | `DeliveryOrderId`, attempt number | `DeliveryOrder.recordSending()` | Attempt history (awaiting outcome) |
+| `DeliveryConfirmedEvent` | `DeliveryOrderId`, `SignedContentRef` | `DeliveryOrder.recordConfirmation()` | Voting (counts only confirmed), scrutiny record |
+| `DeliveryFailedEvent` | `DeliveryOrderId`, `FailureReason` | `DeliveryOrder.recordFailure()` | Delivery flow (retry or abandon), person notice |
+| `DeliveryRetriedEvent` | `DeliveryOrderId`, next attempt number | `DeliveryOrder.retry()` | Sending order, attempt history |
+| `DeliveryAbandonedEvent` | `DeliveryOrderId`, `FailureReason` | `DeliveryOrder.abandon()` | Voting (abandoned with reason), person notice |
 
 ---
 
@@ -297,6 +297,18 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | In-flight deliveries at erasure time: is confirmation still recorded as ledger fact? | Open — needs product + legal (ledger facts cannot be un-happened) |
 | 4 | Which failure/abandonment reasons must the voter be told, and in which form? | Open — needs product decision |
 | 5 | Sending order scope: per payer only, or also global fairness across payers? | Open — needs product decision |
+
+## Repository
+
+Interface in domain for the single aggregate root. Finders use ubiquitous language; wire `eventName` strings unchanged.
+
+| Repository | Finders |
+|------------|---------|
+| `DeliveryOrderRepository` (`DELIVERY_ORDER_REPOSITORY`) | `findById(id: DeliveryOrderId)`, `findOpenByContent(contentRef: SignedContentRef)`, `findByPayer(payerRef: PayerRef)`, `nextPositionForPayer(payerRef: PayerRef)`, `save(order: DeliveryOrder)` |
+
+## Factory / creation
+
+Named create path vs rehydrate split (rehydrate never raises events): `DeliveryOrder.accept(id, content, payer, pos, signedProof)` raises `AcceptedForDeliveryEvent` (`recordSending()` / `recordFailure()` create the child `SendingAttempt` via `createSent()` / `createFailed()` and append it). `DeliveryOrder.rehydrate(id, content, payer, pos, standing, attempts)` rebuilds stored state without events.
 
 ## Related Documentation
 

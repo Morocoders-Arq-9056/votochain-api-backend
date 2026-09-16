@@ -128,8 +128,8 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `enroll()` | Person exists; consent for biometric processing stands; no live reference for the same person | `BiometricEnrolled` |
-| `revoke()` | Standing is `ENROLLED`; revocation asked by erasure coordination | `BiometricProfileRevoked` |
+| `enroll()` | Person exists; consent for biometric processing stands; no live reference for the same person | `BiometricEnrolledEvent` |
+| `revoke()` | Standing is `ENROLLED`; revocation asked by erasure coordination | `BiometricProfileRevokedEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -214,11 +214,11 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `start()` | Person exists; consent for biometric processing stands; a live reference exists for the person | `LivenessChallengeStarted` |
-| `completeLiveness()` | Standing is `CHALLENGE_OPEN`; presence observed or not | `LivenessPassed` or `LivenessFailed` |
-| `requestComparison()` | Standing is `LIVENESS_PASSED`; reference still live | `FaceComparisonRequested` |
-| `recordVerdict()` | Standing is `COMPARISON_REQUESTED`; match judged against this context's own bar | `IdentityVerified` or `IdentityVerificationFailed` |
-| `expire()` | Standing is not terminal; freshness window elapsed (or reference revoked while open) | `VerificationAttemptExpired` |
+| `start()` | Person exists; consent for biometric processing stands; a live reference exists for the person | `LivenessChallengeStartedEvent` |
+| `completeLiveness()` | Standing is `CHALLENGE_OPEN`; presence observed or not | `LivenessPassedEvent` or `LivenessFailedEvent` |
+| `requestComparison()` | Standing is `LIVENESS_PASSED`; reference still live | `FaceComparisonRequestedEvent` |
+| `recordVerdict()` | Standing is `COMPARISON_REQUESTED`; match judged against this context's own bar | `IdentityVerifiedEvent` or `IdentityVerificationFailedEvent` |
+| `expire()` | Standing is not terminal; freshness window elapsed (or reference revoked while open) | `VerificationAttemptExpiredEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -282,28 +282,28 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- BiometricEnrolled
-    DomainFact <|-- LivenessChallengeStarted
-    DomainFact <|-- LivenessPassed
-    DomainFact <|-- LivenessFailed
-    DomainFact <|-- FaceComparisonRequested
-    DomainFact <|-- IdentityVerified
-    DomainFact <|-- IdentityVerificationFailed
-    DomainFact <|-- VerificationAttemptExpired
-    DomainFact <|-- BiometricProfileRevoked
+    DomainFact <|-- BiometricEnrolledEvent
+    DomainFact <|-- LivenessChallengeStartedEvent
+    DomainFact <|-- LivenessPassedEvent
+    DomainFact <|-- LivenessFailedEvent
+    DomainFact <|-- FaceComparisonRequestedEvent
+    DomainFact <|-- IdentityVerifiedEvent
+    DomainFact <|-- IdentityVerificationFailedEvent
+    DomainFact <|-- VerificationAttemptExpiredEvent
+    DomainFact <|-- BiometricProfileRevokedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `BiometricEnrolled` | profile, person | `BiometricProfile.enroll()` | Reference standing, scrutiny record |
-| `LivenessChallengeStarted` | attempt, person | `VerificationAttempt.start()` | Attempt history |
-| `LivenessPassed` | attempt | `VerificationAttempt.completeLiveness()` | Attempt history (comparison now allowed) |
-| `LivenessFailed` | attempt, reason | `VerificationAttempt.completeLiveness()` | Attempt history, person notice |
-| `FaceComparisonRequested` | attempt, reference | `VerificationAttempt.requestComparison()` | Attempt history |
-| `IdentityVerified` | attempt, person, freshness | `VerificationAttempt.recordVerdict()` | Voting (gates authorization), scrutiny record |
-| `IdentityVerificationFailed` | attempt, person, reason | `VerificationAttempt.recordVerdict()` | Voting (refuses authorization with reason), person notice |
-| `VerificationAttemptExpired` | attempt, reason | `VerificationAttempt.expire()` | Attempt history (no longer authorizes) |
-| `BiometricProfileRevoked` | profile, person | `BiometricProfile.revoke()` | Consent & Compliance (revocation confirmation), attempt closure |
+| `BiometricEnrolledEvent` | `BiometricProfileId`, `PersonId` | `BiometricProfile.enroll()` | Reference standing, scrutiny record |
+| `LivenessChallengeStartedEvent` | `VerificationAttemptId`, `PersonId` | `VerificationAttempt.start()` | Attempt history |
+| `LivenessPassedEvent` | `VerificationAttemptId` | `VerificationAttempt.completeLiveness()` | Attempt history (comparison now allowed) |
+| `LivenessFailedEvent` | `VerificationAttemptId`, `FailureReason` | `VerificationAttempt.completeLiveness()` | Attempt history, person notice |
+| `FaceComparisonRequestedEvent` | `VerificationAttemptId`, `BiometricProfileId` | `VerificationAttempt.requestComparison()` | Attempt history |
+| `IdentityVerifiedEvent` | `VerificationAttemptId`, `PersonId`, `FreshnessWindow` | `VerificationAttempt.recordVerdict()` | Voting (gates authorization), scrutiny record |
+| `IdentityVerificationFailedEvent` | `VerificationAttemptId`, `PersonId`, `FailureReason` | `VerificationAttempt.recordVerdict()` | Voting (refuses authorization with reason), person notice |
+| `VerificationAttemptExpiredEvent` | `VerificationAttemptId`, `FailureReason` | `VerificationAttempt.expire()` | Attempt history (no longer authorizes) |
+| `BiometricProfileRevokedEvent` | `BiometricProfileId`, `PersonId` | `BiometricProfile.revoke()` | Consent & Compliance (revocation confirmation), attempt closure |
 
 ---
 
@@ -357,6 +357,19 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | Failed-attempt discipline: how many failures before a pause, who is told, cooling period? | Open — needs product decision |
 | 4 | Which comparison detail (score, threshold version) must the scrutiny record keep? | Open — needs product + legal |
 | 5 | Reference per person globally or per community? | Open — correlation map suggests one profile per person; community-scoped alternatives parked |
+
+## Repository
+
+Interfaces in domain, one per aggregate root. Finders use ubiquitous language; wire `eventName` strings unchanged.
+
+| Repository | Finders |
+|------------|---------|
+| `ProfileRepository` (`PROFILE_REPOSITORY`) | `findById(id: BiometricProfileId)`, `findLiveByPerson(personId: PersonId)`, `save(profile: BiometricProfile)` |
+| `AttemptRepository` (`ATTEMPT_REPOSITORY`) | `findById(id: VerificationAttemptId)`, `findByIdOrThrow(id: VerificationAttemptId)`, `findOpenByProfile(profileId: BiometricProfileId)`, `save(attempt: VerificationAttempt)` |
+
+## Factory / creation
+
+Named create path vs rehydrate split (rehydrate never raises events): `BiometricProfile.enroll({ id, personId })` raises `BiometricEnrolledEvent`; `VerificationAttempt.start({ id, personId, profileId, freshness })` raises `LivenessChallengeStartedEvent`. `BiometricProfile.rehydrate(...)` / `VerificationAttempt.rehydrate(...)` rebuild stored state without events.
 
 ## Related Documentation
 

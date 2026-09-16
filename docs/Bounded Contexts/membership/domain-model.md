@@ -151,16 +151,16 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `register()` | Person exists; community exists and accepts members; no live membership for the same pair | `MembershipRegistered` |
-| `activate()` | Standing is `REQUESTED`; community standing allows it | `MembershipActivated` |
-| `assignUnit()` | Not `TERMINATED`; unit belongs to the community | `UnitAssigned` |
-| `assignRole()` | Standing is `ACTIVE`; role is a known community role | `CommunityRoleAssigned` |
-| `markDelinquent()` | Standing is `ACTIVE`; the association's books confirm arrears | `MemberMarkedDelinquent` |
-| `clearDelinquency()` | Standing is `DELINQUENT`; obligations met again | `DelinquencyCleared` |
-| `suspend()` | Standing is `ACTIVE` or `DELINQUENT`; reason recorded | `MembershipSuspended` |
-| `reinstate()` | Standing is `SUSPENDED`; cause resolved | `MembershipReinstated` |
-| `terminate()` | Not already `TERMINATED`; reason recorded | `MembershipTerminated` |
-| `judgeEligibility()` | Always answerable: `ACTIVE` means eligible, anything else means not eligible with reason | `EligibilityJudged` (with snapshot reference) |
+| `register()` | Person exists; community exists and accepts members; no live membership for the same pair | `MembershipRegisteredEvent` |
+| `activate()` | Standing is `REQUESTED`; community standing allows it | `MembershipActivatedEvent` |
+| `assignUnit()` | Not `TERMINATED`; unit belongs to the community | `UnitAssignedEvent` |
+| `assignRole()` | Standing is `ACTIVE`; role is a known community role | `CommunityRoleAssignedEvent` |
+| `markDelinquent()` | Standing is `ACTIVE`; the association's books confirm arrears | `MemberMarkedDelinquentEvent` |
+| `clearDelinquency()` | Standing is `DELINQUENT`; obligations met again | `DelinquencyClearedEvent` |
+| `suspend()` | Standing is `ACTIVE` or `DELINQUENT`; reason recorded | `MembershipSuspendedEvent` |
+| `reinstate()` | Standing is `SUSPENDED`; cause resolved | `MembershipReinstatedEvent` |
+| `terminate()` | Not already `TERMINATED`; reason recorded | `MembershipTerminatedEvent` |
+| `judgeEligibility()` | Always answerable: `ACTIVE` means eligible, anything else means not eligible with reason | `EligibilityJudgedEvent` (with snapshot reference) |
 
 ### Read Needs (What the Domain Must Be Able to Answer)
 
@@ -220,30 +220,30 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- MembershipRegistered
-    DomainFact <|-- MembershipActivated
-    DomainFact <|-- UnitAssigned
-    DomainFact <|-- CommunityRoleAssigned
-    DomainFact <|-- MemberMarkedDelinquent
-    DomainFact <|-- DelinquencyCleared
-    DomainFact <|-- MembershipSuspended
-    DomainFact <|-- MembershipReinstated
-    DomainFact <|-- MembershipTerminated
-    DomainFact <|-- EligibilityJudged
+    DomainFact <|-- MembershipRegisteredEvent
+    DomainFact <|-- MembershipActivatedEvent
+    DomainFact <|-- UnitAssignedEvent
+    DomainFact <|-- CommunityRoleAssignedEvent
+    DomainFact <|-- MemberMarkedDelinquentEvent
+    DomainFact <|-- DelinquencyClearedEvent
+    DomainFact <|-- MembershipSuspendedEvent
+    DomainFact <|-- MembershipReinstatedEvent
+    DomainFact <|-- MembershipTerminatedEvent
+    DomainFact <|-- EligibilityJudgedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `MembershipRegistered` | membership, person, community | `Membership.register()` | Membership listing, scrutiny record |
-| `MembershipActivated` | membership, person, community | `Membership.activate()` | Roster (inclusion), scrutiny record |
-| `UnitAssigned` | membership, unit | `Membership.assignUnit()` | Membership detail |
-| `CommunityRoleAssigned` | membership, role | `Membership.assignRole()` | Membership detail |
-| `MemberMarkedDelinquent` | membership, reason | `Membership.markDelinquent()` | Roster (exclusion), member notice |
-| `DelinquencyCleared` | membership | `Membership.clearDelinquency()` | Roster (re-inclusion) |
-| `MembershipSuspended` | membership, reason | `Membership.suspend()` | Roster (exclusion), member notice |
-| `MembershipReinstated` | membership | `Membership.reinstate()` | Roster (re-inclusion) |
-| `MembershipTerminated` | membership, reason | `Membership.terminate()` | Membership listing, roster (exclusion) |
-| `EligibilityJudged` | person, community, verdict, reason, snapshot reference | `Membership.judgeEligibility()` | Voting (freezes a copy at authorization time), scrutiny record |
+| `MembershipRegisteredEvent` | MembershipId, PersonId, CommunityId | `Membership.register()` | Membership listing, scrutiny record |
+| `MembershipActivatedEvent` | MembershipId, PersonId, CommunityId | `Membership.activate()` | Roster (inclusion), scrutiny record |
+| `UnitAssignedEvent` | MembershipId, Unit | `Membership.assignUnit()` | Membership detail |
+| `CommunityRoleAssignedEvent` | MembershipId, CommunityRole | `Membership.assignRole()` | Membership detail |
+| `MemberMarkedDelinquentEvent` | MembershipId, reason | `Membership.markDelinquent()` | Roster (exclusion), member notice |
+| `DelinquencyClearedEvent` | MembershipId | `Membership.clearDelinquency()` | Roster (re-inclusion) |
+| `MembershipSuspendedEvent` | MembershipId, reason | `Membership.suspend()` | Roster (exclusion), member notice |
+| `MembershipReinstatedEvent` | MembershipId | `Membership.reinstate()` | Roster (re-inclusion) |
+| `MembershipTerminatedEvent` | MembershipId, reason | `Membership.terminate()` | Membership listing, roster (exclusion) |
+| `EligibilityJudgedEvent` | PersonId, CommunityId, EligibilitySnapshot (verdict, reason, snapshot reference) | `Membership.judgeEligibility()` | Voting (freezes a copy at authorization time), scrutiny record |
 
 ---
 
@@ -297,6 +297,16 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 4 | Is eligibility judged live at each authorization, or against a periodically confirmed roll? | Open — needs product decision |
 | 5 | Which community roles exist — fixed catalog or per-community defined? | Open — needs product decision |
 | 6 | Must exclusion reasons be told to the member, and in which form? | Open — needs product decision |
+
+## Repository
+
+`MembershipRepository` (domain port, `domain/repositories/membership.repository.ts`): `getById`, `findLiveByPersonAndCommunity`, `findActiveByCommunity`, `findLiveByPerson`, `save`. Standing filters (`ACTIVE`, non-`TERMINATED`) live in the finders, never in JSON blobs.
+
+## Factory / creation
+
+Named creation is `Membership.register(personId, communityId, unit)`, which emits `MembershipRegisteredEvent`. Reconstitution is only via `Membership.rehydrate({...})` and emits nothing. The `ghost()` phantom answers `NOT_A_MEMBER` without persisting — its minted id is discarded, never saved or published.
+
+---
 
 ## Related Documentation
 

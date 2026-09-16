@@ -137,8 +137,8 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `grant()` | Person exists; scope is known; no live `GRANTED` record for the same (person, scope) | `ConsentGranted` |
-| `revoke()` | Standing is `GRANTED` | `ConsentRevoked` |
+| `grant()` | Person exists; scope is known; no live `GRANTED` record for the same (person, scope) | `ConsentGrantedEvent` |
+| `revoke()` | Standing is `GRANTED` | `ConsentRevokedEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -213,11 +213,11 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `submit()` | Person exists; no open request for the same person | `ErasureRequested` |
-| `confirm()` | Standing is `REQUESTED`; request is valid and in force | `ErasureConfirmed` |
-| `coordinateRevocation()` | Standing is `CONFIRMED`; owning contexts holding this person's data known | `RevocationCoordinated` (one per owning context) |
-| `recordConfirmation()` | Standing is `COORDINATED` or `AWAITING_CONFIRMATIONS`; confirmation from a coordinated owner not yet recorded | `RevocationConfirmed` (one per owner) |
-| `complete()` | Every coordinated owner confirmed | `ErasureCompleted` |
+| `submit()` | Person exists; no open request for the same person | `ErasureRequestedEvent` |
+| `confirm()` | Standing is `REQUESTED`; request is valid and in force | `ErasureConfirmedEvent` |
+| `coordinateRevocation()` | Standing is `CONFIRMED`; owning contexts holding this person's data known | `RevocationCoordinatedEvent` (one per owning context) |
+| `recordConfirmation()` | Standing is `COORDINATED` or `AWAITING_CONFIRMATIONS`; confirmation from a coordinated owner not yet recorded | `RevocationConfirmedEvent` (one per owner) |
+| `complete()` | Every coordinated owner confirmed | `ErasureCompletedEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -255,7 +255,7 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `define()` | Category known; terms coherent | `RetentionPolicyDefined` (supersedes the previous) |
+| `define()` | Category known; terms coherent | `RetentionPolicyDefinedEvent` (supersedes the previous) |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -322,26 +322,26 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- ConsentGranted
-    DomainFact <|-- ConsentRevoked
-    DomainFact <|-- RetentionPolicyDefined
-    DomainFact <|-- ErasureRequested
-    DomainFact <|-- ErasureConfirmed
-    DomainFact <|-- RevocationCoordinated
-    DomainFact <|-- RevocationConfirmed
-    DomainFact <|-- ErasureCompleted
+    DomainFact <|-- ConsentGrantedEvent
+    DomainFact <|-- ConsentRevokedEvent
+    DomainFact <|-- RetentionPolicyDefinedEvent
+    DomainFact <|-- ErasureRequestedEvent
+    DomainFact <|-- ErasureConfirmedEvent
+    DomainFact <|-- RevocationCoordinatedEvent
+    DomainFact <|-- RevocationConfirmedEvent
+    DomainFact <|-- ErasureCompletedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `ConsentGranted` | record, person, scope, policy version | `ConsentRecord.grant()` | Biometric, Notifications (gates open), scrutiny record |
-| `ConsentRevoked` | record, person, scope | `ConsentRecord.revoke()` | Biometric, Notifications (processing stops), scrutiny record |
-| `RetentionPolicyDefined` | policy line, category, terms, supersedes reference | `RetentionPolicy.define()` | Compliance steward, scrutiny record |
-| `ErasureRequested` | request, person | `DataSubjectRequest.submit()` | Compliance steward |
-| `ErasureConfirmed` | request, person | `DataSubjectRequest.confirm()` | Owning contexts (coordination begins), scrutiny record |
-| `RevocationCoordinated` | request, person, owning context | `DataSubjectRequest.coordinateRevocation()` | One owning context (asked to revoke its own data) |
-| `RevocationConfirmed` | request, person, owning context | `DataSubjectRequest.recordConfirmation()` | Request standing (one owner done) |
-| `ErasureCompleted` | request, person | `DataSubjectRequest.complete()` | Person notice, scrutiny record |
+| `ConsentGrantedEvent` | ConsentRecordId, PersonId, ConsentScope, PolicyVersion | `ConsentRecord.grant()` | Biometric, Notifications (gates open), scrutiny record |
+| `ConsentRevokedEvent` | ConsentRecordId, PersonId, ConsentScope | `ConsentRecord.revoke()` | Biometric, Notifications (processing stops), scrutiny record |
+| `RetentionPolicyDefinedEvent` | RetentionPolicyId, DataCategory, RetentionTerms, supersedes | `RetentionPolicy.define()` | Compliance steward, scrutiny record |
+| `ErasureRequestedEvent` | DataSubjectRequestId, PersonId | `DataSubjectRequest.submit()` | Compliance steward |
+| `ErasureConfirmedEvent` | DataSubjectRequestId, PersonId | `DataSubjectRequest.confirm()` | Owning contexts (coordination begins), scrutiny record |
+| `RevocationCoordinatedEvent` | DataSubjectRequestId, PersonId, owning context | `DataSubjectRequest.coordinateRevocation()` | One owning context (asked to revoke its own data) |
+| `RevocationConfirmedEvent` | DataSubjectRequestId, PersonId, owning context | `DataSubjectRequest.recordConfirmation()` | Request standing (one owner done) |
+| `ErasureCompletedEvent` | DataSubjectRequestId, PersonId | `DataSubjectRequest.complete()` | Person notice, scrutiny record |
 
 ---
 
@@ -395,6 +395,19 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | Retention vs erasure when a legal hold exists: form of the hold, who records it, expiry? | Open — needs legal |
 | 4 | In-flight votes at erasure time: history stays or erasure waits? | Open — needs product + legal |
 | 5 | Must exclusion/refusal reasons be told to the person, and in which form? | Open — needs product decision |
+
+## Repository
+
+- `ConsentRepository` (domain port): `findLive(personId, scope)`, `save` — live means standing `GRANTED`; the partial unique index is the backstop.
+- `DataSubjectRequestRepository` (domain port): open-request lookup per person behind `getErasureStandingByPerson`, `save` — at most one open request per person.
+- `RetentionPolicyRepository` (domain port): current terms per category behind `getRetentionTermsByCategory`, `save` — a new definition supersedes, never edits.
+
+## Factory / creation
+
+- `ConsentRecord.grant({ id, personId, scope, policyVersion })` emits `ConsentGrantedEvent`; a later grant after revocation opens a new record. Reconstitution is only via `ConsentRecord.rehydrate({...})` and emits nothing.
+- `DataSubjectRequest.submit({ id, personId })` emits `ErasureRequestedEvent`; `RetentionPolicy.define({ id, category, terms, supersedes })` emits `RetentionPolicyDefinedEvent`. Reconstitution is only via their `rehydrate({...})` and emits nothing.
+
+---
 
 ## Related Documentation
 

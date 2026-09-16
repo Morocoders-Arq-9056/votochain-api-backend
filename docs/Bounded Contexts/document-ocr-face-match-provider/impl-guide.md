@@ -231,11 +231,13 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
   }
   async examineDocumentExamination(cmd: ExamineDocumentExaminationCommand): Promise<void> { // UC2 anchor
     const id = cmd.examinationId;
+    const ext = await this.executor.observeExtraction(id.value); // vendors ANTES del run: red fuera del tx
+    const cmp = ext.readable ? await this.executor.observeComparison(id.value) : null;
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(id);
-      const ext = await this.executor.observeExtraction(id.value); x.recordExtraction(ext.readable, ext.reason ? UnreadableReason.of(ext.reason) : null);
+      x.recordExtraction(ext.readable, ext.reason ? UnreadableReason.of(ext.reason) : null);
       if (!ext.readable) x.recordVerdict(Verdict.UNREADABLE);
-      else { const cmp = await this.executor.observeComparison(id.value); x.recordComparison(cmp.holds); x.recordVerdict(cmp.holds ? Verdict.MATCH : Verdict.NO_MATCH); }
+      else { x.recordComparison(cmp!.holds); x.recordVerdict(cmp!.holds ? Verdict.MATCH : Verdict.NO_MATCH); }
       await this.exams.save(x); return x;
     });
     this.publish(e);
@@ -302,7 +304,7 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
 }
 ```
 
-`ExaminationRepositoryImpl` usa `TransactionContext.current ?? orm`; assembler con `parseExaminationStanding()/parseVerdict()/parseUnreadableReason()` vía `Object.values` (nunca `as`/`enum`); DTOs validan con `@IsIn(Object.values(...))`. Índice parcial `WHERE standing='OPEN'` en migración (§6).
+`ExaminationRepositoryImpl` traduce el EntityManager ambiente vía `manager.getRepository(ExaminationOrmEntity)` (skill v1.0.9, nunca `?? orm`); assembler con `parseExaminationStanding()/parseVerdict()/parseUnreadableReason()` vía `Object.values` (nunca `as`/`enum`); DTOs validan con `@IsIn(Object.values(...))`. Índice parcial `WHERE standing='OPEN'` en migración (§6).
 
 ### 4.2 Adaptadores ejecutor + 4.3 Módulo
 

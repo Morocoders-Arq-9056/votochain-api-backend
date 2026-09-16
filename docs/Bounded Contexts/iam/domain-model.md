@@ -161,18 +161,18 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `signUp()` | Person not yet registered; contact address fresh and well-formed | `UserSignedUp` |
-| `signIn()` | Standing is `ACTIVE`; offered proof holds; prior open session (if any) closes as superseded | `UserSignedOut` (superseded, only if a session was open), then `UserSignedIn` |
-| `signOut()` | A session is open | `UserSignedOut` |
-| `changeSecret()` | Standing is `ACTIVE`; current proof holds; ends the open session | `SecretChanged` (+ `UserSignedOut` with reason `proof changed`, only if a session was open) |
-| `changeEmail()` | Standing is not `SUSPENDED`; new address fresh and well-formed; resets verified standing | `EmailChanged` |
-| `verifyEmail()` | Confirmation observed from the outside delivery for the recorded address | `EmailVerified` |
-| `linkOutsideIdentity()` | Standing is `ACTIVE`; no outside proof linked yet; the outside proof is genuine | `OutsideIdentityLinked` |
-| `unlinkOutsideIdentity()` | Another proof remains afterwards | `OutsideIdentityUnlinked` |
-| `grantSystemRole()` | Role is a known system role; not already held | `SystemRoleGranted` |
-| `revokeSystemRole()` | Role held; a steward remains afterwards | `SystemRoleRevoked` |
-| `suspend()` | Standing is not already `SUSPENDED`; reason recorded; ends the open session | `AccessSuspended` (+ `UserSignedOut` with reason `suspended`, only if a session was open) |
-| `restore()` | Standing is `SUSPENDED`; cause resolved | `AccessRestored` |
+| `signUp()` | Person not yet registered; contact address fresh and well-formed | `UserSignedUpEvent` |
+| `signIn()` | Standing is `ACTIVE`; offered proof holds; prior open session (if any) closes as superseded | `UserSignedOutEvent` (superseded, only if a session was open), then `UserSignedInEvent` |
+| `signOut()` | A session is open | `UserSignedOutEvent` |
+| `changeSecret()` | Standing is `ACTIVE`; current proof holds; ends the open session | `SecretChangedEvent` (+ `UserSignedOutEvent` with reason `proof changed`, only if a session was open) |
+| `changeEmail()` | Standing is not `SUSPENDED`; new address fresh and well-formed; resets verified standing | `EmailChangedEvent` |
+| `verifyEmail()` | Confirmation observed from the outside delivery for the recorded address | `EmailVerifiedEvent` |
+| `linkOutsideIdentity()` | Standing is `ACTIVE`; no outside proof linked yet; the outside proof is genuine | `OutsideIdentityLinkedEvent` |
+| `unlinkOutsideIdentity()` | Another proof remains afterwards | `OutsideIdentityUnlinkedEvent` |
+| `grantSystemRole()` | Role is a known system role; not already held | `SystemRoleGrantedEvent` |
+| `revokeSystemRole()` | Role held; a steward remains afterwards | `SystemRoleRevokedEvent` |
+| `suspend()` | Standing is not already `SUSPENDED`; reason recorded; ends the open session | `AccessSuspendedEvent` (+ `UserSignedOutEvent` with reason `suspended`, only if a session was open) |
+| `restore()` | Standing is `SUSPENDED`; cause resolved | `AccessRestoredEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -239,34 +239,34 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- UserSignedUp
-    DomainFact <|-- UserSignedIn
-    DomainFact <|-- UserSignedOut
-    DomainFact <|-- SecretChanged
-    DomainFact <|-- EmailChanged
-    DomainFact <|-- EmailVerified
-    DomainFact <|-- OutsideIdentityLinked
-    DomainFact <|-- OutsideIdentityUnlinked
-    DomainFact <|-- SystemRoleGranted
-    DomainFact <|-- SystemRoleRevoked
-    DomainFact <|-- AccessSuspended
-    DomainFact <|-- AccessRestored
+    DomainFact <|-- UserSignedUpEvent
+    DomainFact <|-- UserSignedInEvent
+    DomainFact <|-- UserSignedOutEvent
+    DomainFact <|-- SecretChangedEvent
+    DomainFact <|-- EmailChangedEvent
+    DomainFact <|-- EmailVerifiedEvent
+    DomainFact <|-- OutsideIdentityLinkedEvent
+    DomainFact <|-- OutsideIdentityUnlinkedEvent
+    DomainFact <|-- SystemRoleGrantedEvent
+    DomainFact <|-- SystemRoleRevokedEvent
+    DomainFact <|-- AccessSuspendedEvent
+    DomainFact <|-- AccessRestoredEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `UserSignedUp` | user, person, contact address | `User.signUp()` | Identity history, person notice (welcome) |
-| `UserSignedIn` | user, person, proof kind | `User.signIn()` | Access standing, identity history |
-| `UserSignedOut` | user, person, reason | `User.signIn()` (supersede) / `User.signOut()` / `User.changeSecret()` / `User.suspend()` | Access standing, identity history |
-| `SecretChanged` | user, person | `User.changeSecret()` | Identity history, person notice (security) |
-| `EmailChanged` | user, old address, new address | `User.changeEmail()` | Identity history, person notice (both addresses) |
-| `EmailVerified` | user, address | `User.verifyEmail()` | Access standing, identity history |
-| `OutsideIdentityLinked` | user, prover reference | `User.linkOutsideIdentity()` | Access standing (second proof), identity history |
-| `OutsideIdentityUnlinked` | user, prover reference | `User.unlinkOutsideIdentity()` | Identity history |
-| `SystemRoleGranted` | user, role | `User.grantSystemRole()` | Access standing, authorization answers |
-| `SystemRoleRevoked` | user, role | `User.revokeSystemRole()` | Access standing, authorization answers |
-| `AccessSuspended` | user, reason | `User.suspend()` | Access standing (refuse), person notice (security) |
-| `AccessRestored` | user | `User.restore()` | Access standing, person notice |
+| `UserSignedUpEvent` | `UserId`, `PersonId`, `ContactAddress` | `User.signUp()` | Identity history, person notice (welcome) |
+| `UserSignedInEvent` | `UserId`, `PersonId`, `ProofKind` | `User.signIn()` | Access standing, identity history |
+| `UserSignedOutEvent` | `UserId`, `PersonId`, `SignOutReason` | `User.signIn()` (supersede) / `User.signOut()` / `User.changeSecret()` / `User.suspend()` | Access standing, identity history |
+| `SecretChangedEvent` | `UserId` | `User.changeSecret()` | Identity history, person notice (security) |
+| `EmailChangedEvent` | `UserId`, old `ContactAddress`, new `ContactAddress` | `User.changeEmail()` | Identity history, person notice (both addresses) |
+| `EmailVerifiedEvent` | `UserId`, `ContactAddress` | `User.verifyEmail()` | Access standing, identity history |
+| `OutsideIdentityLinkedEvent` | `UserId`, `OutsideProverRef` | `User.linkOutsideIdentity()` | Access standing (second proof), identity history |
+| `OutsideIdentityUnlinkedEvent` | `UserId`, `OutsideProverRef` | `User.unlinkOutsideIdentity()` | Identity history |
+| `SystemRoleGrantedEvent` | `UserId`, `SystemRole` | `User.grantSystemRole()` | Access standing, authorization answers |
+| `SystemRoleRevokedEvent` | `UserId`, `SystemRole` | `User.revokeSystemRole()` | Access standing, authorization answers |
+| `AccessSuspendedEvent` | `UserId`, reason | `User.suspend()` | Access standing (refuse), person notice (security) |
+| `AccessRestoredEvent` | `UserId` | `User.restore()` | Access standing, person notice |
 
 ---
 
@@ -322,6 +322,18 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 4 | Must suspension and address-change reasons be told to the person, and through which notice? | Open — needs product decision |
 | 5 | Session presence across devices — one presence total, or one per device under a single standing? | Open — parked |
 | 6 | Further provers later — at what point does the one-prover default break? | Open — parked, revisit on a concrete driver |
+
+## Repository
+
+Interface in domain for the single aggregate root. Finders use ubiquitous language; wire `eventName` strings unchanged.
+
+| Repository | Finders |
+|------------|---------|
+| `UserRepository` (`USER_REPOSITORY`) | `findById(id: UserId)`, `findByPersonId(personId: PersonId)`, `findByEmail(email: string)`, `save(user: User)` |
+
+## Factory / creation
+
+Named create path vs rehydrate split (rehydrate never raises events): `User.signup({ contact })` mints `UserId` + `PersonId` and raises `UserSignedUpEvent`. `User.rehydrate({ id, personId, standing, session, contact, roles, outsideProver })` rebuilds stored state without events.
 
 ## Related Documentation
 

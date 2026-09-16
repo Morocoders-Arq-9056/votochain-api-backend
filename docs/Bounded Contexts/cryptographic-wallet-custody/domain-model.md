@@ -141,12 +141,12 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `provision()` | Person exists; no live capability for the same person; position fresh | `WalletProvisioned` |
-| `reconstructForSigning()` | Standing is `PROVISIONED`; one specific vote content asked | `KeyReconstructed` |
-| `forget()` | Standing is `SIGNING_OPEN` | `KeyForgotten` |
-| `rotate()` | Standing is `PROVISIONED`; new position fresh | `WalletRotated` |
-| `suspend()` | Standing is `PROVISIONED` | `WalletSuspended` |
-| `retire()` | Not already `RETIRED`; retirement asked by erasure coordination | `WalletRetired` |
+| `provision()` | Person exists; no live capability for the same person; position fresh | `WalletProvisionedEvent` |
+| `reconstructForSigning()` | Standing is `PROVISIONED`; one specific vote content asked | `KeyReconstructedEvent` |
+| `forget()` | Standing is `SIGNING_OPEN` | `KeyForgottenEvent` |
+| `rotate()` | Standing is `PROVISIONED`; new position fresh | `WalletRotatedEvent` |
+| `suspend()` | Standing is `PROVISIONED` | `WalletSuspendedEvent` |
+| `retire()` | Not already `RETIRED`; retirement asked by erasure coordination | `WalletRetiredEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -201,22 +201,22 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- WalletProvisioned
-    DomainFact <|-- KeyReconstructed
-    DomainFact <|-- KeyForgotten
-    DomainFact <|-- WalletRotated
-    DomainFact <|-- WalletSuspended
-    DomainFact <|-- WalletRetired
+    DomainFact <|-- WalletProvisionedEvent
+    DomainFact <|-- KeyReconstructedEvent
+    DomainFact <|-- KeyForgottenEvent
+    DomainFact <|-- WalletRotatedEvent
+    DomainFact <|-- WalletSuspendedEvent
+    DomainFact <|-- WalletRetiredEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `WalletProvisioned` | wallet, person, position | `UserWallet.provision()` | Signing gate, scrutiny record |
-| `KeyReconstructed` | wallet, content reference | `UserWallet.reconstructForSigning()` | Signing flow (sign now, for this content only) |
-| `KeyForgotten` | wallet, content reference | `UserWallet.forget()` | Scrutiny record (transient use ended) |
-| `WalletRotated` | wallet, old position, new position | `UserWallet.rotate()` | Signing gate (new position), scrutiny record |
-| `WalletSuspended` | wallet, reason | `UserWallet.suspend()` | Signing gate (refuse with reason), scrutiny record |
-| `WalletRetired` | wallet, person | `UserWallet.retire()` | Consent & Compliance (retirement confirmation), signing gate |
+| `WalletProvisionedEvent` | `UserWalletId`, `PersonId`, `DerivationPosition` | `UserWallet.provision()` | Signing gate, scrutiny record |
+| `KeyReconstructedEvent` | `UserWalletId`, `SignedContentRef` | `UserWallet.reconstructForSigning()` | Signing flow (sign now, for this content only) |
+| `KeyForgottenEvent` | `UserWalletId`, `SignedContentRef` | `UserWallet.forget()` | Scrutiny record (transient use ended) |
+| `WalletRotatedEvent` | `UserWalletId`, old `DerivationPosition`, new `DerivationPosition` | `UserWallet.rotate()` | Signing gate (new position), scrutiny record |
+| `WalletSuspendedEvent` | `UserWalletId`, reason | `UserWallet.suspend()` | Signing gate (refuse with reason), scrutiny record |
+| `WalletRetiredEvent` | `UserWalletId`, `PersonId` | `UserWallet.retire()` | Consent & Compliance (retirement confirmation), signing gate |
 
 ---
 
@@ -268,6 +268,18 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | Which suspension/retirement reasons must the person be told, and in which form? | Open — needs product decision |
 | 4 | In-flight signing at erasure time: finish the asked signing or refuse immediately? | Open — needs product + legal |
 | 5 | Exact audit boundary of "nothing kept that could sign on its own" | Open — needs security review |
+
+## Repository
+
+Interface in domain for the single aggregate root. Finders use ubiquitous language; wire `eventName` strings unchanged.
+
+| Repository | Finders |
+|------------|---------|
+| `WalletRepository` (`WALLET_REPOSITORY`) | `findById(id: UserWalletId)`, `findLiveByPerson(personId: PersonId)`, `existsPosition(position: DerivationPosition)`, `findEventsByWallet(id: UserWalletId)`, `save(wallet: UserWallet)` |
+
+## Factory / creation
+
+Named create path vs rehydrate split (rehydrate never raises events): `UserWallet.provision(id, personId, position)` raises `WalletProvisionedEvent`; `rotate(newPosition)` returns the successor provisioned capability and raises `WalletRotatedEvent`. `UserWallet.rehydrate(id, personId, position, standing, openFor)` rebuilds stored state without events.
 
 ## Related Documentation
 

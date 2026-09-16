@@ -25,6 +25,6 @@ export class AuthenticationController {
     const userId = await this.commands.signUp(command);
     const user = await this.queries.getUserById(new GetUserByIdQuery(userId));
     if (!user) throw new NotFoundException();
-    return UserResourceFromEntityAssembler.toResource(user);
+    return UserResourceFromEntityAssembler.toResourceFromEntity(user);
   }
 }

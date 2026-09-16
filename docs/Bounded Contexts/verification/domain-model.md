@@ -146,9 +146,9 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `request()` | Person known; purpose in the closed set; contact allowed now (opt-in answered outside); prior open challenge (if any) closes as superseded | `ChallengeInvalidated` (superseded, only if one was open), then `ChallengeRequested` |
-| `answer()` | A challenge is `OPEN` and within its window; the presented code is judged; the attempt is counted | `ChallengeConfirmed` (code holds) — or `ChallengeAttemptFailed` (code does not hold, attempts remain) — or `ChallengeAttemptFailed` + `ChallengeInvalidated` (past agreed count) |
-| `expire()` | The validity window elapsed while `OPEN` | `ChallengeExpired` |
+| `request()` | Person known; purpose in the closed set; contact allowed now (opt-in answered outside); prior open challenge (if any) closes as superseded | `ChallengeInvalidatedEvent` (superseded, only if one was open), then `ChallengeRequestedEvent` |
+| `answer()` | A challenge is `OPEN` and within its window; the presented code is judged; the attempt is counted | `ChallengeConfirmedEvent` (code holds) — or `ChallengeAttemptFailedEvent` (code does not hold, attempts remain) — or `ChallengeAttemptFailedEvent` + `ChallengeInvalidatedEvent` (past agreed count) |
+| `expire()` | The validity window elapsed while `OPEN` | `ChallengeExpiredEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -177,7 +177,7 @@ No identity; defined entirely by attributes; immutable; invalid values are unrep
 
 ### Purpose
 
-- The reason for the proof: `LOGIN` (prove during sign-in), `EMAIL_VERIFICATION` (prove the address is held), `PASSWORD_RESET` (prove before a secret reset is allowed).
+- The reason for the proof: `login` (prove during sign-in), `email-verification` (prove the address is held), `password-reset` (prove before a secret reset is allowed).
 - Closed set. A new purpose later is a new mapping, not a domain change.
 
 ### AttemptCount
@@ -209,20 +209,20 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- ChallengeRequested
-    DomainFact <|-- ChallengeConfirmed
-    DomainFact <|-- ChallengeAttemptFailed
-    DomainFact <|-- ChallengeInvalidated
-    DomainFact <|-- ChallengeExpired
+    DomainFact <|-- ChallengeRequestedEvent
+    DomainFact <|-- ChallengeConfirmedEvent
+    DomainFact <|-- ChallengeAttemptFailedEvent
+    DomainFact <|-- ChallengeInvalidatedEvent
+    DomainFact <|-- ChallengeExpiredEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `ChallengeRequested` | challenge, person, purpose, window | `VerificationChallenge.request()` | Challenge standing, scrutiny history, delivery instruction |
-| `ChallengeConfirmed` | challenge, person, purpose | `VerificationChallenge.answer()` | IAM standing, scrutiny history |
-| `ChallengeAttemptFailed` | challenge, person, purpose, remaining attempts | `VerificationChallenge.answer()` | Scrutiny history |
-| `ChallengeInvalidated` | challenge, person, purpose, reason | `VerificationChallenge.request()` (supersede) / `VerificationChallenge.answer()` (exhausted) | Challenge standing, scrutiny history |
-| `ChallengeExpired` | challenge, person, purpose | `VerificationChallenge.expire()` | Challenge standing, scrutiny history |
+| `ChallengeRequestedEvent` | ChallengeId, PersonId, Purpose, ValidityWindow | `VerificationChallenge.request()` | Challenge standing, scrutiny history, delivery instruction |
+| `ChallengeConfirmedEvent` | ChallengeId, PersonId, Purpose | `VerificationChallenge.answer()` | IAM standing, scrutiny history |
+| `ChallengeAttemptFailedEvent` | ChallengeId, PersonId, Purpose, remaining attempts | `VerificationChallenge.answer()` | Scrutiny history |
+| `ChallengeInvalidatedEvent` | ChallengeId, PersonId, Purpose, InvalidationReason | `VerificationChallenge.request()` (supersede) / `VerificationChallenge.answer()` (exhausted) | Challenge standing, scrutiny history |
+| `ChallengeExpiredEvent` | ChallengeId, PersonId, Purpose | `VerificationChallenge.expire()` | Challenge standing, scrutiny history |
 
 ---
 
@@ -272,6 +272,16 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | Must throttling (how often may a person request) be a domain rule or an execution guard? | Open — parked |
 | 4 | Further channels later — new purpose values or same challenge, new delivery? | Open — parked, revisit on a concrete driver |
 | 5 | Which IAM flows consume `ChallengeConfirmed` first? | Open — needs product decision |
+
+## Repository
+
+`VerificationChallengeRepository` (domain port): `findOpenByPersonAndPurpose`, `findById`, `save`. At most one `OPEN` per (person, purpose); the partial unique index is the backstop.
+
+## Factory / creation
+
+Named creation is `VerificationChallenge.request(id, personId, purpose, window, codeHash)`, which emits `ChallengeRequestedEvent`. Reconstitution is only via `VerificationChallenge.rehydrate({...})` and emits nothing. Answering, superseding, and expiring mutate the open challenge; they never create one.
+
+---
 
 ## Related Documentation
 

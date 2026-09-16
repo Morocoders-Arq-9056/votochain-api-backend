@@ -89,7 +89,7 @@ export function parseVoteStatus(v: string): VoteStatus {
   if (!(Object.values(VoteStatus) as string[]).includes(v)) throw new Error(`invalid vote status: ${v}`);
   return v as VoteStatus;
 }
-// DTOs: @IsIn(Object.values(ProposalStatus | AuthorizationStatus | VoteStatus)) (nunca forma enum clásica / `@IsEnum` / `as`)
+// DTOs: un @IsIn(Object.values(X)) por cada unión — @IsIn(Object.values(ProposalStatus)), @IsIn(Object.values(AuthorizationStatus)), @IsIn(Object.values(VoteStatus)) (nunca `Object.values(A | B)` combinado, nunca forma enum clásica / `@IsEnum` / `as`)
 ```
 
 Sin esqueletos: los guards H5 quedan explicitos en cada agregado — replay (`AuthorizationAlreadyConsumed` + unico parcial `PENDING` + unico parcial `CONFIRMED`), late (`ProposalNotOpen`), signer (`SignerMismatch`: `recovered.equals(voter)`), inmutabilidad del voto, y atomicidad consume+cast en un `uow.run`. Enums como `as const` + `type` union con `parseX()` vía `Object.values()` al rehidratar y `@IsIn(Object.values(X))` en DTOs, nunca forma enum clásica / `as` / `@IsEnum`.
@@ -369,7 +369,7 @@ export interface QuorumPolicy { verdictFor(turnout: number, snapshot: QuorumSnap
 | `GET` | `/api/v1/votes/:id` | Verifiable Proof (choice+firma+tx+recovered) |
 | `GET` | `/api/v1/votes/receipt?proposal=&voter=` | Voter Receipt (mi journey, sin choices ajenos) |
 
-Filtro `VotingExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`; error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejectedEvent`), `InvalidChoiceError → 422`, `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejectedEvent`), `AuthorizationAlreadyConsumedError → 409`, `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
+Controller delgado con `@UseFilters(VotingExceptionFilter)` (skill: filtro BC-scoped en el controller). Filtro `VotingExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`; error → HTTP; el hecho de scrutiny se registra antes de lanzar): `ProposalNotOpenError → 422` (registrado como `LateVoteRejectedEvent`), `InvalidChoiceError → 422`, `SignerMismatchError → 422`, `ReplayRejectedError → 409` (registrado como `ReplayRejectedEvent`), `AuthorizationAlreadyConsumedError → 409`, `AuthorizationExpiredError → 410`, `VoteNotFoundError → 404`, `IllegalProposalTransitionError → 409`.
 
 ### 5.1 Fachada publicada `VOTING_CONTEXT_FACADE` (primitivas; primer consumidor futuro: Reporting)
 

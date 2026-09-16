@@ -202,18 +202,18 @@ export class NotificationDispatchCommandServiceImpl implements NotificationDispa
     private readonly events: EventEmitter2,
   ) {}
   async requestNotificationDelivery(cmd: RequestNotificationDeliveryCommand): Promise<DispatchId> {
-    const seen = await this.dispatches.findByKey(cmd.key);
+    const seen = await this.dispatches.findByKey(cmd.key); // fast-path fuera del tx; la UNIQUE es la autoridad
+    const template = await this.templates.resolve(cmd.templateKey, cmd.templateValues); // catálogo ANTES del run (throws TemplateUnknownError); el tx solo agrupa DB
     if (seen) {
       const refused = await this.uow.run(async () => {
-        const r = NotificationDispatch.refuse({ id: DispatchId.generate(), key: cmd.key, address: cmd.address, template: await this.templates.resolve(cmd.templateKey, cmd.templateValues), reason: new RefusalReason('DUPLICATE') });
+        const r = NotificationDispatch.refuse({ id: DispatchId.generate(), key: cmd.key, address: cmd.address, template, reason: new RefusalReason('DUPLICATE') });
         await this.dispatches.save(r);
         return r;
       });
       for (const e of refused.pullDomainEvents()) this.events.emit(e.eventName, e);
       throw new DuplicateIntentError('idempotency key already seen');
     }
-    const template = await this.templates.resolve(cmd.templateKey, cmd.templateValues); // throws TemplateUnknownError
-    const allowed = await this.consent.mayContactNow(cmd.address.value);
+    const allowed = await this.consent.mayContactNow(cmd.address.value); // gate ANTES del run
     if (!allowed) {
       const refused = await this.uow.run(async () => {
         const r = NotificationDispatch.refuse({ id: DispatchId.generate(), key: cmd.key, address: cmd.address, template, reason: new RefusalReason('CONTACT_NOT_ALLOWED') });
@@ -346,7 +346,7 @@ CREATE TABLE notifications.dispatches (
   id VARCHAR PRIMARY KEY,
   idempotency_key VARCHAR NOT NULL UNIQUE,
   address VARCHAR NOT NULL,
-  channel VARCHAR NOT NULL DEFAULT 'EMAIL' CHECK (channel = 'EMAIL'), -- email-only MVP (decisión); segundo canal = nuevo concepto
+  channel VARCHAR NOT NULL DEFAULT 'EMAIL' CHECK (channel = 'EMAIL'), -- invariante estructural (skill: columna sin campo en el agregado solo si es invariante, nunca side-channel): fijo por CHECK, nada entra a la fila que no venga del agregado; segundo canal = concepto nuevo con su propio campo en el agregado
   template_key VARCHAR NOT NULL,
   template_values JSONB NOT NULL DEFAULT '{}',
   reason VARCHAR NOT NULL,

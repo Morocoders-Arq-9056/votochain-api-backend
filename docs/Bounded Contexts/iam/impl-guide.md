@@ -378,7 +378,11 @@ export class UserOrmEntity extends AuditableOrmEntity {
 export class UserRepositoryImpl implements UserRepository {
   constructor(@InjectRepository(UserOrmEntity) private readonly orm: Repository<UserOrmEntity>,
     private readonly assembler: UserPersistenceAssembler) {}
-  private get repo(): Repository<UserOrmEntity> { return TransactionContext.current ?? this.orm; }
+  // Skill v1.0.9: TransactionContext.current es EntityManager, no Repository — se traduce vía getRepository (nunca `?? this.orm`, que es EntityManager | Repository | null y falla en strict:true).
+  private get repo(): Repository<UserOrmEntity> {
+    const manager = TransactionContext.current;
+    return manager ? manager.getRepository(UserOrmEntity) : this.orm;
+  }
   async findById(id: UserId): Promise<User | null> { /* findOneBy + toDomain */ }
   async save(user: User): Promise<void> { await this.repo.save(this.assembler.toOrmEntity(user)); }
 }
@@ -483,10 +487,10 @@ POST /api/v1/iam/users/signup { email }
 
 ```
 POST /api/v1/iam/users/signin { userId, proofKind }
- -> SignInCommand -> UserCommandServiceImpl.signIn() inside UNIT_OF_WORK.run()
-     -> findById() else UserNotFoundError
+ -> SignInCommand -> UserCommandServiceImpl.signIn()
+     -> proofs.holds() BEFORE run() (Auth0 executor verdict, observed never performed; red fuera del tx)
+     -> inside UNIT_OF_WORK.run(): findById() else UserNotFoundError
      -> standing ACTIVE? else SuspendedRefusedError
-     -> proofs.holds() (Auth0 executor verdict, observed never performed)
      -> user.signIn(kind): supersede -> UserSignedOutEvent(SUPERSEDED)? + UserSignedInEvent
      -> users.save(user)
   -> after commit: emit both events -> session-artifact.issue() via executor

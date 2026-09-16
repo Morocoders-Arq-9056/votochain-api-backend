@@ -323,7 +323,7 @@ ORM entity = forma de persistencia, nunca el agregado. `status` y `role` son col
   @Column({ nullable: true }) lastVerdict: string | null; @Column({ nullable: true }) lastSnapshotRef: string | null;
 }
 // Assembler: toDomain usa Membership.rehydrate + of()/parseMembershipStatus()/parseRole(); toOrmEntity lee todo del agregado.
-// Adapter: repo getter = TransactionContext.current ?? this.orm; findLiveByPersonAndCommunity filtra status != TERMINATED; save traduce y persiste. providers: TypeOrmModule.forFeature([MembershipOrmEntity]), MEMBERSHIP_REPOSITORY → impl, UNIT_OF_WORK → TypeOrmUnitOfWork.
+// Adapter: repo getter traduce el EntityManager ambiente vía manager.getRepository(MembershipOrmEntity) (skill v1.0.9: current es EntityManager, nunca `?? this.orm`); findLiveByPersonAndCommunity filtra status != TERMINATED; save traduce y persiste. providers: TypeOrmModule.forFeature([MembershipOrmEntity]), MEMBERSHIP_REPOSITORY → impl, UNIT_OF_WORK → TypeOrmUnitOfWork.
 ```
 
 ## 5. Capa de Interfaces

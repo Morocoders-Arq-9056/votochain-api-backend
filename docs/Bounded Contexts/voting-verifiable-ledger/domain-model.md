@@ -163,10 +163,10 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `create()` | Community exists; ballot has at least two distinct options | `ProposalDrafted` |
-| `open()` | Status is `DRAFT`; participation rule is available to freeze into the snapshot | `ProposalOpened` |
-| `close()` | Status is `OPEN`; closer is entitled (community administrator or scheduled close — entitlement judged outside this context) | `ProposalClosed` |
-| `tallyVotes()` | Status is `CLOSED` | `ProposalTallied`, plus `QuorumReached` or `QuorumNotReached` |
+| `create()` | Community exists; ballot has at least two distinct options | `ProposalDraftedEvent` |
+| `open()` | Status is `DRAFT`; participation rule is available to freeze into the snapshot | `ProposalOpenedEvent` |
+| `close()` | Status is `OPEN`; closer is entitled (community administrator or scheduled close — entitlement judged outside this context) | `ProposalClosedEvent` |
+| `tallyVotes()` | Status is `CLOSED` | `ProposalTalliedEvent`, plus `QuorumReachedEvent` or `QuorumNotReachedEvent` |
 
 ### Read Needs (What the Domain Must Be Able to Answer)
 
@@ -240,11 +240,11 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `request()` | Proposal is `OPEN` | `VoteAuthorizationRequested` |
-| `grant()` | Eligible voter, verified identity, no live pending permission for the pair | `VoteAuthorizationGranted` |
-| `deny()` | Any grant precondition fails | `VoteAuthorizationDenied` (with reason) |
-| `consume()` | Status `PENDING`, not expired; happens together with casting the vote | `VoteAuthorizationConsumed` |
-| `expire()` | Status `PENDING`, validity window elapsed | `VoteAuthorizationExpired` |
+| `request()` | Proposal is `OPEN` | `VoteAuthorizationRequestedEvent` |
+| `grant()` | Eligible voter, verified identity, no live pending permission for the pair | `VoteAuthorizationGrantedEvent` |
+| `deny()` | Any grant precondition fails | `VoteAuthorizationDeniedEvent` (with reason) |
+| `consume()` | Status `PENDING`, not expired; happens together with casting the vote | `VoteAuthorizationConsumedEvent` |
+| `expire()` | Status `PENDING`, validity window elapsed | `VoteAuthorizationExpiredEvent` |
 
 ### Read Needs
 
@@ -320,12 +320,12 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `buildMessage()` | Live authorization; choice in ballot | `VoteMessageBuilt` |
-| `cast()` | Proposal `OPEN`; authorization consumed atomically; signature well-formed and verifiable off-chain | `VoteCast`, plus the authorization's `VoteAuthorizationConsumed` |
-| `markQueued()` | Status `SIGNED` (or retry from `FAILED`) | `SignedVoteQueued` |
-| `markSent()` | Status `QUEUED`; chain reference observed | `TransactionSent` |
-| `markConfirmed()` | Status `SENT`; chain confirms inclusion; recovered signer equals declared voter | `VoteConfirmedOnChain` |
-| `markFailed()` | Delivery reported failed; reason records whether retry is meaningful | `TransactionFailed` |
+| `buildMessage()` | Live authorization; choice in ballot | `VoteMessageBuiltEvent` |
+| `cast()` | Proposal `OPEN`; authorization consumed atomically; signature well-formed and verifiable off-chain | `VoteCastEvent`, plus the authorization's `VoteAuthorizationConsumedEvent` |
+| `markQueued()` | Status `SIGNED` (or retry from `FAILED`) | `SignedVoteQueuedEvent` |
+| `markSent()` | Status `QUEUED`; chain reference observed | `TransactionSentEvent` |
+| `markConfirmed()` | Status `SENT`; chain confirms inclusion; recovered signer equals declared voter | `VoteConfirmedOnChainEvent` |
+| `markFailed()` | Delivery reported failed; reason records whether retry is meaningful | `TransactionFailedEvent` |
 
 ### Read Needs
 
@@ -406,48 +406,48 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- ProposalDrafted
-    DomainFact <|-- ProposalOpened
-    DomainFact <|-- ProposalClosed
-    DomainFact <|-- ProposalTallied
-    DomainFact <|-- QuorumReached
-    DomainFact <|-- QuorumNotReached
-    DomainFact <|-- VoteAuthorizationRequested
-    DomainFact <|-- VoteAuthorizationGranted
-    DomainFact <|-- VoteAuthorizationDenied
-    DomainFact <|-- VoteAuthorizationConsumed
-    DomainFact <|-- VoteAuthorizationExpired
-    DomainFact <|-- VoteMessageBuilt
-    DomainFact <|-- VoteCast
-    DomainFact <|-- SignedVoteQueued
-    DomainFact <|-- TransactionSent
-    DomainFact <|-- VoteConfirmedOnChain
-    DomainFact <|-- TransactionFailed
-    DomainFact <|-- ReplayRejected
-    DomainFact <|-- LateVoteRejected
+    DomainFact <|-- ProposalDraftedEvent
+    DomainFact <|-- ProposalOpenedEvent
+    DomainFact <|-- ProposalClosedEvent
+    DomainFact <|-- ProposalTalliedEvent
+    DomainFact <|-- QuorumReachedEvent
+    DomainFact <|-- QuorumNotReachedEvent
+    DomainFact <|-- VoteAuthorizationRequestedEvent
+    DomainFact <|-- VoteAuthorizationGrantedEvent
+    DomainFact <|-- VoteAuthorizationDeniedEvent
+    DomainFact <|-- VoteAuthorizationConsumedEvent
+    DomainFact <|-- VoteAuthorizationExpiredEvent
+    DomainFact <|-- VoteMessageBuiltEvent
+    DomainFact <|-- VoteCastEvent
+    DomainFact <|-- SignedVoteQueuedEvent
+    DomainFact <|-- TransactionSentEvent
+    DomainFact <|-- VoteConfirmedOnChainEvent
+    DomainFact <|-- TransactionFailedEvent
+    DomainFact <|-- ReplayRejectedEvent
+    DomainFact <|-- LateVoteRejectedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `ProposalDrafted` | proposal, community | `Proposal.create()` | Proposal listing |
-| `ProposalOpened` | proposal, frozen quorum snapshot | `Proposal.open()` | Voters (vote is open), eligibility window |
-| `ProposalClosed` | proposal, moment of closing | `Proposal.close()` | Tally policy, voters (late votes now rejected) |
-| `ProposalTallied` | proposal, per-option counts, turnout, quorum verdict | `Proposal.tallyVotes()` | Result announcement, tally view |
-| `QuorumReached` | proposal, participation | `Proposal.tallyVotes()` | Tally view, announcement |
-| `QuorumNotReached` | proposal, participation | `Proposal.tallyVotes()` | Tally view, announcement |
-| `VoteAuthorizationRequested` | permission, proposal, voter | `VoteAuthorization.request()` | Scrutiny record |
-| `VoteAuthorizationGranted` | permission, proposal, voter address, expiry | `VoteAuthorization.grant()` | Signing readiness |
-| `VoteAuthorizationDenied` | permission, reason | `VoteAuthorization.deny()` | Voter explanation |
-| `VoteAuthorizationConsumed` | permission, vote it was spent on | `VoteAuthorization.consume()` (with `Vote.cast()`) | Replay guard |
-| `VoteAuthorizationExpired` | permission | `VoteAuthorization.expire()` | Scrutiny record |
-| `VoteMessageBuilt` | vote, proposal, choice, nonce | `Vote.buildMessage()` | Scrutiny record |
-| `VoteCast` | vote, proposal, voter address, signature | `Vote.cast()` | Delivery, voter receipt |
-| `SignedVoteQueued` | vote, queue position reference | `Vote.markQueued()` | Delivery, voter receipt |
-| `TransactionSent` | vote, chain reference | `Vote.markSent()` | Voter receipt, scrutiny |
-| `VoteConfirmedOnChain` | vote, chain reference, block position, recovered address | `Vote.markConfirmed()` | Verifiable proof, tally view, voter receipt |
-| `TransactionFailed` | vote, reason, whether retry is meaningful | `Vote.markFailed()` | Retry policy |
-| `ReplayRejected` | proposal, voter address, reason | Guard on attempted second confirmation | Security record |
-| `LateVoteRejected` | proposal, voter address | Guard on post-close attempt | Scrutiny record |
+| `ProposalDraftedEvent` | `ProposalId`, `CommunityId` | `Proposal.create()` | Proposal listing |
+| `ProposalOpenedEvent` | `ProposalId`, `QuorumSnapshot` (frozen) | `Proposal.open()` | Voters (vote is open), eligibility window |
+| `ProposalClosedEvent` | `ProposalId`, moment of closing | `Proposal.close()` | Tally policy, voters (late votes now rejected) |
+| `ProposalTalliedEvent` | `ProposalId`, `Tally` (per-option counts, turnout, quorum verdict) | `Proposal.tallyVotes()` | Result announcement, tally view |
+| `QuorumReachedEvent` | `ProposalId`, turnout | `Proposal.tallyVotes()` | Tally view, announcement |
+| `QuorumNotReachedEvent` | `ProposalId`, turnout | `Proposal.tallyVotes()` | Tally view, announcement |
+| `VoteAuthorizationRequestedEvent` | `AuthorizationId`, `ProposalId`, `VoterAddress` | `VoteAuthorization.request()` | Scrutiny record |
+| `VoteAuthorizationGrantedEvent` | `AuthorizationId`, `ProposalId`, `VoterAddress`, expiry, `EligibilitySnapshot` | `VoteAuthorization.grant()` | Signing readiness |
+| `VoteAuthorizationDeniedEvent` | `AuthorizationId`, `AuthorizationDenialReason` | `VoteAuthorization.deny()` | Voter explanation |
+| `VoteAuthorizationConsumedEvent` | `AuthorizationId`, `VoteId` it was spent on | `VoteAuthorization.consume()` (with `Vote.cast()`) | Replay guard |
+| `VoteAuthorizationExpiredEvent` | `AuthorizationId` | `VoteAuthorization.expire()` | Scrutiny record |
+| `VoteMessageBuiltEvent` | `VoteId`, `ProposalId`, `Choice`, `VoteNonce` | `Vote.buildMessage()` | Scrutiny record |
+| `VoteCastEvent` | `VoteId`, `ProposalId`, `VoterAddress`, `EIP712Signature` | `Vote.cast()` | Delivery, voter receipt |
+| `SignedVoteQueuedEvent` | `VoteId`, queue position reference | `Vote.markQueued()` | Delivery, voter receipt |
+| `TransactionSentEvent` | `VoteId`, `TransactionReference` | `Vote.markSent()` | Voter receipt, scrutiny |
+| `VoteConfirmedOnChainEvent` | `VoteId`, `TransactionReference`, block position, recovered `VoterAddress` | `Vote.markConfirmed()` | Verifiable proof, tally view, voter receipt |
+| `TransactionFailedEvent` | `VoteId`, reason, whether retry is meaningful | `Vote.markFailed()` | Retry policy |
+| `ReplayRejectedEvent` | `ProposalId`, `VoterAddress`, reason | Guard on attempted second confirmation | Security record |
+| `LateVoteRejectedEvent` | `ProposalId`, `VoterAddress` | Guard on post-close attempt | Scrutiny record |
 
 ---
 
@@ -508,6 +508,22 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 4 | After how much chain confirmation is a vote "confirmed"? | Open — needs blockchain engineering decision (reorganization tolerance) |
 | 5 | Is transparent choice acceptable, or is ballot secrecy required? | Open — product + legal; secrecy would reshape the proof concept |
 | 6 | Is the rich tally here (per-option counts, turnout, verdict) sufficient, or does reporting deserve its own bounded context? | Watching. Full Results & Reporting was excluded by team decision; if reporting grows (trends, exports), split it out |
+
+## Repository
+
+Interfaces in domain, one per aggregate root. Finders use ubiquitous language; wire `eventName` strings unchanged.
+
+| Repository | Finders |
+|------------|---------|
+| `ProposalRepository` (`PROPOSAL_REPOSITORY`) | `findById(id: ProposalId)`, `save(proposal: Proposal)` |
+| `VoteAuthorizationRepository` (`AUTHORIZATION_REPOSITORY`) | `findById(id: AuthorizationId)`, `save(authorization: VoteAuthorization)` |
+| `VoteRepository` (`VOTE_REPOSITORY`) | `findById(id: VoteId)`, `save(vote: Vote)` |
+
+Broader reads (`listProposalsByCommunityAndStatus`, `getTallyByProposal`, `getVoterReceiptByProposalAndVoter`, `getVerifiableProofByVote`) are query-service operations over these repositories.
+
+## Factory / creation
+
+Named create path vs rehydrate split (rehydrate never raises events): `Proposal.create(id, communityId, options)` raises `ProposalDraftedEvent`; `VoteAuthorization.request(id, proposalId, voter, ttlMin)` raises `VoteAuthorizationRequestedEvent`; `Vote.cast(id, proposalId, voter, choice, nonce, sig, recovered)` raises `VoteMessageBuiltEvent` + `VoteCastEvent` (`Vote.buildMessage(...)` is pure, event-free). `Proposal.rehydrate(...)` / equivalent reload paths rebuild stored state without events.
 
 ## Related Documentation
 

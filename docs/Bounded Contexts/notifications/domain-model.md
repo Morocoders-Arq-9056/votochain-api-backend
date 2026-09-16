@@ -153,10 +153,10 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `requestDelivery()` | Template known; address well-formed; idempotency key fresh; contact allowed now (opt-in answered outside) | `DeliveryRequested` — or `DeliveryRefused` (duplicate key, or contact not allowed) |
-| `confirmDelivered()` | A send was instructed and not yet confirmed for the current attempt | `DeliveryConfirmed` |
-| `recordDeliveryFailure()` | A send was instructed and not yet confirmed for the current attempt | `DeliveryFailed` |
-| `requestRetry()` | The current attempt failed (confirmed and refused dispatches never retry) | `DeliveryRetried` (new attempt opens on the same dispatch) |
+| `requestDelivery()` | Template known; address well-formed; idempotency key fresh; contact allowed now (opt-in answered outside) | `DeliveryRequestedEvent` — or `DeliveryRefusedEvent` (duplicate key, or contact not allowed) |
+| `confirmDelivered()` | A send was instructed and not yet confirmed for the current attempt | `DeliveryConfirmedEvent` |
+| `recordDeliveryFailure()` | A send was instructed and not yet confirmed for the current attempt | `DeliveryFailedEvent` |
+| `requestRetry()` | The current attempt failed (confirmed and refused dispatches never retry) | `DeliveryRetriedEvent` (new attempt opens on the same dispatch) |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -216,20 +216,20 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- DeliveryRequested
-    DomainFact <|-- DeliveryRefused
-    DomainFact <|-- DeliveryConfirmed
-    DomainFact <|-- DeliveryFailed
-    DomainFact <|-- DeliveryRetried
+    DomainFact <|-- DeliveryRequestedEvent
+    DomainFact <|-- DeliveryRefusedEvent
+    DomainFact <|-- DeliveryConfirmedEvent
+    DomainFact <|-- DeliveryFailedEvent
+    DomainFact <|-- DeliveryRetriedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `DeliveryRequested` | dispatch, template, address, reason | `NotificationDispatch.requestDelivery()` | Delivery standing, scrutiny history, executor instruction |
-| `DeliveryRefused` | dispatch, reason | `NotificationDispatch.requestDelivery()` | Scrutiny history, requester awareness |
-| `DeliveryConfirmed` | dispatch, confirmed-at | `NotificationDispatch.confirmDelivered()` | Delivery standing, scrutiny history |
-| `DeliveryFailed` | dispatch, reason | `NotificationDispatch.recordDeliveryFailure()` | Delivery standing, retry decisions, scrutiny history |
-| `DeliveryRetried` | dispatch, attempt number | `NotificationDispatch.requestRetry()` | Delivery standing, scrutiny history |
+| `DeliveryRequestedEvent` | DispatchId, IdempotencyKey, DeliveryAddress, ResolvedTemplate, reason | `NotificationDispatch.requestDelivery()` | Delivery standing, scrutiny history, executor instruction |
+| `DeliveryRefusedEvent` | DispatchId, IdempotencyKey, RefusalReason | `NotificationDispatch.requestDelivery()` | Scrutiny history, requester awareness |
+| `DeliveryConfirmedEvent` | DispatchId, IdempotencyKey | `NotificationDispatch.confirmDelivered()` | Delivery standing, scrutiny history |
+| `DeliveryFailedEvent` | DispatchId, IdempotencyKey, FailureReason | `NotificationDispatch.recordDeliveryFailure()` | Delivery standing, retry decisions, scrutiny history |
+| `DeliveryRetriedEvent` | DispatchId, IdempotencyKey, attempt number | `NotificationDispatch.requestRetry()` | Delivery standing, scrutiny history |
 
 ---
 
@@ -279,6 +279,16 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | Further channels (SMS/push) — new intent or same dispatch, new attempt? | Open — parked, revisit on a concrete driver |
 | 4 | Bounce vs failure vocabulary — is a bounced address a failure, a refusal, or its own outcome? | Open — needs product decision |
 | 5 | In-read delivery (in-app inbox) — a channel of this context or a read model elsewhere? | Open — parked |
+
+## Repository
+
+`NotificationDispatchRepository` (domain port): `findByKey`, `findById`, `save`. One idempotency key delivers at most once; the `UNIQUE(idempotency_key)` constraint is the authority behind the `findByKey()` fast-path check.
+
+## Factory / creation
+
+Named creation is `NotificationDispatch.requestDelivery({ id, key, address, template, reason })`, which emits `DeliveryRequestedEvent`; refusal creation is `NotificationDispatch.refuse({ id, key, address, template, reason })`, which emits `DeliveryRefusedEvent` and still persists history. Reconstitution is only via `NotificationDispatch.rehydrate({...})` and emits nothing.
+
+---
 
 ## Related Documentation
 

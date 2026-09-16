@@ -214,12 +214,13 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     // (skill nestjs.md pitfalls). El chequeo findOpen + uq_open_pair siguen dentro: la constraint es la autoridad.
     if (!(await this.iam.personExists(c.personId.value))) throw new NoUsableChallengeError('persona desconocida');
     if (!(await this.consent.mayContactNow(c.personId.value))) throw new ContactNotAllowedError('contacto no permitido');
+    plain = generateNumericCode(6);
+    const codeHash = await this.compare.hash(plain); // ejecutor ANTES del run: el tx solo agrupa DB
     const created = await this.uow.run(async () => {
       const open = await this.repo.findOpenByPersonAndPurpose(c.personId, c.purpose);
       if (open) { open.supersede(); await this.repo.save(open); }   // mismo UoW: invalida + abre
-      plain = generateNumericCode(6);
       const ch = VerificationChallenge.request(ChallengeId.generate(), c.personId, c.purpose,
-        ValidityWindow.fromNow(5), await this.compare.hash(plain));
+        ValidityWindow.fromNow(5), codeHash);
       await this.repo.save(ch); return ch;
     });
     this.publish(created);
@@ -229,11 +230,13 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     return created!.id;
   }
   async answerVerificationChallenge(c: AnswerVerificationChallengeCommand): Promise<void> {
+    const probe = await this.repo.findById(c.challengeId); // lectura previa fuera del tx
+    if (!probe) throw new NoUsableChallengeError('sin challenge usable');
+    const holds = await this.compare.matches(c.presentedCode, probe.codeHash); // ejecutor fuera del tx
     const ch = await this.uow.run(async () => {
-      const found = await this.repo.findById(c.challengeId);
+      const found = await this.repo.findById(c.challengeId); // re-lectura autoritativa dentro
       if (!found) throw new NoUsableChallengeError('sin challenge usable');
-      const holds = await this.compare.matches(c.presentedCode, found.codeHash);
-      found.answer(holds, new Date());   // cuenta intento / confirma / invalida / expira
+      found.answer(holds, new Date());   // cuenta intento / confirma / invalida / expira (carrera: rama expired)
       await this.repo.save(found); return found;
     });
     this.publish(ch);   // ChallengeConfirmedEvent lo consume el handler interno → IAM (R9)
@@ -299,7 +302,7 @@ export class ChallengeOrmEntity extends AuditableOrmEntity {
   @Column() codeHash: string; @Column() requestedAt: Date; @Column() expiresAt: Date;
   @Column({ nullable: true }) reason: string | null;
 }
-// Assembler: toDomain vía rehydrate + of()/parsePurpose()/parseChallengeStanding(); toOrmEntity lee del agregado. Adapter: TransactionContext.current ?? orm; findOpenByPersonAndPurpose(open+vigente), findById, save.
+// Assembler: toDomain vía rehydrate + of()/parsePurpose()/parseChallengeStanding(); toOrmEntity lee del agregado. Adapter: repo getter traduce el EntityManager ambiente vía manager.getRepository(ChallengeOrmEntity) (skill v1.0.9, nunca `?? orm`); findOpenByPersonAndPurpose(open+vigente), findById, save.
 ```
 
 ## 5. Capa de Interfaces

@@ -305,7 +305,7 @@ export interface SigningPolicy { sign(digest: Buffer, path: string): Promise<str
 | `POST` | `/api/v1/wallets/:id/retire` | retire (coordinacion erasure) |
 | `GET` | `/api/v1/wallets?personId=` | capability (UC3, read-only) |
 
-Resources con `class-validator`; assemblers `XxxCommandFromResourceAssembler` (resource → command, `X.of()` en el borde); `WalletExceptionFilter`: `CapabilityNotFoundError → 404`, `CapabilityAlreadyExistsError → 409`, `IllegalWalletStateError → 422`. Fachada `WALLET_CONTEXT_FACADE` con `sign(walletId, contentRef)` + `answerCapability(personId)` en primitivos — el consumidor traduce a sus VOs.
+Resources con `class-validator`; assemblers `XxxCommandFromResourceAssembler` (resource → command, `X.of()` en el borde). Controller con `@UseFilters(WalletExceptionFilter)` (`interfaces/rest/filters/`, skill: filtro BC-scoped en el controller): `CapabilityNotFoundError → 404`, `CapabilityAlreadyExistsError → 409`, `IllegalWalletStateError → 422`. Fachada `WALLET_CONTEXT_FACADE` con `sign(walletId, contentRef)` + `answerCapability(personId)` en primitivos — el consumidor traduce a sus VOs; `wallet-custody.module.ts` `exports: [WALLET_CONTEXT_FACADE]` (solo el facade, nunca internals).
 
 ---
 

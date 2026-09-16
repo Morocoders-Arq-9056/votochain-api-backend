@@ -137,15 +137,15 @@ stateDiagram-v2
 
 | Operation | Preconditions | Facts Produced |
 |-----------|---------------|----------------|
-| `register()` | Name and domicile facts present; no live community with the same identity | `CommunityRegistered` |
-| `activate()` | Standing is `REGISTERED`; voting policy defined; at least one administrator named | `CommunityActivated` |
-| `updateSettings()` | Not `ARCHIVED`; facts well-formed | `CommunitySettingsUpdated` |
-| `definePolicy()` | Not `ARCHIVED`; threshold and basis coherent | `VotingPolicyDefined` (supersedes the previous) |
-| `appointAdmin()` | Not `ARCHIVED`; person exists; not already an administrator | `CommunityAdminAppointed` |
-| `removeAdmin()` | Person is an administrator; at least one administrator remains while `ACTIVE` | `CommunityAdminRemoved` |
-| `suspend()` | Standing is `ACTIVE`; reason recorded | `CommunitySuspended` |
-| `reactivate()` | Standing is `SUSPENDED`; cause resolved | `CommunityReactivated` |
-| `archive()` | Standing is `ACTIVE` or `SUSPENDED`; reason recorded | `CommunityArchived` |
+| `register()` | Name and domicile facts present; no live community with the same identity | `CommunityRegisteredEvent` |
+| `activate()` | Standing is `REGISTERED`; voting policy defined; at least one administrator named | `CommunityActivatedEvent` |
+| `updateSettings()` | Not `ARCHIVED`; facts well-formed | `CommunitySettingsUpdatedEvent` |
+| `definePolicy()` | Not `ARCHIVED`; threshold and basis coherent | `VotingPolicyDefinedEvent` (supersedes the previous) |
+| `appointAdmin()` | Not `ARCHIVED`; person exists; not already an administrator | `CommunityAdminAppointedEvent` |
+| `removeAdmin()` | Person is an administrator; at least one administrator remains while `ACTIVE` | `CommunityAdminRemovedEvent` |
+| `suspend()` | Standing is `ACTIVE`; reason recorded | `CommunitySuspendedEvent` |
+| `reactivate()` | Standing is `SUSPENDED`; cause resolved | `CommunityReactivatedEvent` |
+| `archive()` | Standing is `ACTIVE` or `SUSPENDED`; reason recorded | `CommunityArchivedEvent` |
 
 ### Answering Operations (Read, but Owned by the Aggregate)
 
@@ -217,28 +217,28 @@ classDiagram
         +occurredAt
         +aggregateId
     }
-    DomainFact <|-- CommunityRegistered
-    DomainFact <|-- CommunityActivated
-    DomainFact <|-- CommunitySettingsUpdated
-    DomainFact <|-- VotingPolicyDefined
-    DomainFact <|-- CommunityAdminAppointed
-    DomainFact <|-- CommunityAdminRemoved
-    DomainFact <|-- CommunitySuspended
-    DomainFact <|-- CommunityReactivated
-    DomainFact <|-- CommunityArchived
+    DomainFact <|-- CommunityRegisteredEvent
+    DomainFact <|-- CommunityActivatedEvent
+    DomainFact <|-- CommunitySettingsUpdatedEvent
+    DomainFact <|-- VotingPolicyDefinedEvent
+    DomainFact <|-- CommunityAdminAppointedEvent
+    DomainFact <|-- CommunityAdminRemovedEvent
+    DomainFact <|-- CommunitySuspendedEvent
+    DomainFact <|-- CommunityReactivatedEvent
+    DomainFact <|-- CommunityArchivedEvent
 ```
 
 | Event | Payload (business data) | Produced By | Interested Parties |
 |-------|-------------------------|-------------|--------------------|
-| `CommunityRegistered` | community, name, domicile | `Community.register()` | Community listing, scrutiny record |
-| `CommunityActivated` | community | `Community.activate()` | Membership (registrations allowed), Voting (proposals allowed) |
-| `CommunitySettingsUpdated` | community, updated facts | `Community.updateSettings()` | Community detail |
-| `VotingPolicyDefined` | community, threshold, basis, majority rule, supersedes reference | `Community.definePolicy()` | Voting (copies at each opening), scrutiny record |
-| `CommunityAdminAppointed` | community, person | `Community.appointAdmin()` | Administrator list, scrutiny record |
-| `CommunityAdminRemoved` | community, person | `Community.removeAdmin()` | Administrator list |
-| `CommunitySuspended` | community, reason | `Community.suspend()` | Membership (registrations refused), Voting (new proposals refused), member notice |
-| `CommunityReactivated` | community | `Community.reactivate()` | Membership and Voting (allowed again) |
-| `CommunityArchived` | community, reason | `Community.archive()` | Community listing (terminal); history remains readable |
+| `CommunityRegisteredEvent` | `CommunityId`, `CommunitySettings` | `Community.register()` | Community listing, scrutiny record |
+| `CommunityActivatedEvent` | `CommunityId` | `Community.activate()` | Membership (registrations allowed), Voting (proposals allowed) |
+| `CommunitySettingsUpdatedEvent` | `CommunityId`, `CommunitySettings` | `Community.updateSettings()` | Community detail |
+| `VotingPolicyDefinedEvent` | `CommunityId`, `VotingPolicy`, supersedes reference | `Community.definePolicy()` | Voting (copies at each opening), scrutiny record |
+| `CommunityAdminAppointedEvent` | `CommunityId`, `PersonId` | `Community.appointAdmin()` | Administrator list, scrutiny record |
+| `CommunityAdminRemovedEvent` | `CommunityId`, `PersonId` | `Community.removeAdmin()` | Administrator list |
+| `CommunitySuspendedEvent` | `CommunityId`, reason | `Community.suspend()` | Membership (registrations refused), Voting (new proposals refused), member notice |
+| `CommunityReactivatedEvent` | `CommunityId` | `Community.reactivate()` | Membership and Voting (allowed again) |
+| `CommunityArchivedEvent` | `CommunityId`, reason | `Community.archive()` | Community listing (terminal); history remains readable |
 
 ---
 
@@ -291,6 +291,18 @@ What the domain refuses, and why. These are business outcomes, not transport cod
 | 3 | Can a community define its own roles and majority rules, or is there a fixed catalog? | Open — needs product decision |
 | 4 | Which quorum bases are allowed (members, units, weighted)? | Open — constrains the policy shape |
 | 5 | Dissolved or merged community: archived or transferred, and what happens to its history? | Parked — needs product + legal |
+
+## Repository
+
+Interface in domain for the single aggregate root. Finders use ubiquitous language; wire `eventName` strings unchanged.
+
+| Repository | Finders |
+|------------|---------|
+| `CommunityRepository` (`COMMUNITY_REPOSITORY`) | `findById(id: CommunityId)`, `findByName(name: string)`, `save(community: Community)` |
+
+## Factory / creation
+
+Named create path vs rehydrate split (rehydrate never raises events): `Community.register({ settings, admin })` starts `REGISTERED` and raises `CommunityRegisteredEvent`. `Community.rehydrate({ id, standing, settings, policy, admins })` rebuilds stored state without events.
 
 ## Related Documentation
 

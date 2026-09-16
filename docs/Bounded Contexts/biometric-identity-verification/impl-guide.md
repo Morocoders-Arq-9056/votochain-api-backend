@@ -27,13 +27,13 @@ src/biometric-identity-verification/
 ├── domain/model/aggregates/biometric-profile.aggregate.ts
 ├── domain/model/aggregates/verification-attempt.aggregate.ts
 ├── domain/model/valueobjects/ (biometric-profile-id, verification-attempt-id, person-id, freshness-window, failure-reason, liveness-outcome)
-├── domain/model/commands/ (enroll-biometric, start-liveness-challenge, revoke-biometric-profile)
+├── domain/model/commands/ (enroll-biometric, start-liveness-challenge, complete-liveness, request-comparison, record-verdict, revoke-biometric-profile)
 ├── domain/model/queries/ (get-verification-standing, get-reference-standing, get-attempt-history)
 ├── domain/model/events/ (9: enrolled, challenge-started, liveness-passed/failed, comparison-requested, verified, verification-failed, attempt-expired, profile-revoked)
 ├── domain/services/ + repositories/ (profile, attempt) + exceptions/
 ├── infrastructure/persistence/typeorm/entities/ (profile, attempt)
 ├── infrastructure/persistence/typeorm/assemblers/ + adapters/ (profile, attempt)
-├── infrastructure/matching/vendor-a|vendor-b|fake/ (selector = env `FACE_MATCHER`, no token DI; umbral propio del BC)
+├── infrastructure/matching/vendor-a|vendor-b|fake/ (vía `MATCHING_PORT` + `useFactory` por env `FACE_MATCHER`; token DI siempre — skill: todo puerto lleva Symbol + `@Inject()`; umbral propio del BC)
 └── biometric-identity-verification.module.ts
 ```
 
@@ -250,9 +250,9 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     this.publish(a);
   }
   async recordVerdict(cmd: RecordVerdictCommand): Promise<void> {
+    const match = await this.matching.judgesMatch(cmd.attemptId.value); // vendor ANTES del run: el tx solo agrupa DB (umbral propio del BC)
     const a = await this.uow.run(async () => {
       const x = await this.attempts.findByIdOrThrow(cmd.attemptId);
-      const match = await this.matching.judgesMatch(x.id.value); // umbral propio del BC
       x.recordVerdict(match, cmd.now); await this.attempts.save(x); return x;
     });
     this.publish(a);
@@ -318,7 +318,7 @@ export class AttemptOrmEntity extends AuditableOrmEntity {
 }
 ```
 
-Adaptadores con `TransactionContext.current ?? orm`; assemblers con parsers (nunca `as`). `save()` traduce directo del agregado.
+Adaptadores con repo getter que traduce el EntityManager ambiente vía `manager.getRepository(...)` (skill v1.0.9, nunca `?? orm`); assemblers con parsers (nunca `as`). `save()` traduce directo del agregado.
 
 ### 4.2 Adaptador matching + 4.3 Módulo
 

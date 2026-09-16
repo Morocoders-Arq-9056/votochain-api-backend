@@ -46,7 +46,7 @@ src/blockchain-relay-transaction-delivery/
 │   │   ├── aggregates/delivery-order.aggregate.ts
 │   │   ├── entities/sending-attempt.entity.ts
 │   │   ├── valueobjects/ (delivery-order-id, signed-content-ref, payer-ref, sending-order-position, failure-reason)
-│ │   ├── commands/ (accept-delivery-order, record-delivery-order-ledger-outcome)
+│ │   ├── commands/ (accept-delivery-order, deliver-order, record-delivery-order-ledger-outcome)
 │ │   ├── queries/ (`GetDeliveryOrderStandingByIdQuery`, `GetDeliverySendingOrderByPayerQuery`, `GetDeliveryAttemptHistoryByOrderQuery` — formalización de los slugs previos `standing-by-order`, `sending-order-by-payer`, `attempt-history-by-order`)
 │   │   └── events/ (7 hechos)
 │   ├── services/ (delivery-command, delivery-query + tokens)
@@ -178,6 +178,32 @@ export class SendingAttempt {
 ### 2.3 Events (7) y puertos
 
 `AcceptedForDeliveryEvent | OrderedForSendingEvent | SendingRecordedEvent | DeliveryConfirmedEvent | DeliveryFailedEvent | DeliveryRetriedEvent | DeliveryAbandonedEvent` — `implements DomainEvent`, `static eventName` (wire inalterado: `'AcceptedForDelivery'`, `'OrderedForSending'`, `'SendingRecorded'`, `'DeliveryConfirmed'`, `'DeliveryFailed'`, `'DeliveryRetried'`, `'DeliveryAbandoned'`), VOs tipados. `DeliveryConfirmedEvent/DeliveryFailedEvent/DeliveryAbandonedEvent` los consume Voting (R5). Repository: `findById`, `findOpenByContent`, `findByPayer`, `nextPositionForPayer`, `save`.
+
+### 2.5 Commands (first-class, validados en constructor)
+
+```typescript
+// domain/model/commands/accept-delivery-order.command.ts
+export class AcceptDeliveryOrderCommand {
+  constructor(
+    public readonly contentRef: SignedContentRef,
+    public readonly payerRef: PayerRef,
+    public readonly signedProof: string,
+  ) { if (!contentRef || !payerRef || !signedProof?.trim()) throw new Error('content+payer+proof required'); }
+}
+// domain/model/commands/deliver-order.command.ts
+export class DeliverOrderCommand {
+  constructor(public readonly orderId: DeliveryOrderId) { if (!orderId) throw new Error('orderId required'); }
+}
+// domain/model/commands/record-delivery-order-ledger-outcome.command.ts
+export class RecordDeliveryOrderLedgerOutcomeCommand {
+  constructor(
+    public readonly orderId: DeliveryOrderId,
+    public readonly confirmed: boolean,
+    public readonly reason: string | null,
+    public readonly retryable: boolean,
+  ) { if (!orderId) throw new Error('orderId required'); }
+}
+```
 
 ---
 
@@ -337,7 +363,7 @@ Unico Template fuera de agregados. `PolygonAmoyGateway extends BaseLedgerGateway
 | `GET` | `/api/v1/deliveries?payer=` | sending order por pagador |
 | `GET` | `/api/v1/deliveries/:id/attempts` | historial de intentos |
 
-`RelayContextFacade.answerStanding(orderId)` en primitivos (Voting traduce). `export const RELAY_CONTEXT_FACADE = Symbol('RELAY_CONTEXT_FACADE')`; `blockchain-relay-transaction-delivery.module.ts` `exports: [RELAY_CONTEXT_FACADE]`. Filtro `RelayExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `OrderNotFoundError → 404`, `UnsignedContentRefusedError → 422`, `OrderAlreadyAcceptedError → 409` (carrera accept, la gana el UNIQUE parcial), `OvertakingRefusedError → 409`, `OrderConcludedError → 409` (mutación sobre terminal), `IllegalDeliveryStateError → 409` (causas `RetryAfterConfirmationRefused`, `RetryLimitReached`).
+Controller delgado con `@UseFilters(RelayExceptionFilter)` (skill: filtro BC-scoped en el controller). `RelayContextFacade.answerStanding(orderId)` en primitivos (Voting traduce). `export const RELAY_CONTEXT_FACADE = Symbol('RELAY_CONTEXT_FACADE')`; `blockchain-relay-transaction-delivery.module.ts` `exports: [RELAY_CONTEXT_FACADE]`. Filtro `RelayExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `OrderNotFoundError → 404`, `UnsignedContentRefusedError → 422`, `OrderAlreadyAcceptedError → 409` (carrera accept, la gana el UNIQUE parcial), `OvertakingRefusedError → 409`, `OrderConcludedError → 409` (mutación sobre terminal), `IllegalDeliveryStateError → 409` (causas `RetryAfterConfirmationRefused`, `RetryLimitReached`).
 
 ---
 
