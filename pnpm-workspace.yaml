@@ -1,2 +1,8 @@
 allowBuilds:
-  '@scarf/scarf': set this to true or false
+  cpu-features: true
+  protobufjs: true
+  ssh2: true
+onlyBuiltDependencies:
+  - cpu-features
+  - protobufjs
+  - ssh2
