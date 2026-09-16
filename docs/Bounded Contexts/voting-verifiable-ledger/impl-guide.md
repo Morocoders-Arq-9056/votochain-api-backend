@@ -190,37 +190,39 @@ Proposal: `ProposalDraftedEvent/ProposalOpenedEvent/ProposalClosedEvent/Proposal
 
 ```typescript
 export const PROPOSAL_COMMAND_SERVICE = Symbol('PROPOSAL_COMMAND_SERVICE');
+// Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query);
+// cada método recibe el objeto comando/query — nunca primitivas sueltas ni `handle` sobrecargado.
 export interface ProposalCommandService {
-  draft(cmd: DraftProposalCommand): Promise<ProposalId>;
-  open(cmd: OpenProposalCommand): Promise<void>;
-  close(cmd: CloseProposalCommand): Promise<void>;
-  tally(cmd: TallyProposalCommand): Promise<void>; // UC8
+  draftProposal(cmd: DraftProposalCommand): Promise<ProposalId>;
+  openProposal(cmd: OpenProposalCommand): Promise<void>;
+  closeProposal(cmd: CloseProposalCommand): Promise<void>;
+  tallyProposal(cmd: TallyProposalCommand): Promise<void>; // UC8
 }
 export const AUTHORIZATION_COMMAND_SERVICE = Symbol('AUTHORIZATION_COMMAND_SERVICE');
 export interface VoteAuthorizationCommandService {
-  request(cmd: RequestVoteAuthorizationCommand): Promise<AuthorizationId>;
-  grant(cmd: GrantVoteAuthorizationCommand): Promise<void>;
-  deny(cmd: DenyVoteAuthorizationCommand): Promise<void>;
-  expire(cmd: ExpireVoteAuthorizationCommand): Promise<void>;
+  requestVoteAuthorization(cmd: RequestVoteAuthorizationCommand): Promise<AuthorizationId>;
+  grantVoteAuthorization(cmd: GrantVoteAuthorizationCommand): Promise<void>;
+  denyVoteAuthorization(cmd: DenyVoteAuthorizationCommand): Promise<void>;
+  expireVoteAuthorization(cmd: ExpireVoteAuthorizationCommand): Promise<void>;
 }
 export const VOTE_COMMAND_SERVICE = Symbol('VOTE_COMMAND_SERVICE');
 export interface VoteCommandService {
-  cast(cmd: CastVoteCommand): Promise<VoteId>; // consume+cast atomico (H5)
-  markQueued(voteId: VoteId): Promise<void>;
-  markSent(voteId: VoteId, ref: TransactionReference): Promise<void>;
-  markConfirmed(voteId: VoteId, ref: TransactionReference, blockNo: number): Promise<void>;
-  markFailed(voteId: VoteId, reason: string, retryable: boolean): Promise<void>;
+  castVote(cmd: CastVoteCommand): Promise<VoteId>; // consume+cast atomico (H5)
+  markVoteQueued(cmd: MarkVoteQueuedCommand): Promise<void>;
+  markVoteSent(cmd: MarkVoteSentCommand): Promise<void>;
+  markVoteConfirmed(cmd: MarkVoteConfirmedCommand): Promise<void>;
+  markVoteFailed(cmd: MarkVoteFailedCommand): Promise<void>;
 }
 export const PROPOSAL_QUERY_SERVICE = Symbol('PROPOSAL_QUERY_SERVICE');
 export interface ProposalQueryService {
-  getById(q: GetProposalByIdQuery): Promise<Proposal | null>;
-  listByCommunityAndStatus(q: ListProposalsByCommunityAndStatusQuery): Promise<Proposal[]>;
-  getTally(q: GetTallyByProposalQuery): Promise<Tally | null>;
+  getProposalById(q: GetProposalByIdQuery): Promise<Proposal | null>;
+  listProposalsByCommunityAndStatus(q: ListProposalsByCommunityAndStatusQuery): Promise<Proposal[]>;
+  getTallyByProposal(q: GetTallyByProposalQuery): Promise<Tally | null>;
 }
 export const VOTE_QUERY_SERVICE = Symbol('VOTE_QUERY_SERVICE');
 export interface VoteQueryService {
-  getReceipt(q: GetVoterReceiptByProposalAndVoterQuery): Promise<VoterReceipt | null>;
-  getProof(voteId: VoteId): Promise<VerifiableProof | null>;
+  getVoterReceiptByProposalAndVoter(q: GetVoterReceiptByProposalAndVoterQuery): Promise<VoterReceipt | null>;
+  getVerifiableProofByVote(q: GetVerifiableProofByVoteQuery): Promise<VerifiableProof | null>;
 }
 ```
 
@@ -245,7 +247,7 @@ export class VoteCommandServiceImpl implements VoteCommandService {
     @Inject(SIGNATURE_POLICY) private readonly signatures: SignaturePolicy,
     private readonly notifications: ExternalNotificationsService,  // R11 → NOTIFICATION_CONTEXT_FACADE
   ) {}
-  async cast(cmd: CastVoteCommand): Promise<VoteId> {
+  async castVote(cmd: CastVoteCommand): Promise<VoteId> {
   const auth = await this.auths.findById(cmd.authorizationId) ?? throwNotFound(); // guards antes de firmar
   const proposal = await this.proposals.findById(auth.proposalId) ?? throwNotFound();
   proposal.assertOpen();            // si no -> LateVoteRejectedEvent
@@ -283,8 +285,8 @@ Si persistir falla tras firmar, la firma se descarta: reintento = nuevo `CastVot
 | UC1 Draft | `Proposal.create()` → save → `ProposalDraftedEvent` |
 | UC2 Open | `ExternalCommunityService.getPolicy()` (R1) → `proposal.open(snapshot)` → `ProposalOpenedEvent` |
 | UC3 RequestAuth | `request()` → `ExternalMembership.isEligible()` (R2, congela snapshot) → `ExternalBiometric.isVerifiedNow()` (R3) → `grant()` / `deny(reason)` |
-| UC5 DeliverVote | `@OnEvent(VoteCastEvent.eventName)` (VoteCastEventHandler) → `markQueued()` → `ExternalRelayService.acceptSigned()` (R5) → `markSent(ref)` |
-| UC6 HandleOutcome | Relay `DeliveryConfirmedEvent/DeliveryFailedEvent` → `markConfirmed()` (solo este cuenta) / `markFailed()` + aviso R11 |
+| UC5 DeliverVote | `@OnEvent(VoteCastEvent.eventName)` (VoteCastEventHandler) → `markVoteQueued(MarkVoteQueuedCommand)` → `ExternalRelayService.acceptSigned()` (R5) → `markVoteSent(MarkVoteSentCommand)` |
+| UC6 HandleOutcome | Relay `DeliveryConfirmedEvent/DeliveryFailedEvent` → `markVoteConfirmed(MarkVoteConfirmedCommand)` (solo este cuenta) / `markVoteFailed(MarkVoteFailedCommand)` + aviso R11 |
 | UC7/UC8 | `close()` → `ProposalClosedEvent` → handler (ProposalClosedEventHandler): tally solo `CONFIRMED` vs snapshot → `ProposalTalliedEvent + QuorumReachedEvent/QuorumNotReachedEvent` |
 | UC9 Expire-sweep | cron: `PENDING` vencidos → `expire()` → `VoteAuthorizationExpiredEvent` |
 
@@ -440,8 +442,8 @@ Reintento HTTP del mismo voto (no es concepto de dominio): `POST /votes` exige h
 ### 7.2 UC5 → UC6 → UC8
 
 ```
-@OnEvent(VoteCastEvent.eventName) -> markQueued -> Relay.acceptSigned (R5) -> markSent(txHash)
-Relay outcome -> markConfirmed (factura al tally) | markFailed (+retry misma identidad)
+@OnEvent(VoteCastEvent.eventName) -> markVoteQueued -> Relay.acceptSigned (R5) -> markVoteSent
+Relay outcome -> markVoteConfirmed (factura al tally) | markVoteFailed (+retry misma identidad)
 @OnEvent(ProposalClosedEvent.eventName) -> tally solo CONFIRMED vs snapshot -> ProposalTalliedEvent + QuorumReachedEvent/QuorumNotReachedEvent
 ```
 

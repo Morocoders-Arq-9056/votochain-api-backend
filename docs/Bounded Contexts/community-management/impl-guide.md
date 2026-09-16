@@ -203,25 +203,27 @@ export class Community extends AggregateRoot implements CommunityStandable {
 
 ### 2.7 Domain Services (ports)
 
+> **Regla de nombrado (skill ddd-guideliness v1.0.11):** un método por comando/query, `methodName = lowerCamel(ClassName sin sufijo Command|Query)`, que recibe el objeto comando/query — nunca primitivas sueltas ni `handle` sobrecargado.
+
 ```typescript
 export const COMMUNITY_COMMAND_SERVICE = Symbol('COMMUNITY_COMMAND_SERVICE');
 export interface CommunityCommandService {
-  register(c: RegisterCommunityCommand): Promise<CommunityId>;
-  activate(c: ActivateCommunityCommand): Promise<void>;
-  updateSettings(c: UpdateCommunitySettingsCommand): Promise<void>;
-  definePolicy(c: DefineVotingPolicyCommand): Promise<void>;
-  appointAdmin(c: AppointCommunityAdminCommand): Promise<void>;
-  removeAdmin(c: RemoveCommunityAdminCommand): Promise<void>;
-  suspend(c: SuspendCommunityCommand): Promise<void>;
-  reactivate(c: ReactivateCommunityCommand): Promise<void>;
-  archive(c: ArchiveCommunityCommand): Promise<void>;
+  registerCommunity(c: RegisterCommunityCommand): Promise<CommunityId>;
+  activateCommunity(c: ActivateCommunityCommand): Promise<void>;
+  updateCommunitySettings(c: UpdateCommunitySettingsCommand): Promise<void>;
+  defineVotingPolicy(c: DefineVotingPolicyCommand): Promise<void>;
+  appointCommunityAdmin(c: AppointCommunityAdminCommand): Promise<void>;
+  removeCommunityAdmin(c: RemoveCommunityAdminCommand): Promise<void>;
+  suspendCommunity(c: SuspendCommunityCommand): Promise<void>;
+  reactivateCommunity(c: ReactivateCommunityCommand): Promise<void>;
+  archiveCommunity(c: ArchiveCommunityCommand): Promise<void>;
 }
 export const COMMUNITY_QUERY_SERVICE = Symbol('COMMUNITY_QUERY_SERVICE');
 export interface CommunityQueryService {
-  getById(q: GetCommunityByIdQuery): Promise<Community | null>;
-  getPolicy(q: GetVotingPolicyByCommunityQuery): Promise<VotingPolicy>; // throws PolicyUndefinedError when none defined
-  getStanding(q: GetStandingByCommunityQuery): Promise<StandingAnswer>;
-  getAdmins(q: GetAdministratorsByCommunityQuery): Promise<CommunityAdmin[]>;
+  getCommunityById(q: GetCommunityByIdQuery): Promise<Community | null>;
+  getVotingPolicyByCommunity(q: GetVotingPolicyByCommunityQuery): Promise<VotingPolicy>; // throws PolicyUndefinedError when none defined
+  getStandingByCommunity(q: GetStandingByCommunityQuery): Promise<StandingAnswer>;
+  getAdministratorsByCommunity(q: GetAdministratorsByCommunityQuery): Promise<CommunityAdmin[]>;
 }
 export const COMMUNITY_REPOSITORY = Symbol('COMMUNITY_REPOSITORY');
 export interface CommunityRepository {
@@ -248,7 +250,7 @@ export class CommunityCommandServiceImpl implements CommunityCommandService {
     private readonly events: EventEmitter2,
   ) {}
 
-  async definePolicy(command: DefineVotingPolicyCommand): Promise<void> {
+  async defineVotingPolicy(command: DefineVotingPolicyCommand): Promise<void> {
     const community = await this.uow.run(async () => {
       const c = await this.communities.findById(command.communityId);
       if (!c) throw new CommunityNotFoundError('not found');
@@ -265,7 +267,7 @@ Racing definitions serialize into a supersede-chain: later wins as current, earl
 
 ### 3.2 Query Services
 
-Read-only: `getById`, `getPolicy` (throws `PolicyUndefinedError` when none defined), `getStanding` (derives acceptance), `getAdmins`.
+Read-only: `getCommunityById`, `getVotingPolicyByCommunity` (throws `PolicyUndefinedError` when none defined), `getStandingByCommunity` (derives acceptance), `getAdministratorsByCommunity`.
 
 ### 3.3 Outbound (ACL consumer)
 
@@ -387,7 +389,7 @@ CREATE INDEX idx_communities_standing ON community.communities (standing);
 ```
 POST /api/v1/communities { name, domicile, contact, adminPersonId }
  -> RegisterCommandFromResourceAssembler.toCommand()
- -> CommunityCommandServiceImpl.register() inside UNIT_OF_WORK.run()
+ -> CommunityCommandServiceImpl.registerCommunity() inside UNIT_OF_WORK.run()
      -> findByName? else CommunityAlreadyExistsError
      -> Community.register({ settings, admin }) -> CommunityRegisteredEvent
      -> communities.save()
@@ -398,7 +400,7 @@ POST /api/v1/communities { name, domicile, contact, adminPersonId }
 
 ```
 PUT /api/v1/communities/:id/policy { threshold, basis, majorityRule }
- -> DefineVotingPolicyCommand -> definePolicy() inside UNIT_OF_WORK.run()
+ -> DefineVotingPolicyCommand -> defineVotingPolicy() inside UNIT_OF_WORK.run()
      -> not ARCHIVED? coherent threshold+basis? else rejection
      -> community.definePolicy(next) -> VotingPolicyDefinedEvent(supersedes)
      -> communities.save()

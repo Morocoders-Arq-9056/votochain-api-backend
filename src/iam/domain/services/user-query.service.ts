@@ -2,8 +2,7 @@ import { GetAccessStandingByPersonQuery } from "../model/queries/get-access-stan
 import { GetUserByIdQuery } from "../model/queries/get-user-by-id.query.js";
 import { User } from "../model/aggregates/user.aggregate.js"
 import { GetSystemRolesByPersonQuery } from "../model/queries/get-system-roles-by-person.query.js";
-import { SystemRole } from "../model/valueobjects/system-role.value-object.js";
-
+import { SystemRoleAssignment } from "../model/entities/system-role-assignment.entity.js";
 
 /**
  * Interface for the user query service.
@@ -30,8 +29,8 @@ export interface UserQueryService {
   /**
    * Handles the retrieval of system roles associated with a person.
    * @param query the query containing the person identifier.
-   * @returns a promise that resolves to an array of SystemRole objects.
+   * @returns a promise that resolves to an array of SystemRoleAssignment objects.
    */
-  handle(query: GetSystemRolesByPersonQuery): Promise<SystemRole[]>;
+  handle(query: GetSystemRolesByPersonQuery): Promise<SystemRoleAssignment[]>;
 }
 export const USER_QUERY_SERVICE = Symbol('USER_QUERY_SERVICE');

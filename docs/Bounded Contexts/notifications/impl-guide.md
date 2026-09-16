@@ -170,7 +170,25 @@ Exceptions: `DuplicateIntentError`, `ContactNotAllowedError`, `TemplateUnknownEr
 
 ## 3. Application Layer
 
-Ports in `domain/services/` (`NOTIFICATION_COMMAND_SERVICE`, `NOTIFICATION_QUERY_SERVICE`) with distinct method names per query.
+Ports in `domain/services/` (`NOTIFICATION_COMMAND_SERVICE`, `NOTIFICATION_QUERY_SERVICE`).
+
+> **Regla de nombrado (skill ddd-guideliness v1.0.11):** un método por comando/query, `methodName = lowerCamel(ClassName sin sufijo Command|Query)`, que recibe el objeto comando/query — nunca primitivas sueltas ni `handle` sobrecargado.
+
+```typescript
+export const NOTIFICATION_COMMAND_SERVICE = Symbol('NOTIFICATION_COMMAND_SERVICE');
+export interface NotificationDispatchCommandService {
+  requestNotificationDelivery(cmd: RequestNotificationDeliveryCommand): Promise<DispatchId>;
+  confirmNotificationDelivery(cmd: ConfirmNotificationDeliveryCommand): Promise<void>;
+  recordNotificationDeliveryFailure(cmd: RecordNotificationDeliveryFailureCommand): Promise<void>;
+  retryNotificationDelivery(cmd: RetryNotificationDeliveryCommand): Promise<void>;
+}
+export const NOTIFICATION_QUERY_SERVICE = Symbol('NOTIFICATION_QUERY_SERVICE');
+export interface NotificationDispatchQueryService {
+  getDeliveryStandingByDispatch(q: GetDeliveryStandingByDispatchQuery): Promise<DeliveryStandingAnswer | null>;
+  getDeliveryStandingByKey(q: GetDeliveryStandingByKeyQuery): Promise<DeliveryStandingAnswer | null>;
+  getDeliveryHistory(q: GetDeliveryHistoryQuery): Promise<DeliveryHistoryAnswer>;
+}
+```
 
 ```typescript
 @Injectable()
@@ -183,7 +201,7 @@ export class NotificationDispatchCommandServiceImpl implements NotificationDispa
     private readonly consent: ExternalConsentService,
     private readonly events: EventEmitter2,
   ) {}
-  async handleRequest(cmd: RequestNotificationDeliveryCommand): Promise<DispatchId> {
+  async requestNotificationDelivery(cmd: RequestNotificationDeliveryCommand): Promise<DispatchId> {
     const seen = await this.dispatches.findByKey(cmd.key);
     if (seen) {
       const refused = await this.uow.run(async () => {
@@ -286,8 +304,8 @@ export class NotificationDispatchController {
   ) {}
   @Post() async request(@Body() r: RequestDeliveryResource): Promise<DeliveryStandingResource> {
     const cmd = RequestNotificationDeliveryCommandFromResourceAssembler.toCommand(r);
-    const id = await this.commands.handleRequest(cmd);
-    const standing = await this.queries.getStandingByDispatch(new GetDeliveryStandingByDispatchQuery(id));
+    const id = await this.commands.requestNotificationDelivery(cmd);
+    const standing = await this.queries.getDeliveryStandingByDispatch(new GetDeliveryStandingByDispatchQuery(id));
     if (!standing) throw new NotFoundException();
     return DeliveryStandingResourceFromEntityAssembler.toResource(standing);
   }
@@ -351,7 +369,7 @@ CREATE INDEX ix_dispatches_standing ON notifications.dispatches (standing);
 
 ```
 POST /dispatches -> RequestNotificationDeliveryCommandFromResourceAssembler.toCommand()
- -> handleRequest(): findByKey() (duplicate -> refuse DUPLICATE, 409)
+ -> requestNotificationDelivery(): findByKey() (duplicate -> refuse DUPLICATE, 409)
      -> templates.resolve() (unknown -> 422) + DeliveryAddress.of() (malformed -> 400)
     -> ExternalConsentService.mayContactNow() (refused -> persist REFUSED, 403, still history)
     -> [UoW] requestDelivery() -> save() -> commit -> emit(DeliveryRequestedEvent)

@@ -185,13 +185,30 @@ export class SendingAttempt {
 
 ## 3. Application Layer
 
+> **Regla de nombrado (skill ddd-guideliness v1.0.11):** un método por comando/query, `methodName = lowerCamel(ClassName sin sufijo Command|Query)`, que recibe el objeto comando/query — nunca primitivas sueltas ni `handle` sobrecargado.
+
+```typescript
+export const DELIVERY_COMMAND_SERVICE = Symbol('DELIVERY_COMMAND_SERVICE');
+export interface DeliveryCommandService {
+  acceptDeliveryOrder(cmd: AcceptDeliveryOrderCommand): Promise<DeliveryOrderId>;
+  deliverOrder(cmd: DeliverOrderCommand): Promise<void>; // UC2: order -> send -> observe -> confirm | fail -> retry | abandon
+  recordDeliveryOrderLedgerOutcome(cmd: RecordDeliveryOrderLedgerOutcomeCommand): Promise<void>;
+}
+export const DELIVERY_QUERY_SERVICE = Symbol('DELIVERY_QUERY_SERVICE');
+export interface DeliveryQueryService {
+  getDeliveryOrderStandingById(q: GetDeliveryOrderStandingByIdQuery): Promise<{ standing: DeliveryStanding; reason: string | null }>;
+  getDeliverySendingOrderByPayer(q: GetDeliverySendingOrderByPayerQuery): Promise<DeliveryOrder | null>;
+  getDeliveryAttemptHistoryByOrder(q: GetDeliveryAttemptHistoryByOrderQuery): Promise<SendingAttempt[]>;
+}
+```
+
 ### 3.1 Command Service — ancla UC2 DeliverOrder
 
 ```typescript
 @Injectable()
 export class DeliveryCommandServiceImpl implements DeliveryCommandService {
   constructor(@Inject(DELIVERY_ORDER_REPOSITORY) private readonly orders: DeliveryOrderRepository, @Inject(LEDGER_GATEWAY) private readonly ledger: LedgerGatewayService, @Inject(DELIVERY_QUEUE) private readonly queue: DeliveryQueueService, @Inject(RETRY_POLICY) private readonly retries: RetryPolicy, @Inject(FEE_POLICY) private readonly fees: FeePolicy, @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork, private readonly events: EventEmitter2) {}
-  async accept(cmd: AcceptDeliveryOrderCommand): Promise<DeliveryOrderId> {
+  async acceptDeliveryOrder(cmd: AcceptDeliveryOrderCommand): Promise<DeliveryOrderId> {
     const order = await this.uow.run(async () => {
       const open = await this.orders.findOpenByContent(cmd.contentRef);
       if (open) return open; // idempotente por contentRef abierto (uq_orders_open_content)
@@ -204,7 +221,8 @@ export class DeliveryCommandServiceImpl implements DeliveryCommandService {
     await this.queue.enqueue(order.id.value);
     return order.id;
   }
-  async deliver(orderId: DeliveryOrderId): Promise<void> { // UC2: order -> send -> observe -> confirm | fail -> retry | abandon
+  async deliverOrder(cmd: DeliverOrderCommand): Promise<void> { // UC2: order -> send -> observe -> confirm | fail -> retry | abandon
+    const orderId = cmd.orderId;
     const ordered = await this.uow.run(async () => {
       const o = (await this.orders.findById(orderId)) ?? (() => { throw new OrderNotFoundError(); })();
       o.order(); await this.orders.save(o); return o;
@@ -216,9 +234,12 @@ export class DeliveryCommandServiceImpl implements DeliveryCommandService {
     });
     this.publish(sent);
     const outcome = await this.ledger.submit(sent.id.value); // fuera de la tx
+    await this.recordDeliveryOrderLedgerOutcome(new RecordDeliveryOrderLedgerOutcomeCommand(orderId, outcome.confirmed, outcome.reason ?? null, outcome.retryable));
+  }
+  async recordDeliveryOrderLedgerOutcome(cmd: RecordDeliveryOrderLedgerOutcomeCommand): Promise<void> {
     const closed = await this.uow.run(async () => {
-      const o = (await this.orders.findById(orderId))!;
-      o.observeOutcome(outcome.confirmed, outcome.reason ? FailureReason.of(outcome.reason) : null, outcome.retryable, this.retries, this.fees);
+      const o = (await this.orders.findById(cmd.orderId))!;
+      o.observeOutcome(cmd.confirmed, cmd.reason ? FailureReason.of(cmd.reason) : null, cmd.retryable, this.retries, this.fees);
       await this.orders.save(o); return o;
     });
     this.publish(closed); // el handler interno avisa a Voting (R5)
@@ -233,7 +254,7 @@ Confirmacion y reintento en carrera se resuelven por standing: si `recordConfirm
 
 ### 3.2 Queries, ports y handlers
 
-`GetDeliveryOrderStandingByIdQuery` → `answerDeliveryStanding()`; `GetDeliverySendingOrderByPayerQuery` (por que espera una orden tardia); `GetDeliveryAttemptHistoryByOrderQuery` (scrutiny). Ports: `LedgerGatewayService.submit()` → `{ confirmed, reason, retryable }`; `DeliveryQueueService.enqueue()`. `DeliveryConfirmedEventHandler` (`delivery-confirmed.event-handler.ts`) + `DeliveryFailedEventHandler` (`delivery-failed.event-handler.ts`) + `DeliveryAbandonedEventHandler` (`delivery-abandoned.event-handler.ts`): `@OnEvent(DeliveryConfirmedEvent.eventName / DeliveryFailedEvent.eventName / DeliveryAbandonedEvent.eventName, { async: true })` en este modulo → `ExternalVotingService.notifyConfirmed/Failed/Abandoned()` (R5, ACL en proceso, con `try/catch` + log; fallo de aviso no revierte la orden). Ningun `@OnEvent` vive en otro modulo.
+`getDeliveryOrderStandingById(GetDeliveryOrderStandingByIdQuery)` → `answerDeliveryStanding()`; `getDeliverySendingOrderByPayer(GetDeliverySendingOrderByPayerQuery)` (por que espera una orden tardia); `getDeliveryAttemptHistoryByOrder(GetDeliveryAttemptHistoryByOrderQuery)` (scrutiny). Ports: `LedgerGatewayService.submit()` → `{ confirmed, reason, retryable }`; `DeliveryQueueService.enqueue()`. `DeliveryConfirmedEventHandler` (`delivery-confirmed.event-handler.ts`) + `DeliveryFailedEventHandler` (`delivery-failed.event-handler.ts`) + `DeliveryAbandonedEventHandler` (`delivery-abandoned.event-handler.ts`): `@OnEvent(DeliveryConfirmedEvent.eventName / DeliveryFailedEvent.eventName / DeliveryAbandonedEvent.eventName, { async: true })` en este modulo → `ExternalVotingService.notifyConfirmed/Failed/Abandoned()` (R5, ACL en proceso, con `try/catch` + log; fallo de aviso no revierte la orden). Ningun `@OnEvent` vive en otro modulo.
 
 ---
 

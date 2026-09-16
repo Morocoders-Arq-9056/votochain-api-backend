@@ -158,13 +158,16 @@ export class VerificationAttempt extends AggregateRoot {
 ```typescript
 export class EnrollBiometricCommand { constructor(public readonly personId: PersonId) {} }
 export class StartLivenessChallengeCommand { constructor(public readonly personId: PersonId) {} }
+export class CompleteLivenessCommand { constructor(public readonly attemptId: VerificationAttemptId, public readonly present: boolean) {} }
+export class RequestComparisonCommand { constructor(public readonly attemptId: VerificationAttemptId) {} }
+export class RecordVerdictCommand { constructor(public readonly attemptId: VerificationAttemptId, public readonly now: Date) {} }
 export class RevokeBiometricProfileCommand { constructor(public readonly profileId: BiometricProfileId) {} }
 export class GetVerificationStandingByPersonQuery { constructor(public readonly personId: PersonId, public readonly now: Date) {} }
 export class GetReferenceStandingByPersonQuery { constructor(public readonly personId: PersonId) {} }
 export class GetAttemptHistoryByPersonQuery { constructor(public readonly personId: PersonId) {} }
 ```
 
-Pasos intermedios UC2 (liveness outcome, comparación, veredicto) se observan dentro del journey, no son comandos externos. Excepciones puras: `ReferenceAlreadyExistsError`, `ReferenceRequiredError`, `ConsentRequiredError`, `LivenessRequiredError`, `AttemptConcludedError`, `ReferenceEndedError`.
+Pasos intermedios UC2 viajan como comandos de primera clase (`CompleteLivenessCommand`, `RequestComparisonCommand`, `RecordVerdictCommand`) para cumplir la regla v1.0.11 (un método por comando con su objeto). Excepciones puras: `ReferenceAlreadyExistsError`, `ReferenceRequiredError`, `ConsentRequiredError`, `LivenessRequiredError`, `AttemptConcludedError`, `ReferenceEndedError`.
 
 ### 2.5 Eventos (9)
 
@@ -175,18 +178,19 @@ Pasos intermedios UC2 (liveness outcome, comparación, veredicto) se observan de
 ```typescript
 export const BIOMETRIC_COMMAND_SERVICE = Symbol('BIOMETRIC_COMMAND_SERVICE');
 export interface BiometricCommandService {
-  enroll(cmd: EnrollBiometricCommand): Promise<BiometricProfileId>;
-  startChallenge(cmd: StartLivenessChallengeCommand): Promise<VerificationAttemptId>;
-  completeLiveness(attemptId: VerificationAttemptId, present: boolean): Promise<void>;
-  requestComparison(attemptId: VerificationAttemptId): Promise<void>;
-  recordVerdict(attemptId: VerificationAttemptId, now: Date): Promise<void>;
-  revokeProfile(cmd: RevokeBiometricProfileCommand): Promise<void>;
+  // Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query)
+  enrollBiometric(cmd: EnrollBiometricCommand): Promise<BiometricProfileId>;
+  startLivenessChallenge(cmd: StartLivenessChallengeCommand): Promise<VerificationAttemptId>;
+  completeLiveness(cmd: CompleteLivenessCommand): Promise<void>;
+  requestComparison(cmd: RequestComparisonCommand): Promise<void>;
+  recordVerdict(cmd: RecordVerdictCommand): Promise<void>;
+  revokeBiometricProfile(cmd: RevokeBiometricProfileCommand): Promise<void>;
 }
 export const BIOMETRIC_QUERY_SERVICE = Symbol('BIOMETRIC_QUERY_SERVICE');
 export interface BiometricQueryService {
-  getVerificationStanding(q: GetVerificationStandingByPersonQuery): Promise<{ verifiedNow: boolean; reason: string | null }>;
-  getReferenceStanding(q: GetReferenceStandingByPersonQuery): Promise<{ live: boolean }>;
-  getAttemptHistory(q: GetAttemptHistoryByPersonQuery): Promise<VerificationAttempt[]>;
+  getVerificationStandingByPerson(q: GetVerificationStandingByPersonQuery): Promise<{ verifiedNow: boolean; reason: string | null }>;
+  getReferenceStandingByPerson(q: GetReferenceStandingByPersonQuery): Promise<{ live: boolean }>;
+  getAttemptHistoryByPerson(q: GetAttemptHistoryByPersonQuery): Promise<VerificationAttempt[]>;
 }
 ```
 
@@ -208,7 +212,7 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     @Inject(CONSENT_PORT) private readonly consent: ExternalConsentService,
     @Inject(OCR_PORT) private readonly ocr: ExternalOcrService,
     @Inject(MATCHING_PORT) private readonly matching: FaceMatchingService) {}
-  async enroll(cmd: EnrollBiometricCommand): Promise<BiometricProfileId> {
+  async enrollBiometric(cmd: EnrollBiometricCommand): Promise<BiometricProfileId> {
     if (!(await this.consent.biometricConsentStands(cmd.personId.value))) throw new ConsentRequiredError('consent required');
     if (!(await this.ocr.consumeUsableMatch(cmd.personId.value))) throw new ReferenceRequiredError('single-use MATCH required'); // R7
     const p = await this.uow.run(async () => {
@@ -218,7 +222,7 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     });
     this.publish(p); return p.id;
   }
-  async startChallenge(cmd: StartLivenessChallengeCommand): Promise<VerificationAttemptId> { // anchor UC2
+  async startLivenessChallenge(cmd: StartLivenessChallengeCommand): Promise<VerificationAttemptId> { // anchor UC2
     if (!(await this.consent.biometricConsentStands(cmd.personId.value))) throw new ConsentRequiredError('consent required');
     const personId = cmd.personId;
     const attempt = await this.uow.run(async () => {
@@ -229,32 +233,32 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     });
     this.publish(attempt); return attempt.id;
   }
-  async completeLiveness(id: VerificationAttemptId, present: boolean): Promise<void> {
+  async completeLiveness(cmd: CompleteLivenessCommand): Promise<void> {
     const a = await this.uow.run(async () => {
-      const x = await this.attempts.findByIdOrThrow(id); x.completeLiveness(present);
+      const x = await this.attempts.findByIdOrThrow(cmd.attemptId); x.completeLiveness(cmd.present);
       await this.attempts.save(x); return x;
     });
     this.publish(a);
   }
-  async requestComparison(id: VerificationAttemptId): Promise<void> {
+  async requestComparison(cmd: RequestComparisonCommand): Promise<void> {
     const a = await this.uow.run(async () => {
-      const x = await this.attempts.findByIdOrThrow(id);
+      const x = await this.attempts.findByIdOrThrow(cmd.attemptId);
       const ref = await this.profiles.findById(x.profileId);
       x.requestComparison(ref?.standing === ProfileStanding.ENROLLED);
       await this.attempts.save(x); return x;
     });
     this.publish(a);
   }
-  async recordVerdict(id: VerificationAttemptId, now: Date): Promise<void> {
+  async recordVerdict(cmd: RecordVerdictCommand): Promise<void> {
     const a = await this.uow.run(async () => {
-      const x = await this.attempts.findByIdOrThrow(id);
+      const x = await this.attempts.findByIdOrThrow(cmd.attemptId);
       const match = await this.matching.judgesMatch(x.id.value); // umbral propio del BC
-      x.recordVerdict(match, now); await this.attempts.save(x); return x;
+      x.recordVerdict(match, cmd.now); await this.attempts.save(x); return x;
     });
     this.publish(a);
   }
   private publish(a: AggregateRoot): void { for (const ev of a.pullDomainEvents()) this.emitter.emit(ev.eventName, ev); }
-  async revokeProfile(cmd: RevokeBiometricProfileCommand): Promise<void> { // UC5 erasure
+  async revokeBiometricProfile(cmd: RevokeBiometricProfileCommand): Promise<void> { // UC5 erasure
     const { profile, expired } = await this.uow.run(async () => {
       const p = (await this.profiles.findById(cmd.profileId)) ?? (() => { throw new ReferenceRequiredError('no profile'); })();
       p.revoke();

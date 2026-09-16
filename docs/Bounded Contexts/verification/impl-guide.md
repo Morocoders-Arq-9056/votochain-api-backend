@@ -182,14 +182,15 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 ```typescript
 export const VERIFICATION_COMMAND_SERVICE = Symbol('VERIFICATION_COMMAND_SERVICE');
 export interface VerificationCommandService {
-  requestChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId>;
-  answerChallenge(c: AnswerVerificationChallengeCommand): Promise<void>;
-  expireChallenge(c: ExpireVerificationChallengeCommand): Promise<void>;
+  // Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query)
+  requestVerificationChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId>;
+  answerVerificationChallenge(c: AnswerVerificationChallengeCommand): Promise<void>;
+  expireVerificationChallenge(c: ExpireVerificationChallengeCommand): Promise<void>;
 }
 export const VERIFICATION_QUERY_SERVICE = Symbol('VERIFICATION_QUERY_SERVICE');
 export interface VerificationQueryService {
-  getStanding(q: GetChallengeStandingByPersonAndPurposeQuery): Promise<{ usable: boolean; remaining: number }>;
-  getHistory(q: GetChallengeHistoryByPersonAndPurposeQuery): Promise<VerificationChallenge[]>;
+  getChallengeStandingByPersonAndPurpose(q: GetChallengeStandingByPersonAndPurposeQuery): Promise<{ usable: boolean; remaining: number }>;
+  getChallengeHistoryByPersonAndPurpose(q: GetChallengeHistoryByPersonAndPurposeQuery): Promise<VerificationChallenge[]>;
 }
 ```
 
@@ -207,7 +208,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     private readonly consent: ExternalConsentService,   // gate may-contact
     private readonly iam: ExternalIamService,           // existencia + markVerified (R9)
   ) {}
-  async requestChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId> {
+  async requestVerificationChallenge(c: RequestVerificationChallengeCommand): Promise<ChallengeId> {
     let plain: string; // vive solo en este método; jamás persiste ni viaja en eventos
     const created = await this.uow.run(async () => {
       if (!(await this.iam.personExists(c.personId.value))) throw new NoUsableChallengeError('persona desconocida');
@@ -225,7 +226,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     } catch (err) { this.logger.warn(`notify falló para ${created!.id.value}: ${String(err)}`); }
     return created!.id;
   }
-  async answerChallenge(c: AnswerVerificationChallengeCommand): Promise<void> {
+  async answerVerificationChallenge(c: AnswerVerificationChallengeCommand): Promise<void> {
     const ch = await this.uow.run(async () => {
       const found = await this.repo.findById(c.challengeId);
       if (!found) throw new NoUsableChallengeError('sin challenge usable');

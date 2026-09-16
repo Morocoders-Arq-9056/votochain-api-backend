@@ -215,22 +215,23 @@ export class MembershipId { private constructor(public readonly value: string) {
 
 ```typescript
 export const MEMBERSHIP_COMMAND_SERVICE = Symbol('MEMBERSHIP_COMMAND_SERVICE');
+// Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query)
 export interface MembershipCommandService {
-  register(c: RegisterMembershipCommand): Promise<MembershipId>;
-  activate(c: ActivateMembershipCommand): Promise<void>;
+  registerMembership(c: RegisterMembershipCommand): Promise<MembershipId>;
+  activateMembership(c: ActivateMembershipCommand): Promise<void>;
   assignUnit(c: AssignUnitCommand): Promise<void>;
-  assignRole(c: AssignCommunityRoleCommand): Promise<void>;
+  assignCommunityRole(c: AssignCommunityRoleCommand): Promise<void>;
   markDelinquent(c: MarkDelinquentCommand): Promise<void>;
   clearDelinquency(c: ClearDelinquencyCommand): Promise<void>;
-  suspend(c: SuspendMembershipCommand): Promise<void>;
-  reinstate(c: ReinstateMembershipCommand): Promise<void>;
-  terminate(c: TerminateMembershipCommand): Promise<void>;
-  judge(c: JudgeEligibilityCommand): Promise<EligibilitySnapshot>;
+  suspendMembership(c: SuspendMembershipCommand): Promise<void>;
+  reinstateMembership(c: ReinstateMembershipCommand): Promise<void>;
+  terminateMembership(c: TerminateMembershipCommand): Promise<void>;
+  judgeEligibility(c: JudgeEligibilityCommand): Promise<EligibilitySnapshot>;
 }
 export const MEMBERSHIP_QUERY_SERVICE = Symbol('MEMBERSHIP_QUERY_SERVICE');
 export interface MembershipQueryService {
-  getById(q: GetMembershipByIdQuery): Promise<Membership | null>;
-  getByPersonAndCommunity(q: GetMembershipByPersonAndCommunityQuery): Promise<Membership | null>;
+  getMembershipById(q: GetMembershipByIdQuery): Promise<Membership | null>;
+  getMembershipByPersonAndCommunity(q: GetMembershipByPersonAndCommunityQuery): Promise<Membership | null>;
   getRosterByCommunity(q: GetRosterByCommunityQuery): Promise<Membership[]>;
   getMembershipsByPerson(q: GetMembershipsByPersonQuery): Promise<Membership[]>;
 }
@@ -249,7 +250,7 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
     private readonly communities: ExternalCommunityService,  // ACL → COMMUNITY_CONTEXT_FACADE
     @Inject(ELIGIBILITY_POLICY) private readonly policy: EligibilityPolicyService, // Strategy §4
   ) {}
-  async register(c: RegisterMembershipCommand): Promise<MembershipId> {
+  async registerMembership(c: RegisterMembershipCommand): Promise<MembershipId> {
     const m = await this.uow.run(async () => {
       if (!(await this.iam.personExists(c.personId.value))) throw new Error('persona desconocida');
       if (!(await this.communities.acceptsMembers(c.communityId.value))) throw new CommunityNotAcceptingMembersError('comunidad no acepta');
@@ -259,7 +260,7 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
     });
     this.publish(m); return m.id;   // run() resolvió ⇒ commit hecho
   }
-  async judge(c: JudgeEligibilityCommand): Promise<EligibilitySnapshot> {
+  async judgeEligibility(c: JudgeEligibilityCommand): Promise<EligibilitySnapshot> {
     // Contrato fantasma único: Membership.ghost() si no hay viva; save solo si found.
     let snap!: EligibilitySnapshot;
     const target = await this.uow.run(async () => {
@@ -275,7 +276,7 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
 }
 ```
 
-Nota: la unicidad "≤1 viva por par" se sostiene en dos niveles: chequeo `findLiveByPersonAndCommunity` + índice parcial en DDL (§6). `judge` nunca lanza `MembershipNotFound`: la ausencia es `NOT_ELIGIBLE/NOT_A_MEMBER`.
+Nota: la unicidad "≤1 viva por par" se sostiene en dos niveles: chequeo `findLiveByPersonAndCommunity` + índice parcial en DDL (§6). `judgeEligibility` nunca lanza `MembershipNotFound`: la ausencia es `NOT_ELIGIBLE/NOT_A_MEMBER`.
 
 ### 3.3 Query service
 
@@ -379,13 +380,13 @@ CREATE INDEX ix_roster ON membership.memberships (community_id, status) WHERE st
 ## 7. Flujos CQRS por Caso de Uso
 
 **UC1 Registrar:** `POST /memberships` → `RegisterMembershipCommand` → `ExternalIamService.personExists` + `ExternalCommunityService.acceptsMembers` → `findLiveByPersonAndCommunity` (409 si vive) → `Membership.register()` → `save` (UoW) → publicar `MembershipRegisteredEvent` tras commit → 201 + re-leer detalle.
-**UC2–UC9:** cargar por id (404) → método del agregado (rechazos §2.5) → `save` → publicar tras commit. `assignUnit/assignRole` no tocan el historial de standing (invariante 5).
+**UC2–UC9:** cargar por id (404) → método del agregado (rechazos §2.5) → `save` → publicar tras commit. `assignUnit/assignCommunityRole` no tocan el historial de standing (invariante 5).
 **UC10 Juzgar (ancla):** `POST /judge-eligibility(personId, communityId)` → `findLiveByPersonAndCommunity` → `judgeEligibility(policy)` (ausencia = fantasma `ghost()`, nunca 404; save solo si found) → publicar `EligibilityJudgedEvent` tras commit → **Voting** consume el hecho + pull `judgeEligibility()` para la puerta de autorización → responder `{ eligible, reason, snapshotRef }`. Juzgar dos veces seguidas produce dos snapshots (correcto: cada uno responde "¿elegible ahora?").
-**Standing → roster/aviso:** `MembershipActivatedEvent / MembershipSuspendedEvent` (+ mora/reintegro) se publican como eventos y los consumidores hacen pull del roster (`getRoster`, solo ACTIVE) o emiten aviso vía Notifications; el agregado nunca empuja el roster.
+**Standing → roster/aviso:** `MembershipActivatedEvent / MembershipSuspendedEvent` (+ mora/reintegro) se publican como eventos y los consumidores hacen pull del roster (`getRosterByCommunity`, solo ACTIVE) o emiten aviso vía Notifications; el agregado nunca empuja el roster.
 
 ## 8. Integración con otros BCs
 
-- **R2 → Voting (OHS + ACL):** `EligibilityJudgedEvent` + `getRoster` alimentan puerta de autorización y base de participación. Voting congela copia del snapshot; cambios posteriores no reescriben grants (H3).
+- **R2 → Voting (OHS + ACL):** `EligibilityJudgedEvent` + `getRosterByCommunity` alimentan puerta de autorización y base de participación. Voting congela copia del snapshot; cambios posteriores no reescriben grants (H3).
 - **R8 → Document OCR:** precondición de pertenencia; OCR rechaza con `NoEligibleMembership` cuando la persona no pertenece en ningún lado. OCR nunca juzga elegibilidad.
 - **R13 (avisos/standing):** `MemberMarkedDelinquentEvent`, `MembershipSuspendedEvent`, `MembershipReinstatedEvent`, … los consume Notifications vía su propio handler interno (pull del hecho + aviso); el roster se recalcula (solo ACTIVE). Ningún módulo externo se suscribe al bus de Membership.
 - Consumidas: IAM (existencia, UC1), Community (acepta/standing, UC1–UC2), libros (UC5–UC6, verdad observada), Consent (may-process + revocaciones, coordinación).

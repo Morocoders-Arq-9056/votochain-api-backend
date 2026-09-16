@@ -161,7 +161,7 @@ export class GetExaminationStandingByPersonAndDocumentQuery { constructor(public
 export class GetExaminationHistoryByPersonAndDocumentQuery { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) {} }
 ```
 
-UC2 `examineDocument` viaja en `ExamineDocumentExaminationCommand{examinationId}` de primera clase (la dispara el worker tras `request`, sin intención de usuario de por medio — el comando nombra el trabajo pendiente, no una intención humana): extracción/comparación/veredicto se observan del ejecutor y se aplican vía `record*` en orquestación app-side. `record*` observado preserva el límite: el dominio juzga el pipeline, nunca ejecuta vendors. Push único `ExaminationConcludedEvent(MATCH)` (wire `eventName='ExaminationConcluded'`) → Biometric consume single-use + pull de standing. Excepciones puras: `ExaminationAlreadyOpenError`, `NoOpenExaminationError`, `ExaminationConcludedError`, `NoEligibleMembershipError` (R8, 403), `ContactNotAllowedError` (consent gate, 403) (+ `Object.setPrototypeOf`).
+UC2 `examineDocumentExamination` viaja en `ExamineDocumentExaminationCommand{examinationId}` de primera clase (la dispara el worker tras `request`, sin intención de usuario de por medio — el comando nombra el trabajo pendiente, no una intención humana): extracción/comparación/veredicto se observan del ejecutor y se aplican vía `record*` en orquestación app-side. `record*` observado preserva el límite: el dominio juzga el pipeline, nunca ejecuta vendors. Push único `ExaminationConcludedEvent(MATCH)` (wire `eventName='ExaminationConcluded'`) → Biometric consume single-use + pull de standing. Excepciones puras: `ExaminationAlreadyOpenError`, `NoOpenExaminationError`, `ExaminationConcludedError`, `NoEligibleMembershipError` (R8, 403), `ContactNotAllowedError` (consent gate, 403) (+ `Object.setPrototypeOf`).
 
 ### 2.6 Eventos (7)
 
@@ -179,15 +179,16 @@ export class ExaminationConcludedEvent implements DomainEvent {
 ```typescript
 export const EXAMINATION_COMMAND_SERVICE = Symbol('EXAMINATION_COMMAND_SERVICE');
 export interface ExaminationCommandService {
-  requestExamination(c: RequestDocumentExaminationCommand): Promise<ExaminationId>;
-  requestReexamination(c: RequestDocumentReexaminationCommand): Promise<ExaminationId>;
-  examineDocument(c: ExamineDocumentExaminationCommand): Promise<void>; // UC2 anchor
-  expireExamination(c: ExpireDocumentExaminationCommand): Promise<void>;
+  // Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query)
+  requestDocumentExamination(c: RequestDocumentExaminationCommand): Promise<ExaminationId>;
+  requestDocumentReexamination(c: RequestDocumentReexaminationCommand): Promise<ExaminationId>;
+  examineDocumentExamination(c: ExamineDocumentExaminationCommand): Promise<void>; // UC2 anchor
+  expireDocumentExamination(c: ExpireDocumentExaminationCommand): Promise<void>;
 }
 export const EXAMINATION_QUERY_SERVICE = Symbol('EXAMINATION_QUERY_SERVICE');
 export interface ExaminationQueryService {
-  getStanding(q: GetExaminationStandingByPersonAndDocumentQuery): Promise<{ usableMatch: boolean }>;
-  getHistory(q: GetExaminationHistoryByPersonAndDocumentQuery): Promise<DocumentExamination[]>;
+  getExaminationStandingByPersonAndDocument(q: GetExaminationStandingByPersonAndDocumentQuery): Promise<{ usableMatch: boolean }>;
+  getExaminationHistoryByPersonAndDocument(q: GetExaminationHistoryByPersonAndDocumentQuery): Promise<DocumentExamination[]>;
 }
 ```
 
@@ -211,7 +212,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     @Inject(MEMBERSHIP_PORT) private readonly membership: ExternalMembershipService,
     @Inject(CONSENT_PORT) private readonly consent: ExternalConsentService,
     @Inject(EXECUTOR_PORT) private readonly executor: DocumentExecutorService) {}
-  async requestExamination(cmd: RequestDocumentExaminationCommand): Promise<ExaminationId> {
+  async requestDocumentExamination(cmd: RequestDocumentExaminationCommand): Promise<ExaminationId> {
     if (!(await this.membership.belongsToAnyCommunity(cmd.personId.value))) throw new NoEligibleMembershipError('person belongs nowhere');
     if (!(await this.consent.mayProcessNow(cmd.personId.value))) throw new ContactNotAllowedError('processing not allowed now');
     const open = await this.exams.findOpenByPersonAndDocument(cmd.personId, cmd.documentRef);
@@ -228,7 +229,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     });
     this.publish(e); return e.id;
   }
-  async examineDocument(cmd: ExamineDocumentExaminationCommand): Promise<void> { // UC2 anchor
+  async examineDocumentExamination(cmd: ExamineDocumentExaminationCommand): Promise<void> { // UC2 anchor
     const id = cmd.examinationId;
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(id);
@@ -239,7 +240,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     });
     this.publish(e);
   }
-  async requestReexamination(cmd: RequestDocumentReexaminationCommand): Promise<ExaminationId> {
+  async requestDocumentReexamination(cmd: RequestDocumentReexaminationCommand): Promise<ExaminationId> {
     const created = await this.uow.run(async () => {
       const prior = await this.exams.findByIdOrThrow(cmd.priorExaminationId); // el reexamen vincula al previo, nunca lo transiciona
       const x = prior.requestReexamination(ExaminationId.generate(), ValidityWindow.now(30));
@@ -247,7 +248,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     });
     this.publish(created); return created.id;
   }
-  async expireExamination(cmd: ExpireDocumentExaminationCommand): Promise<void> {
+  async expireDocumentExamination(cmd: ExpireDocumentExaminationCommand): Promise<void> {
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(cmd.examinationId);
       x.expire(cmd.now);
@@ -261,7 +262,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
 
 ### 3.2 Query services
 
-`getStanding` → `findOpen/findLatestConcluded` → `answerStanding()`; `getHistory` → `findAllByPersonAndDocument` ordenado. Solo lectura, sin mutación ni eventos.
+`getExaminationStandingByPersonAndDocument` → `findOpen/findLatestConcluded` → `answerStanding()`; `getExaminationHistoryByPersonAndDocument` → `findAllByPersonAndDocument` ordenado. Solo lectura, sin mutación ni eventos.
 
 ### 3.3 Puertos de salida
 

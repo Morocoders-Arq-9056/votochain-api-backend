@@ -169,16 +169,17 @@ export class UserWallet extends AggregateRoot {
 ```typescript
 export const WALLET_COMMAND_SERVICE = Symbol('WALLET_COMMAND_SERVICE');
 export interface WalletCommandService {
-  provision(cmd: ProvisionWalletCommand): Promise<UserWalletId>;
-  signContent(cmd: SignVoteContentCommand): Promise<string>;
-  rotate(cmd: RotateWalletCommand): Promise<void>;
-  suspend(cmd: SuspendWalletCommand): Promise<void>;
-  retire(cmd: RetireWalletCommand): Promise<void>;
+  // Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query)
+  provisionWallet(cmd: ProvisionWalletCommand): Promise<UserWalletId>;
+  signVoteContent(cmd: SignVoteContentCommand): Promise<string>;
+  rotateWallet(cmd: RotateWalletCommand): Promise<void>;
+  suspendWallet(cmd: SuspendWalletCommand): Promise<void>;
+  retireWallet(cmd: RetireWalletCommand): Promise<void>;
 }
 export const WALLET_QUERY_SERVICE = Symbol('WALLET_QUERY_SERVICE');
 export interface WalletQueryService {
-  getCapabilityByPerson(q: GetSigningCapabilityByPersonQuery): Promise<{ maySign: boolean; walletId: string; position: number }>;
-  getHistoryByWallet(q: GetAdminshipHistoryByWalletQuery): Promise<AdminshipEntry[]>;
+  getSigningCapabilityByPerson(q: GetSigningCapabilityByPersonQuery): Promise<{ maySign: boolean; walletId: string; position: number }>;
+  getAdminshipHistoryByWallet(q: GetAdminshipHistoryByWalletQuery): Promise<AdminshipEntry[]>;
 }
 export const WALLET_REPOSITORY = Symbol('WALLET_REPOSITORY');
 export interface WalletRepository {
@@ -202,7 +203,7 @@ export interface WalletRepository {
 @Injectable()
 export class WalletCommandServiceImpl implements WalletCommandService {
   constructor(@Inject(WALLET_REPOSITORY) private readonly wallets: WalletRepository, @Inject(KEY_CUSTODY_SERVICE) private readonly custody: KeyCustodyService, @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork, private readonly events: EventEmitter2) {}
-  async signContent(cmd: SignVoteContentCommand): Promise<string> {
+  async signVoteContent(cmd: SignVoteContentCommand): Promise<string> {
     const wallet = await this.uow.run(async () => {
       const w = (await this.wallets.findById(cmd.walletId)) ?? (() => { throw new CapabilityNotFoundError(cmd.walletId.value); })();
       w.reconstructForSigning(cmd.contentRef); // KeyReconstructedEvent
@@ -233,7 +234,7 @@ export class WalletCommandServiceImpl implements WalletCommandService {
 
 ### 3.2 Query Service — pull, no push
 
-`getCapabilityByPerson()` delega a `answerCapability()` del agregado (pull de solo lectura, sin hechos ni efectos). `getHistoryByWallet()` lee `wallet.events` vía `findEventsByWallet()` (el adapter anexa los eventos drenados en cada `save()`, mismo UoW — scrutiny sobre hechos persistidos, nunca reconstrucción en memoria).
+`getSigningCapabilityByPerson()` delega a `answerCapability()` del agregado (pull de solo lectura, sin hechos ni efectos). `getAdminshipHistoryByWallet()` lee `wallet.events` vía `findEventsByWallet()` (el adapter anexa los eventos drenados en cada `save()`, mismo UoW — scrutiny sobre hechos persistidos, nunca reconstrucción en memoria).
 
 ### 3.3 Ports de salida
 
@@ -341,7 +342,7 @@ CREATE INDEX idx_events_wallet ON wallet.events (wallet_id, seq);
 
 ```
 POST /api/v1/wallets/:id/sign { contentRef }
- -> SignVoteContentCommand -> signContent [uow.run #1: reconstructForSigning -> save]
+ -> SignVoteContentCommand -> signVoteContent [uow.run #1: reconstructForSigning -> save]
  -> KeyCustodyService.signTransient (memoria, fuera de la tx)
  -> [uow.run #2, finally: forget si sigue SIGNING_OPEN -> save]
  -> publish tras cada commit (emit tras run resuelto) -> 200 { signedContent }
@@ -349,7 +350,7 @@ POST /api/v1/wallets/:id/sign { contentRef }
 
 ### 7.2 UC1 Provision / UC4-6 Adminship
 
-`provision`: `ExternalIamService.personExists()` → `existsPosition()` → `UserWallet.provision()` → save → `WalletProvisionedEvent` post-commit. `rotate`: cargar → `rotate(newPosition)` (esta queda `ROTATED`) + `save` de la sucesora `PROVISIONED` en el mismo UoW → publicar ambos post-commit. `suspend/retire`: cargar → metodo del agregado → save → publicar post-commit. UC6 sin comando externo de persona: lo dispara el hecho de coordinacion de Consent & Compliance.
+`provisionWallet`: `ExternalIamService.personExists()` → `existsPosition()` → `UserWallet.provision()` → save → `WalletProvisionedEvent` post-commit. `rotateWallet`: cargar → `rotate(newPosition)` (esta queda `ROTATED`) + `save` de la sucesora `PROVISIONED` en el mismo UoW → publicar ambos post-commit. `suspendWallet/retireWallet`: cargar → metodo del agregado → save → publicar post-commit. UC6 sin comando externo de persona: lo dispara el hecho de coordinacion de Consent & Compliance.
 
 ---
 

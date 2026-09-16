@@ -216,28 +216,30 @@ Ports in `domain/services/` with tokens (`CONSENT_COMMAND_SERVICE`, `ERASURE_COM
 
 ```typescript
 export const CONSENT_COMMAND_SERVICE = Symbol('CONSENT_COMMAND_SERVICE');
+// Regla skill ddd-guideliness v1.0.11: methodName = lowerCamel(Clase sin Command|Query)
 export interface ConsentCommandService {
-  handleGrant(cmd: GrantConsentCommand): Promise<ConsentRecordId>;
-  handleRevoke(cmd: RevokeConsentCommand): Promise<void>;
+  grantConsent(cmd: GrantConsentCommand): Promise<ConsentRecordId>;
+  revokeConsent(cmd: RevokeConsentCommand): Promise<void>;
 }
 export const ERASURE_COMMAND_SERVICE = Symbol('ERASURE_COMMAND_SERVICE');
 export interface ErasureCommandService {
-  submit(cmd: SubmitErasureRequestCommand): Promise<DataSubjectRequestId>;
-  confirm(cmd: ConfirmErasureRequestCommand): Promise<void>;
-  recordConfirmation(cmd: RecordRevocationConfirmationCommand): Promise<void>;
+  submitErasureRequest(cmd: SubmitErasureRequestCommand): Promise<DataSubjectRequestId>;
+  confirmErasureRequest(cmd: ConfirmErasureRequestCommand): Promise<void>;
+  recordRevocationConfirmation(cmd: RecordRevocationConfirmationCommand): Promise<void>;
 }
 export const RETENTION_COMMAND_SERVICE = Symbol('RETENTION_COMMAND_SERVICE');
 export interface RetentionCommandService {
-  define(cmd: DefineRetentionPolicyCommand): Promise<RetentionPolicyId>;
+  defineRetentionPolicy(cmd: DefineRetentionPolicyCommand): Promise<RetentionPolicyId>;
 }
 export const CONSENT_QUERY_SERVICE = Symbol('CONSENT_QUERY_SERVICE');
 export interface ConsentQueryService {
-  getState(q: GetConsentStateByPersonAndScopeQuery): Promise<ConsentStateAnswer>;
+  getConsentStateByPersonAndScope(q: GetConsentStateByPersonAndScopeQuery): Promise<ConsentStateAnswer>;
+  getAuditTrailByPerson(q: GetAuditTrailByPersonQuery): Promise<AuditEntry[]>;
 }
 export const ERASURE_QUERY_SERVICE = Symbol('ERASURE_QUERY_SERVICE');
 export interface ErasureQueryService {
-  getStanding(q: GetErasureStandingByPersonQuery): Promise<ErasureStandingAnswer>;
-  getRetentionTerms(q: GetRetentionTermsByCategoryQuery): Promise<RetentionTermsAnswer>;
+  getErasureStandingByPerson(q: GetErasureStandingByPersonQuery): Promise<ErasureStandingAnswer>;
+  getRetentionTermsByCategory(q: GetRetentionTermsByCategoryQuery): Promise<RetentionTermsAnswer>;
 }
 ```
 
@@ -249,7 +251,7 @@ export class ConsentCommandServiceImpl implements ConsentCommandService {
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
     private readonly events: EventEmitter2,
   ) {}
-  async handleGrant(cmd: GrantConsentCommand): Promise<ConsentRecordId> {
+  async grantConsent(cmd: GrantConsentCommand): Promise<ConsentRecordId> {
     const rec = await this.uow.run(async () => {
       const live = await this.consents.findLive(cmd.personId, cmd.scope);
       if (live) throw new ConsentAlreadyGrantedError('live GRANTED record already covers (person, scope)');
@@ -263,7 +265,7 @@ export class ConsentCommandServiceImpl implements ConsentCommandService {
 }
 ```
 
-Erasure service follows the same UoW + after-commit publish shape: `submit` rejects open requests; `confirm` then `coordinateRevocation(owners)`; `recordConfirmation` then always `try complete()` catching `ErasureIncompleteError` while owners remain (no `if allConfirmed` duplication in application — the aggregate owns the rule); publish only after `uow.run()` resolves.
+Erasure service follows the same UoW + after-commit publish shape: `submitErasureRequest` rejects open requests; `confirmErasureRequest` then `coordinateRevocation(owners)`; `recordRevocationConfirmation` then always `try complete()` catching `ErasureIncompleteError` while owners remain (no `if allConfirmed` duplication in application — the aggregate owns the rule); publish only after `uow.run()` resolves.
 
 In-module `@OnEvent` handlers (never subscribed cross-module) call `External<Bc>Service` facades (partnership R12):
 
@@ -287,7 +289,7 @@ export class ErasureConfirmedEventHandler {
 }
 ```
 
-`RevocationConfirmedEventHandler` (`revocation-confirmed.event-handler.ts`, in-module): ante cada `RevocationConfirmedEvent` (wire `'RevocationConfirmed'`) recarga el standing vía `ERASURE_QUERY_SERVICE.getStanding()` (scrutiny/observabilidad del avance por owner); el cierre lo decide el servicio con `try complete()` — nunca el handler.
+`RevocationConfirmedEventHandler` (`revocation-confirmed.event-handler.ts`, in-module): ante cada `RevocationConfirmedEvent` (wire `'RevocationConfirmed'`) recarga el standing vía `ERASURE_QUERY_SERVICE.getErasureStandingByPerson()` (scrutiny/observabilidad del avance por owner); el cierre lo decide el servicio con `try complete()` — nunca el handler.
 
 Un `External{X}Service` por contexto propietario (`ExternalBiometricService`, `ExternalWalletService`, `ExternalMembershipService`, `ExternalNotificationsService` en `outboundservices/acl/`), cada uno inyectando su facade token y exponiendo `askOwnerToRevoke(personId, requestId)` en primitivas; `ExternalIamService` answers person-existence for UC1/UC4. Fan-out de eventos: `ConsentGrantedEvent` / `ConsentRevokedEvent` → gates de Biometric, Notifications, OTP y OCR vía `mayProcessNow()` / `mayContactNow()` (cada BC decide en su borde); `RevocationCoordinatedEvent` (×N, uno por BC propietario) → Biometric, Wallet, Membership, Notifications; `ErasureCompletedEvent` → Notifications (aviso a la persona) + lectura de scrutiny. Coordinar ≠ ejecutar: este BC nunca borra datos ajenos.
 
@@ -332,9 +334,9 @@ Assemblers (`consent/erasure-persistence.assembler.ts`) parse via `parseConsentS
 @Controller('api/v1/consents')
 export class ConsentController {
   constructor(@Inject(CONSENT_COMMAND_SERVICE) private readonly commands: ConsentCommandService, @Inject(CONSENT_QUERY_SERVICE) private readonly queries: ConsentQueryService) {}
-  @Post() async grant(@Body() r: GrantConsentResource): Promise<ConsentStateResource> { /* assembler -> handleGrant -> re-query */ }
-  @Post(':scope/revoke') async revoke(@Param('scope') scope: string, @Body() r: RevokeConsentResource): Promise<void> { /* ... */ }
-  @Get('state') async state(@Query('personId') p: string, @Query('scope') s: string): Promise<ConsentStateResource> { return this.queries.getState(new GetConsentStateByPersonAndScopeQuery(PersonId.of(p), ConsentScope.of(s))); }
+  @Post() async grant(@Body() r: GrantConsentResource): Promise<ConsentStateResource> { /* assembler -> grantConsent -> re-query getConsentStateByPersonAndScope */ }
+  @Post(':scope/revoke') async revoke(@Param('scope') scope: string, @Body() r: RevokeConsentResource): Promise<void> { /* assembler -> revokeConsent */ }
+  @Get('state') async state(@Query('personId') p: string, @Query('scope') s: string): Promise<ConsentStateResource> { return this.queries.getConsentStateByPersonAndScope(new GetConsentStateByPersonAndScopeQuery(PersonId.of(p), ConsentScope.of(s))); }
 }
 ```
 
@@ -400,17 +402,17 @@ Partial unique index enforces invariant 2 (at most one live `GRANTED` per person
 
 ```
 POST /api/v1/consents -> GrantConsentCommandFromResourceAssembler.toCommand()
- -> ConsentCommandServiceImpl.handleGrant() [UoW]
+ -> ConsentCommandServiceImpl.grantConsent() [UoW]
     -> ExternalIamService.assertPersonExists() -> findLive() (409 if live)
      -> ConsentRecord.grant() -> save() -> commit -> emit(ConsentGrantedEvent)
- -> re-query getState() -> 201 ConsentStateResource
+ -> re-query getConsentStateByPersonAndScope() -> 201 ConsentStateResource
 ```
 
 ### 7.2 Revoke (UC2)
 
 ```
 POST /consents/:scope/revoke -> RevokeConsentCommand
- -> handleRevoke() [UoW]: findLive() ?? throw ConsentNotGrantedError
+ -> revokeConsent() [UoW]: findLive() ?? throw ConsentNotGrantedError
      -> record.revoke() -> save() -> commit -> emit(ConsentRevokedEvent)
  -> 200; gates refuse from this moment, history untouched
 ```
@@ -418,8 +420,8 @@ POST /consents/:scope/revoke -> RevokeConsentCommand
 ### 7.3 Erasure anchor flow (UC4–UC6)
 
 ```
-SubmitErasureRequestCommand -> submit() [rechaza si hay open: uq_requests_open -> 409] -> emit(ErasureRequestedEvent) -> 202
-ConfirmErasureRequestCommand -> confirm() -> emit(ErasureConfirmedEvent)
+SubmitErasureRequestCommand -> submitErasureRequest() [rechaza si hay open: uq_requests_open -> 409] -> emit(ErasureRequestedEvent) -> 202
+ConfirmErasureRequestCommand -> confirmErasureRequest() -> emit(ErasureConfirmedEvent)
   + after-commit @OnEvent(ErasureConfirmedEvent) -> External{Biometric,Wallet,Membership,Notifications}Service.askOwnerToRevoke()
     -> one RevocationCoordinatedEvent per owner (Biometric, Wallet, Membership, Notifications; standing=AWAITING_CONFIRMATIONS)
     -> each owner deletes own data -> POST .../confirmations (RecordRevocationConfirmationCommand)

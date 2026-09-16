@@ -235,7 +235,7 @@ export class UserId {
 
 ### 2.4 Queries (CQRS — Read)
 
-`GetAccessStandingByPersonQuery(personId)`, `GetIdentityHistoryByPersonQuery(personId)`, `GetSystemRolesByPersonQuery(personId)`.
+`GetUserByIdQuery(userId)`, `GetAccessStandingByPersonQuery(personId)`, `GetIdentityHistoryByPersonQuery(personId)`, `GetSystemRolesByPersonQuery(personId)`.
 
 ### 2.5 Domain Exceptions (rejections)
 
@@ -247,19 +247,30 @@ export class UserId {
 
 ### 2.7 Domain Services (ports)
 
+> **Regla de nombrado (skill ddd-guideliness v1.0.11):** un método por comando/query, `methodName = lowerCamel(ClassName sin sufijo Command|Query)`, que recibe el objeto comando/query — nunca primitivas sueltas ni `handle` sobrecargado.
+
 ```typescript
 export const USER_COMMAND_SERVICE = Symbol('USER_COMMAND_SERVICE');
 export interface UserCommandService {
-  signup(c: SignUpCommand): Promise<UserId>;
-  signin(c: SignInCommand): Promise<void>;
-  signout(c: SignOutCommand): Promise<void>;
-  // ... one method per command
+  signUp(c: SignUpCommand): Promise<UserId>;
+  signIn(c: SignInCommand): Promise<void>;
+  signOut(c: SignOutCommand): Promise<void>;
+  changeSecret(c: ChangeSecretCommand): Promise<void>;
+  changeEmail(c: ChangeEmailCommand): Promise<void>;
+  verifyEmail(c: VerifyEmailCommand): Promise<void>;
+  linkOutsideIdentity(c: LinkOutsideIdentityCommand): Promise<void>;
+  unlinkOutsideIdentity(c: UnlinkOutsideIdentityCommand): Promise<void>;
+  grantSystemRole(c: GrantSystemRoleCommand): Promise<void>;
+  revokeSystemRole(c: RevokeSystemRoleCommand): Promise<void>;
+  suspendAccess(c: SuspendAccessCommand): Promise<void>;
+  restoreAccess(c: RestoreAccessCommand): Promise<void>;
 }
 export const USER_QUERY_SERVICE = Symbol('USER_QUERY_SERVICE');
 export interface UserQueryService {
-  getStanding(q: GetAccessStandingByPersonQuery): Promise<AccessStandingAnswer>;
-  getHistory(q: GetIdentityHistoryByPersonQuery): Promise<UserHistoryEntry[]>;
-  getRoles(q: GetSystemRolesByPersonQuery): Promise<SystemRole[]>;
+  getUserById(q: GetUserByIdQuery): Promise<User | null>;
+  getAccessStandingByPerson(q: GetAccessStandingByPersonQuery): Promise<AccessStandingAnswer>;
+  getIdentityHistoryByPerson(q: GetIdentityHistoryByPersonQuery): Promise<UserHistoryEntry[]>;
+  getSystemRolesByPerson(q: GetSystemRolesByPersonQuery): Promise<SystemRole[]>;
 }
 ```
 
@@ -283,7 +294,7 @@ export class UserCommandServiceImpl implements UserCommandService {
     private readonly events: EventEmitter2,
   ) {}
 
-  async signin(command: SignInCommand): Promise<void> {
+  async signIn(command: SignInCommand): Promise<void> {
     const user = await this.uow.run(async () => {
       const u = await this.users.findById(command.userId);
       if (!u) throw new UserNotFoundError('not found');
@@ -303,7 +314,7 @@ export class UserCommandServiceImpl implements UserCommandService {
 
 ### 3.2 Query Services
 
-Read-only, no `UNIT_OF_WORK`: `getStanding()` → `users.findByPersonId()` + `answerAccessStanding()`; `getHistory()`, `getRoles()` similarly.
+Read-only, no `UNIT_OF_WORK`: `getUserById()` → `users.findById()`; `getAccessStandingByPerson()` → `users.findByPersonId()` + `answerAccessStanding()`; `getIdentityHistoryByPerson()`, `getSystemRolesByPerson()` similarly.
 
 ### 3.3 Outbound Ports (Strategy)
 
@@ -326,7 +337,7 @@ export interface SessionArtifactService {
 |:--|:--|
 | `UserSignedUpEvent` / `SecretChangedEvent` / `EmailChangedEvent` / `AccessSuspendedEvent` / `AccessRestoredEvent` | facade `ExternalNotificationsService` (welcome/security/suspension) |
 | `UserSignedInEvent` / `UserSignedOutEvent` | `session-artifact` `issue()` / `end(reason)` via ejecutor + standing/history |
-| `EmailVerifiedEvent` / `SystemRoleGrantedEvent` / `SystemRoleRevokedEvent` | standing/history (lecturas `answerAccessStanding/getRoles`) |
+| `EmailVerifiedEvent` / `SystemRoleGrantedEvent` / `SystemRoleRevokedEvent` | standing/history (lecturas `answerAccessStanding/getSystemRolesByPerson`) |
 
 ### 3.5 ACL Facade (application)
 
@@ -449,7 +460,7 @@ CREATE INDEX idx_users_standing ON iam.users (standing);
 ```
 POST /api/v1/iam/users/signup { email }
  -> ValidationPipe -> SignupCommandFromResourceAssembler.toCommand() (mapea email -> ContactAddress, sin generar IDs)
- -> UserCommandServiceImpl.signup() inside UNIT_OF_WORK.run()
+ -> UserCommandServiceImpl.signUp() inside UNIT_OF_WORK.run()
      -> users.findByEmail() != null else AddressAlreadyHeldError
      -> User.signup({ contact }) (factory mintea UserId + PersonId) -> registerEvent(UserSignedUpEvent)
      -> users.save(user)
@@ -461,7 +472,7 @@ POST /api/v1/iam/users/signup { email }
 
 ```
 POST /api/v1/iam/users/signin { userId, proofKind }
- -> SignInCommand -> UserCommandServiceImpl.signin() inside UNIT_OF_WORK.run()
+ -> SignInCommand -> UserCommandServiceImpl.signIn() inside UNIT_OF_WORK.run()
      -> findById() else UserNotFoundError
      -> standing ACTIVE? else SuspendedRefusedError
      -> proofs.holds() (Auth0 executor verdict, observed never performed)
