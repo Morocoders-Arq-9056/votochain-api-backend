@@ -27,7 +27,7 @@ describe('User aggregate (signup slice)', () => {
     expect(user.standing).toBe(AccessStanding.REGISTERED);
     expect(user.session).toBe(SessionStanding.CLOSED);
     expect(user.contact.email).toBe('ada@votachain.dev');
-    expect(user.roleAssignments.map((a) => a.role)).toEqual([SystemRole.USER]);
+    expect(user.roles).toEqual([SystemRole.USER]);
 
     const events = user.pullDomainEvents();
     expect(events).toHaveLength(1);
