@@ -2,8 +2,8 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: votachain
-      POSTGRES_PASSWORD: changeme
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: matias2oo6
       POSTGRES_DB: votachain
     ports:
       - "5432:5432"

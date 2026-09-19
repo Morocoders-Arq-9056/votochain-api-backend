@@ -12,4 +12,5 @@ export default registerAs('database', () => ({
   password: process.env['DB_PASSWORD'] ?? 'changeme',
   name: process.env['DB_NAME'] ?? 'votachain',
   logging: (process.env['DB_LOGGING'] ?? 'false') === 'true',
+  synchronize: (process.env['DB_SYNCHRONIZE'] ?? 'false') === 'true',
 }));

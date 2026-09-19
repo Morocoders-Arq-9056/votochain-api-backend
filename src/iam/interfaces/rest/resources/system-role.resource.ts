@@ -1,3 +1,4 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsNotEmpty, IsString } from 'class-validator';
 import { SystemRole } from '../../../domain/model/valueobjects/system-role.value-object.js';
 
@@ -9,9 +10,11 @@ import { SystemRole } from '../../../domain/model/valueobjects/system-role.value
  */
 export class SystemRoleResource {
   /** Technical identity id (`usr-` prefixed). */
+  @ApiProperty({ example: 'usr-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
   @IsString() @IsNotEmpty() userId: string;
 
   /** Role to grant/revoke: ADMIN | USER. */
+  @ApiProperty({ enum: ['ADMIN', 'USER'], example: 'ADMIN' })
   @IsIn(Object.values(SystemRole)) role: SystemRole;
 }
 
@@ -23,9 +26,11 @@ export class SystemRoleResource {
  */
 export class SuspendAccessResource {
   /** Technical identity id (`usr-` prefixed). */
+  @ApiProperty({ example: 'usr-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
   @IsString() @IsNotEmpty() userId: string;
 
   /** Recorded suspension reason. */
+  @ApiProperty({ example: 'abuse' })
   @IsString() @IsNotEmpty() reason: string;
 }
 
@@ -37,5 +42,6 @@ export class SuspendAccessResource {
  */
 export class UserIdResource {
   /** Technical identity id (`usr-` prefixed). */
+  @ApiProperty({ example: 'usr-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
   @IsString() @IsNotEmpty() userId: string;
 }

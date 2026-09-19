@@ -3,6 +3,14 @@ import { UserResource } from '../resources/user.resource.js';
 
 export class UserResourceFromEntityAssembler {
   static toResourceFromEntity(user: User): UserResource {
-    return new UserResource(user.id.value, user.contact.email);
+    return new UserResource(
+      user.id.value,
+      user.contact.email,
+      user.contact.verified,
+      user.standing,
+      user.session,
+      [...user.roles],
+      user.outsideProver ? user.outsideProver.provider : null,
+    );
   }
 }

@@ -1,3 +1,4 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
 
 /**
@@ -8,9 +9,11 @@ import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
  */
 export class ChangeEmailResource {
   /** Technical identity id (`usr-` prefixed). */
+  @ApiProperty({ example: 'usr-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
   @IsString() @IsNotEmpty() userId: string;
 
   /** Fresh address held by nobody else. */
+  @ApiProperty({ example: 'grace@votachain.dev' })
   @IsEmail() newEmail: string;
 }
 
@@ -22,8 +25,10 @@ export class ChangeEmailResource {
  */
 export class VerifyEmailResource {
   /** Technical identity id (`usr-` prefixed). */
+  @ApiProperty({ example: 'usr-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
   @IsString() @IsNotEmpty() userId: string;
 
   /** The recorded address the confirmation was observed for. */
+  @ApiProperty({ example: 'ada@votachain.dev' })
   @IsEmail() email: string;
 }

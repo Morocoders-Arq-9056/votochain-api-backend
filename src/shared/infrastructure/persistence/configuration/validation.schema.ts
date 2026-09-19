@@ -11,6 +11,7 @@ export const validationSchema = Joi.object({
   DB_PASSWORD: Joi.string().required(),
   DB_NAME: Joi.string().required(),
   DB_LOGGING: Joi.boolean().truthy('true').falsy('false').default(false),
+  DB_SYNCHRONIZE: Joi.boolean().truthy('true').falsy('false').default(false),
   JWT_SECRET: Joi.string().min(32).required(),
   OTP_HMAC_SECRET: Joi.string().required(),
   SWAGGER_TITLE: Joi.string().default('VotoChain API'),

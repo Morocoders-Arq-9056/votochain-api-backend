@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, HttpCode, HttpStatus, Inject, NotFoundException, Patch, Post, UseFilters } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
 import type { UserCommandService } from '../../../domain/services/user-command.service.js';
 import { USER_QUERY_SERVICE } from '../../../domain/services/user-query.service.js';
@@ -39,6 +40,7 @@ import { IamExceptionFilter } from '../filters/iam-exception.filter.js';
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-17
  */
+@ApiTags('iam')
 @Controller('iam/users')
 @UseFilters(IamExceptionFilter)
 export class AuthenticationController {
@@ -57,6 +59,9 @@ export class AuthenticationController {
    */
   @Post('signup')
   @HttpCode(HttpStatus.CREATED)
+  @ApiCreatedResponse({ type: UserResource })
+  @ApiBadRequestResponse({ description: 'Malformed email' })
+  @ApiConflictResponse({ description: 'Email already held' })
   async signUp(@Body() resource: SignUpResource): Promise<UserResource> {
     const command = SignUpCommandFromResourceAssembler.toCommandFromResource(resource);
     const userId = await this.commands.signUp(command);
@@ -68,6 +73,9 @@ export class AuthenticationController {
    */
   @Post('signin')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Suspended or proof not held' })
   async signIn(@Body() resource: SignInResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.signIn(new SignInCommand(userId, parseProofKind(resource.proofKind)));
@@ -79,6 +87,9 @@ export class AuthenticationController {
    */
   @Post('signout')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'No open session' })
   async signOut(@Body() resource: UserIdResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.signOut(new SignOutCommand(userId));
@@ -90,6 +101,8 @@ export class AuthenticationController {
    */
   @Post('change-secret')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
   async changeSecret(@Body() resource: ChangeSecretResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.changeSecret(new ChangeSecretCommand(userId, resource.newSecret));
@@ -100,6 +113,10 @@ export class AuthenticationController {
    * Changes the contact address (verified standing resets).
    */
   @Patch('email')
+  @ApiOkResponse({ type: UserResource })
+  @ApiBadRequestResponse({ description: 'Malformed email' })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Address already held or suspended' })
   async changeEmail(@Body() resource: ChangeEmailResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.changeEmail(new ChangeEmailCommand(userId, resource.newEmail));
@@ -111,6 +128,8 @@ export class AuthenticationController {
    */
   @Post('email/verify')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
   async verifyEmail(@Body() resource: VerifyEmailResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.verifyEmail(new VerifyEmailCommand(userId, resource.email));
@@ -122,6 +141,9 @@ export class AuthenticationController {
    */
   @Post('outside-identities/link')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Already linked or not active' })
   async linkOutside(@Body() resource: OutsideIdentityResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.linkOutsideIdentity(
@@ -135,6 +157,9 @@ export class AuthenticationController {
    */
   @Post('outside-identities/unlink')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Last proof refused' })
   async unlinkOutside(@Body() resource: OutsideIdentityResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.unlinkOutsideIdentity(new UnlinkOutsideIdentityCommand(userId, resource.provider));
@@ -146,6 +171,9 @@ export class AuthenticationController {
    */
   @Post('roles')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Role already held' })
   async grantRole(@Body() resource: SystemRoleResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.grantSystemRole(new GrantSystemRoleCommand(userId, parseSystemRole(resource.role)));
@@ -157,6 +185,9 @@ export class AuthenticationController {
    */
   @Delete('roles')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Role not held or last admin' })
   async revokeRole(@Body() resource: SystemRoleResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.revokeSystemRole(new RevokeSystemRoleCommand(userId, parseSystemRole(resource.role)));
@@ -168,6 +199,8 @@ export class AuthenticationController {
    */
   @Post('suspend')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
   async suspend(@Body() resource: SuspendAccessResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.suspendAccess(new SuspendAccessCommand(userId, resource.reason));
@@ -179,6 +212,8 @@ export class AuthenticationController {
    */
   @Post('restore')
   @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
   async restore(@Body() resource: UserIdResource): Promise<UserResource> {
     const userId = UserId.of(resource.userId);
     await this.commands.restoreAccess(new RestoreAccessCommand(userId));

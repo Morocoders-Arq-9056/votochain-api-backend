@@ -19,7 +19,7 @@ export function buildTypeOrmOptions(cfg: ConfigService): TypeOrmModuleOptions {
     password: cfg.getOrThrow<string>('database.password'),
     database: cfg.getOrThrow<string>('database.name'),
     autoLoadEntities: true,
-    synchronize: false,
+    synchronize: cfg.getOrThrow<boolean>('database.synchronize'),
     migrationsRun: false,
     migrations: ['dist/migrations/*.js'],
     namingStrategy: new SnakeNamingStrategy(),

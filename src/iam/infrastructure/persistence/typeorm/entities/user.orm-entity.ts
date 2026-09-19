@@ -28,5 +28,5 @@ export class UserOrmEntity extends AuditableOrmEntity {
   /** Held system roles as comma-separated values (simple-array). */
   @Column('simple-array') roles: string[];
   /** Linked outside prover (`auth0`) or null. */
-  @Column({ nullable: true }) outsideProver: string | null;
+  @Column({ type: 'varchar', length: 64, nullable: true }) outsideProver: string | null;
 }
