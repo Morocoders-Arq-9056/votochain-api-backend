@@ -31,7 +31,7 @@ src/community/
 │   │   │   ├── define-policy.resource.ts
 │   │   │   └── community.resource.ts
 │   │   ├── transform/
-│   │   │   ├── register-command-from-resource.assembler.ts
+│   │   │   ├── register-community-command-from-resource.assembler.ts
 │   │   │   └── community-resource-from-entity.assembler.ts
 │   │   └── filters/
 │   │       └── community-exception.filter.ts
@@ -85,10 +85,9 @@ Owns settings, voting policy (supersede-chain), administrator list. Never holds 
 
 ```typescript
 import { AggregateRoot } from '../../../../shared/domain/model/aggregate-root';
+import type { DomainEvent } from '../../../../shared/domain/model/domain-event';
 export const CommunityStanding = { REGISTERED: 'REGISTERED', ACTIVE: 'ACTIVE', SUSPENDED: 'SUSPENDED', ARCHIVED: 'ARCHIVED' } as const;
 export type CommunityStanding = typeof CommunityStanding[keyof typeof CommunityStanding];
-/** CommunityStatus = CommunityStanding (nombre spec); se conserva CommunityStanding en codigo. */
-export type CommunityStatus = CommunityStanding;
 
 /** Standing por composicion: Community extiende AggregateRoot e implementa CommunityStandable; sin base intermedia. */
 export interface CommunityStandable {
@@ -143,10 +142,10 @@ export class Community extends AggregateRoot implements CommunityStandable {
   }
 
   /** Guard compartido de transicion de standing, reusado por activate/suspend/reactivate/archive (nota: no es Template Method del catálogo — sin familia de subtipos con hooks). */
-  protected applyStandingTransition(from: CommunityStanding, to: CommunityStanding, event: { eventName: string }): void {
+  protected applyStandingTransition(from: CommunityStanding, to: CommunityStanding, event: DomainEvent): void {
     if (this._standing !== from) throw new IllegalCommunityTransitionError(`standing ${this._standing} != ${from}`);
     this._standing = to;
-    this.registerEvent(event as never);
+    this.registerEvent(event);
   }
 
   /** Guard: toda mutacion salvo rehydrate exige no-ARCHIVED. */
@@ -275,11 +274,11 @@ Read-only: `getCommunityById`, `getVotingPolicyByCommunity` (throws `PolicyUndef
 
 ### 3.4 Event Handlers (Observer, solo in-module)
 
-`community-event-logger.ts` (exempt logger) — `@OnEvent(...)` solo dentro del modulo; ningun BC foraneo suscribe directo. `publish()` unicamente despues de `uow.run()`. Fan-out:
+`community-event-logger.ts` es un logger exento (sin side-effects de negocio): `@OnEvent(...)` solo dentro del modulo; ningun BC foraneo suscribe directo. `publish()` unicamente despues de `uow.run()`. No hay `<Stem>EventHandler` con side-effects en este BC en Sprint-01 — el fan-out hacia otros BCs es pull via facade (ver §8), no push por handlers:
 
-| Evento | Reaccion |
+| Evento | Observacion via pull (`COMMUNITY_CONTEXT_FACADE`) |
 |:--|:--|
-| `CommunityActivatedEvent` / `CommunitySuspendedEvent` / `CommunityReactivatedEvent` | gates Membership (altas) + Voting (aperturas) via `answerStanding()` |
+| `CommunityActivatedEvent` / `CommunitySuspendedEvent` / `CommunityReactivatedEvent` | Membership (altas) + Voting (aperturas) consultan `answerStanding()` antes de iniciar; en curso se cierra bajo regla congelada |
 | `VotingPolicyDefinedEvent(supersedes)` | Voting congela `QuorumSnapshot` en cada apertura (pull, nunca push mid-vote) |
 | `CommunityArchivedEvent` | cierre terminal observado via ACL por Membership/Voting/Notifications |
 
@@ -342,7 +341,7 @@ Filtro `CommunityExceptionFilter` (skill: toda excepción del agregado tiene ent
 
 ### 5.2 Resources + Transform
 
-`class-validator` DTOs (`RegisterCommunityResource`, `DefinePolicyResource`, `CommunityResource`); assemblers `RegisterCommandFromResourceAssembler`, `CommunityResourceFromEntityAssembler`.
+`class-validator` DTOs (`RegisterCommunityResource`, `DefinePolicyResource`, `CommunityResource`); assemblers `RegisterCommunityCommandFromResourceAssembler`, `CommunityResourceFromEntityAssembler`.
 
 ### 5.3 ACL
 
@@ -354,7 +353,7 @@ export interface CommunityContextFacade {
 }
 ```
 
-Primitives-only; Voting/Membership `ExternalCommunityService` translates into their own VOs. `community.module.ts` `exports: [COMMUNITY_CONTEXT_FACADE]`.
+Primitives-only; Voting/Membership `ExternalCommunityService` translates into their own VOs. `community.module.ts` `exports: [COMMUNITY_CONTEXT_FACADE]`. Nota de borde: `answerStanding()` retorna un DTO compuesto de 3 primitivas (`standing: string`, `acceptsMembers: boolean`, `acceptsProposals: boolean`) — standing + flags derivados se calculan juntos y dividirlos forzaria 3 round-trips; no transporta VOs del consumidor, por lo que respeta la regla ACL.
 
 ---
 
@@ -390,7 +389,7 @@ CREATE INDEX idx_communities_standing ON community.communities (standing);
 
 ```
 POST /api/v1/communities { name, domicile, contact, adminPersonId }
- -> RegisterCommandFromResourceAssembler.toCommand()
+ -> RegisterCommunityCommandFromResourceAssembler.toCommand()
  -> CommunityCommandServiceImpl.registerCommunity() inside UNIT_OF_WORK.run()
      -> findByName? else CommunityAlreadyExistsError
      -> Community.register({ settings, admin }) -> CommunityRegisteredEvent

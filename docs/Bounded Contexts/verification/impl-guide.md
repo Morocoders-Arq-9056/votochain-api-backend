@@ -161,15 +161,15 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
 
 ### 2.3 Commands
 
-`RequestVerificationChallengeCommand(personId, purpose)`, `AnswerVerificationChallengeCommand(challengeId, presentedCode)`, `ExpireVerificationChallengeCommand(challengeId)`. UC1 rechaza antes de abrir con `PurposeUnknown` / `ContactNotAllowed` sin producir hechos.
+`RequestVerificationChallengeCommand(personId, purpose)`, `AnswerVerificationChallengeCommand(challengeId, presentedCode)`, `ExpireVerificationChallengeCommand(challengeId)`. UC1 rechaza antes de abrir con `PurposeUnknown` / `ContactNotAllowed` sin producir hechos. UC3 sin scheduler en Sprint-01 (`@nestjs/schedule` aparcado): el juicio de expiracion es lazy — `answer(holds, now)` y `answerChallengeStanding(now)` aplican la rama expirada al leer; `ExpireVerificationChallengeCommand` queda para barrido explicito/admin, no para un cron.
 
 ### 2.4 Queries
 
-`GetChallengeStandingByPersonAndPurposeQuery(personId, purpose)` (UC4, vía `answerChallengeStanding()`, sin mutar ni emitir) y `GetChallengeHistoryByPersonAndPurposeQuery(personId, purpose)` (scrutiny: peticiones, intentos y desenlaces en orden).
+`GetChallengeStandingByPersonAndPurposeQuery(personId, purpose)` (UC4, vía `answerChallengeStanding()`, sin mutar ni emitir) y `GetChallengeHistoryByPersonAndPurposeQuery(personId, purpose)` (scrutiny: todos los challenges del par `(personId, purpose)` en cualquier standing — OPEN/CONFIRMED/INVALIDATED/EXPIRED, incluidos SUPERSEDED — ordenados por `requestedAt`; el historial son challenges persistidos, no eventos rehidratados, y nunca contiene secretos).
 
 ### 2.5 Rechazos — `domain/exceptions/`
 
-`PurposeUnknownError`, `ContactNotAllowedError`, `NoUsableChallengeError`, `AlreadyAnsweredError`, `AttemptNotHeldError` (falla con intentos restantes: se registra intento, no excepción fatal en flujo). Subclases de `Error` + `Object.setPrototypeOf`.
+`PurposeUnknownError`, `ContactNotAllowedError`, `NoUsableChallengeError`, `AlreadyAnsweredError`, `AttemptNotHeldError`. `AttemptNotHeldError` se lanza al intentar responder un challenge sin OPEN usable (inexistente, ya CONFIRMED/INVALIDATED/EXPIRED, o de otro par); el fallo con intentos restantes NO lanza — registra el intento y emite `ChallengeAttemptFailedEvent`. Subclases de `Error` + `Object.setPrototypeOf`.
 
 ### 2.6 Eventos (5) — sin el código, nunca
 
@@ -190,6 +190,7 @@ export interface VerificationCommandService {
 export const VERIFICATION_QUERY_SERVICE = Symbol('VERIFICATION_QUERY_SERVICE');
 export interface VerificationQueryService {
   getChallengeStandingByPersonAndPurpose(q: GetChallengeStandingByPersonAndPurposeQuery): Promise<{ usable: boolean; remaining: number }>;
+  // History = findAllByPersonAndPurpose(personId, purpose) ordenado por requestedAt (todos los standings).
   getChallengeHistoryByPersonAndPurpose(q: GetChallengeHistoryByPersonAndPurposeQuery): Promise<VerificationChallenge[]>;
 }
 ```
@@ -273,15 +274,22 @@ export class ChallengeConfirmedEventHandler {
 
 ## 4. Capa de Infraestructura
 
-**Comparador (Strategy `CodeCompareService`).** Puerto ejecutor `hash/matches`; HMAC-SHA256 es el real por defecto — OTP de vida corta (5 min) e intentos limitados (5); determinístico; rápido; sin dependencias. El secreto (`verification.otp.hmac-secret`) se protege y rota. Alternativas vía flag `OTP_HASHER=hmac|bcrypt|fake` con swap en providers (sin tocar aplicación/dominio): `BcryptCodeCompareService` (coste adaptativo, si producto exige hashing lento) y `FakeCodeCompareService` (hash reversible predecible, solo tests). Decisión espejo de impl-guide §4.2.
+**Comparador (Strategy `CodeCompareService`).** Puerto ejecutor `hash/matches`; HMAC-SHA256 es el real por defecto — OTP de vida corta (5 min) e intentos limitados (5); determinístico; rápido; sin dependencias. El secreto (`verification.otp.hmac-secret`) se protege y rota. Alternativas vía `verification.otp.hasher=hmac|bcrypt|fake` con swap en providers (sin tocar aplicación/dominio): `BcryptCodeCompareService` (coste adaptativo, si producto exige hashing lento) y `FakeCodeCompareService` (hash reversible predecible, solo tests). Decisión espejo de impl-guide §4.2.
 
 ```typescript
-// verification.module.ts — swap por flag, mismo token CODE_COMPARE_SERVICE
+// verification.module.ts — swap por ConfigService, mismo token CODE_COMPARE_SERVICE
+// `verification.otp.hasher` + `verification.otp.hmac-secret` se declaran en config + validation.schema (Joi); nunca process.env directo en providers.
 providers: [
-  { provide: CODE_COMPARE_SERVICE, useClass:
-    process.env.OTP_HASHER === 'bcrypt' ? BcryptCodeCompareService
-    : process.env.OTP_HASHER === 'fake' ? FakeCodeCompareService
-    : HmacCodeCompareService },
+  {
+    provide: CODE_COMPARE_SERVICE,
+    inject: [ConfigService],
+    useFactory: (cfg: ConfigService) => {
+      const hasher = cfg.get<string>('verification.otp.hasher', 'hmac');
+      if (hasher === 'bcrypt') return new BcryptCodeCompareService();
+      if (hasher === 'fake') return new FakeCodeCompareService();
+      return new HmacCodeCompareService(cfg.getOrThrow<string>('verification.otp.hmac-secret'));
+    },
+  },
 ]
 @Injectable()
 export class HmacCodeCompareService implements CodeCompareService {
@@ -302,7 +310,7 @@ export class ChallengeOrmEntity extends AuditableOrmEntity {
   @Column() codeHash: string; @Column() requestedAt: Date; @Column() expiresAt: Date;
   @Column({ nullable: true }) reason: string | null;
 }
-// Assembler: toDomain vía rehydrate + of()/parsePurpose()/parseChallengeStanding(); toOrmEntity lee del agregado. Adapter: repo getter traduce el EntityManager ambiente vía manager.getRepository(ChallengeOrmEntity) (skill v1.0.9, nunca `?? orm`); findOpenByPersonAndPurpose(open+vigente), findById, save.
+// Assembler: toDomain vía rehydrate + of()/parsePurpose()/parseChallengeStanding(); toOrmEntity lee del agregado. Adapter: repo getter traduce el EntityManager ambiente vía manager.getRepository(ChallengeOrmEntity) (skill v1.0.9, nunca `?? orm`); findOpenByPersonAndPurpose(open+vigente), findAllByPersonAndPurpose(personId, purpose) ordenado por requestedAt (history), findById, save.
 ```
 
 ## 5. Capa de Interfaces
@@ -321,7 +329,7 @@ POST /api/v1/verifications/challenges        { "personId": "per-uuid", "purpose"
 POST /api/v1/verifications/challenges/:id/answer  { "code": "482913" }  → 200 { "standing": "CONFIRMED" } | 409 { "standing": "OPEN", "remaining": 3 } | 410 gone
 ```
 
-ACL publicada (primitivas): `export const VERIFICATION_CONTEXT_FACADE = Symbol('VERIFICATION_CONTEXT_FACADE'); export interface VerificationContextFacade { requestChallenge(personId, purpose): Promise<string>; answerChallenge(challengeId, code): Promise<{ standing: string; remaining: number }>; getStanding(personId, purpose): Promise<{ usable: boolean; remaining: number }>; }` + impl en `application/acl/`; `verification.module.ts` `exports: [VERIFICATION_CONTEXT_FACADE]`. Resources con `class-validator`; assemblers estáticos. `VerificationExceptionFilter` mapea los 5 errores (404 usable, 409 respondido/agotado, 422 propósito/contacto).
+ACL publicada (primitivas): `export const VERIFICATION_CONTEXT_FACADE = Symbol('VERIFICATION_CONTEXT_FACADE'); export interface VerificationContextFacade { requestChallenge(personId, purpose): Promise<string>; answerChallenge(challengeId, code): Promise<{ standing: string; remaining: number }>; getStanding(personId, purpose): Promise<{ usable: boolean; remaining: number }>; }` + impl en `application/acl/`; `verification.module.ts` `exports: [VERIFICATION_CONTEXT_FACADE]`. Resources con `class-validator`; assemblers estáticos. `VerificationExceptionFilter` mapea los 5 errores (`NoUsableChallengeError`/`AttemptNotHeldError` → 404, `AlreadyAnsweredError` → 409, `PurposeUnknownError`/`ContactNotAllowedError` → 422).
 
 ## 6. Esquema de Base de Datos
 
@@ -351,7 +359,7 @@ CREATE INDEX ix_standing ON verification.challenges (person_id, purpose, standin
 
 **UC1 Request:** `POST /challenges` → valida `Purpose` cerrado + `mayContactNow` (403 `ContactNotAllowed`) → UoW: supersede del OPEN previo + `request()` + `save` → publicar `ChallengeRequestedEvent`/`ChallengeInvalidatedEvent` tras commit → instrucción sync a Notifications → 201 + `Location`.
 **UC2 Answer (ancla):** `POST /challenges/:id/answer` → UoW: `findById` → `compare.matches(plain, codeHash)` (juzgado fuera, nunca guardado) → `answer(holds)` → `save` → publicar tras commit (`ChallengeConfirmedEvent` | `ChallengeAttemptFailedEvent` [+ `ChallengeInvalidatedEvent` si agotó]) → handler interno → IAM (R9, solo el hecho).
-**UC3 Expire:** barrido por `expiresAt` → `expire()` → `ChallengeExpiredEvent`. **UC4 Standing:** query → `answerChallengeStanding()` → `{ usable, remaining }` (flujos IAM, throttling).
+**UC3 Expire (lazy, sin scheduler en Sprint-01):** el juicio autoritativo vive en `answer(holds, now)` (rama expirada) y `answerChallengeStanding(now)`; `expireVerificationChallenge` ejecuta `expire(now)` como barrido explicito/admin → `ChallengeExpiredEvent` si el OPEN vencio. **UC4 Standing:** query → `answerChallengeStanding()` → `{ usable, remaining }` (flujos IAM, throttling).
 
 ## 8. Integración con otros BCs
 
