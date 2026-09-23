@@ -65,4 +65,7 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
   }
   get id(): ChallengeId { return this._id; } get standing(): ChallengeStanding { return this._standing; }
   get codeHash(): string { return this._codeHash; } get personId(): PersonId { return this._personId; }
+  get purpose(): Purpose { return this._purpose; } get attempts(): AttemptCount { return this._attempts; }
+  get window(): ValidityWindow { return this._window; }
+  get invalidationReason(): InvalidationReason | null { return this._invalidationReason; }
 }
