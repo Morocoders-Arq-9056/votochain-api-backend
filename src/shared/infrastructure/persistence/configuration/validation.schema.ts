@@ -14,6 +14,7 @@ export const validationSchema = Joi.object({
   DB_SYNCHRONIZE: Joi.boolean().truthy('true').falsy('false').default(false),
   JWT_SECRET: Joi.string().min(32).required(),
   OTP_HMAC_SECRET: Joi.string().required(),
+  OTP_HASHER: Joi.string().valid('hmac', 'fake').default('hmac'),
   SWAGGER_TITLE: Joi.string().default('VotoChain API'),
   SWAGGER_DESCRIPTION: Joi.string().allow('').default(''),
   SWAGGER_VERSION: Joi.string().default('0.0.1'),
