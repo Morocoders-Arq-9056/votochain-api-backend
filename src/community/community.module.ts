@@ -12,6 +12,7 @@ import { CommunityRepositoryImpl } from "./infrastructure/persistence/typeorm/ad
 import { CommunityPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/community-persistence.assembler.js";
 import { CommunityOrmEntity } from "./infrastructure/persistence/typeorm/entities/community.orm-entity.js";
 import { ExternalIamServiceImpl } from "./infrastructure/iam/external-iam.service.js";
+import { CommunityController } from "./interfaces/rest/controllers/community.controller.js";
 
 /**
  * Community Management bounded context module (supporting subdomain:
@@ -29,6 +30,7 @@ import { ExternalIamServiceImpl } from "./infrastructure/iam/external-iam.servic
  */
 @Module({
   imports: [TypeOrmModule.forFeature([CommunityOrmEntity]), IamModule],
+  controllers: [CommunityController],
   providers: [
     CommunityPersistenceAssembler,
     CommunityCommandServiceImpl,
