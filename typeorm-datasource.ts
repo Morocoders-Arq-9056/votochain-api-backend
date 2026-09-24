@@ -12,6 +12,6 @@ export default new DataSource({
   password: process.env['DB_PASSWORD'] ?? 'changeme',
   database: process.env['DB_NAME'] ?? 'votachain',
   synchronize: false,
-  entities: ['src/iam/infrastructure/persistence/typeorm/entities/*.orm-entity.ts', 'src/verification/infrastructure/persistence/typeorm/entities/*.orm-entity.ts'],
+  entities: ['src/iam/infrastructure/persistence/typeorm/entities/*.orm-entity.ts', 'src/verification/infrastructure/persistence/typeorm/entities/*.orm-entity.ts', 'src/community/infrastructure/persistence/typeorm/entities/*.orm-entity.ts'],
   migrations: ['src/migrations/*.ts'],
 });
