@@ -5,6 +5,9 @@ import { IamModule } from "../iam/iam.module.js";
 import { VerificationCommandServiceImpl } from "./application/internal/commandservices/verification-command.service.impl.js";
 import { VerificationQueryServiceImpl } from "./application/internal/queryservices/verification-query.service.impl.js";
 import { ChallengeConfirmedEventHandler } from "./application/internal/eventhandlers/challenge-confirmed.event-handler.js";
+import { VerificationContextFacadeImpl } from "./application/acl/verification-context-facade.impl.js";
+import { VerificationController } from "./interfaces/rest/controllers/verification.controller.js";
+import { VERIFICATION_CONTEXT_FACADE } from "./interfaces/acl/verification-context.facade.js";
 import { VERIFICATION_COMMAND_SERVICE } from "./domain/services/verification-command.service.js";
 import { VERIFICATION_QUERY_SERVICE } from "./domain/services/verification-query.service.js";
 import { VERIFICATION_CHALLENGE_REPOSITORY } from "./domain/repositories/verification-challenge.repository.js";
@@ -26,21 +29,25 @@ import { LogOnlyNotificationsService } from "./infrastructure/notifications/log-
  *
  * Wires the four DDD layers: application (command/query services, confirmed
  * handler, outbound ACL ports), domain (ports) and infrastructure (TypeORM
- * adapter, HMAC compare, Sprint-01 fakes). `IamModule` is imported for the
+ * adapter, HMAC compare, Sprint-01 fakes) and interfaces (REST controller,
+ * published facade). `IamModule` is imported for the
  * published `IAM_CONTEXT_FACADE` token (R9, ACL direction Verification→IAM).
  * Sprint-01 binds Fake/AllowAll/LogOnly adapters; swap via `useClass`.
  * `CODE_COMPARE_SERVICE` swaps on `verification.otp.hasher` (`hmac` default).
+ * Publishes VERIFICATION_CONTEXT_FACADE for channel-proof consumers.
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-23
  */
 @Module({
   imports: [TypeOrmModule.forFeature([ChallengeOrmEntity]), IamModule],
+  controllers: [VerificationController],
   providers: [
     ChallengePersistenceAssembler,
     VerificationCommandServiceImpl,
     VerificationQueryServiceImpl,
     ChallengeConfirmedEventHandler,
+    VerificationContextFacadeImpl,
     ExternalIamServiceImpl,
     AllowAllConsentService,
     LogOnlyNotificationsService,
@@ -50,6 +57,7 @@ import { LogOnlyNotificationsService } from "./infrastructure/notifications/log-
     { provide: EXTERNAL_IAM_SERVICE, useClass: ExternalIamServiceImpl },
     { provide: EXTERNAL_CONSENT_SERVICE, useClass: AllowAllConsentService },
     { provide: EXTERNAL_NOTIFICATIONS_SERVICE, useClass: LogOnlyNotificationsService },
+    { provide: VERIFICATION_CONTEXT_FACADE, useClass: VerificationContextFacadeImpl },
     {
       provide: CODE_COMPARE_SERVICE,
       inject: [ConfigService],
@@ -60,5 +68,6 @@ import { LogOnlyNotificationsService } from "./infrastructure/notifications/log-
       },
     },
   ],
+  exports: [VERIFICATION_CONTEXT_FACADE],
 })
 export class VerificationModule {}
