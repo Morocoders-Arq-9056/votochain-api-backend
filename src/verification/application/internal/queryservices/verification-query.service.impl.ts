@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { VERIFICATION_CHALLENGE_REPOSITORY } from '../../../domain/repositories/verification-challenge.repository.js';
 import type { VerificationChallengeRepository } from '../../../domain/repositories/verification-challenge.repository.js';
 import { VerificationQueryService } from '../../../domain/services/verification-query.service.js';
+import { GetChallengeByIdQuery } from '../../../domain/model/queries/get-challenge-by-id.query.js';
 import { GetChallengeHistoryByPersonAndPurposeQuery } from '../../../domain/model/queries/get-challenge-history-by-person-and-purpose.query.js';
 import { GetChallengeStandingByPersonAndPurposeQuery } from '../../../domain/model/queries/get-challenge-standing-by-person-and-purpose.query.js';
 import { VerificationChallenge } from '../../../domain/model/aggregates/verification-challenge.aggregate.js';
@@ -23,6 +24,14 @@ export class VerificationQueryServiceImpl implements VerificationQueryService {
   constructor(
     @Inject(VERIFICATION_CHALLENGE_REPOSITORY) private readonly challenges: VerificationChallengeRepository,
   ) {}
+
+  /**
+   * Returns the challenge for the given id, or null when unknown.
+   * @inheritdoc
+   */
+  async getChallengeById(query: GetChallengeByIdQuery): Promise<VerificationChallenge | null> {
+    return this.challenges.findById(query.challengeId);
+  }
 
   /**
    * Answers usability and remaining attempts; null-object when nothing is OPEN.
