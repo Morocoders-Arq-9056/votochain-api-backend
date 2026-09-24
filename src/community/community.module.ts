@@ -13,6 +13,8 @@ import { CommunityPersistenceAssembler } from "./infrastructure/persistence/type
 import { CommunityOrmEntity } from "./infrastructure/persistence/typeorm/entities/community.orm-entity.js";
 import { ExternalIamServiceImpl } from "./infrastructure/iam/external-iam.service.js";
 import { CommunityController } from "./interfaces/rest/controllers/community.controller.js";
+import { CommunityContextFacadeImpl } from "./application/acl/community-context-facade.impl.js";
+import { COMMUNITY_CONTEXT_FACADE } from "./interfaces/acl/community-context.facade.js";
 
 /**
  * Community Management bounded context module (supporting subdomain:
@@ -22,8 +24,8 @@ import { CommunityController } from "./interfaces/rest/controllers/community.con
  * services, log-only event fan-out, TypeORM adapter and the UC5 IAM ACL
  * adapter. `IamModule` is imported for the published `IAM_CONTEXT_FACADE`
  * token (ACL direction Community→IAM, identity reference only).
- * No controllers and no published facade yet — both land with the
- * interfaces slice.
+ * Publishes COMMUNITY_CONTEXT_FACADE for policy/standing consumers
+ * (Voting per proposal opening, Membership per registration).
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-24
@@ -37,10 +39,13 @@ import { CommunityController } from "./interfaces/rest/controllers/community.con
     CommunityQueryServiceImpl,
     CommunityEventLogger,
     ExternalIamServiceImpl,
+    CommunityContextFacadeImpl,
     { provide: COMMUNITY_REPOSITORY, useClass: CommunityRepositoryImpl },
     { provide: COMMUNITY_COMMAND_SERVICE, useClass: CommunityCommandServiceImpl },
     { provide: COMMUNITY_QUERY_SERVICE, useClass: CommunityQueryServiceImpl },
     { provide: EXTERNAL_IAM_SERVICE, useClass: ExternalIamServiceImpl },
+    { provide: COMMUNITY_CONTEXT_FACADE, useClass: CommunityContextFacadeImpl },
   ],
+  exports: [COMMUNITY_CONTEXT_FACADE],
 })
 export class CommunityModule {}
