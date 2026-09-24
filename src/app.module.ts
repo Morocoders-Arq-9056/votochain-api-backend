@@ -7,6 +7,7 @@ import { AppService } from './app.service.js';
 import { SharedModule } from './shared/shared.module.js';
 import { IamModule } from './iam/iam.module.js';
 import { VerificationModule } from './verification/verification.module.js';
+import { CommunityModule } from './community/community.module.js';
 import appConfig from './shared/infrastructure/application/configuration/app.config.js';
 import databaseConfig from './shared/infrastructure/persistence/configuration/database.config.js';
 import idempotencyConfig from './shared/infrastructure/idempotency/configuration/idempotency.config.js';
@@ -31,6 +32,7 @@ import { buildTypeOrmOptions } from './shared/infrastructure/persistence/typeorm
     SharedModule,
     IamModule,
     VerificationModule,
+    CommunityModule,
   ],
   controllers: [AppController],
   providers: [AppService],
