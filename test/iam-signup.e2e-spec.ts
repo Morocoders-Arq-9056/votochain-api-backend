@@ -65,24 +65,34 @@ describe('IAM identity lifecycle (e2e)', () => {
     await server().post('/api/v1/users').send({ email: 'not-an-email' }).expect(HttpStatus.BAD_REQUEST);
   });
 
-  it('signin → signout moves the session open then closed', async () => {
-    const { id } = await signUpActive('session');
+  it('sign-in → sign-out moves the session open then closed', async () => {
+    const { id, email: address } = await signUpActive('session');
 
     const opened = await server()
-      .post(`/api/v1/users/${id}/sessions`)
-      .send({ proofKind: 'LOCAL' })
-      .expect(HttpStatus.CREATED);
+      .post('/api/v1/auth/sign-in')
+      .send({ email: address, proofKind: 'LOCAL' })
+      .expect(HttpStatus.OK);
     expect(opened.body.session).toBe('SESSION_OPEN');
-    expect(opened.headers.location).toContain(`/api/v1/users/${id}/sessions/current`);
 
-    await server().delete(`/api/v1/users/${id}/sessions/current`).expect(HttpStatus.NO_CONTENT);
+    await server().post('/api/v1/auth/sign-out').send({ email: address }).expect(HttpStatus.NO_CONTENT);
     const closed = await server().get(`/api/v1/users/${id}`).expect(HttpStatus.OK);
     expect(closed.body.session).toBe('SESSION_CLOSED');
   });
 
-  it('signout with no open session → 409', async () => {
-    const { id } = await signUp('nosession');
-    await server().delete(`/api/v1/users/${id}/sessions/current`).expect(HttpStatus.CONFLICT);
+  it('sign-in unknown address → 404; sign-out unknown address → 404', async () => {
+    await server()
+      .post('/api/v1/auth/sign-in')
+      .send({ email: 'ghost@votachain.dev', proofKind: 'LOCAL' })
+      .expect(HttpStatus.NOT_FOUND);
+    await server()
+      .post('/api/v1/auth/sign-out')
+      .send({ email: 'ghost@votachain.dev' })
+      .expect(HttpStatus.NOT_FOUND);
+  });
+
+  it('sign-out with no open session → 409', async () => {
+    const { email: address } = await signUp('nosession');
+    await server().post('/api/v1/auth/sign-out').send({ email: address }).expect(HttpStatus.CONFLICT);
   });
 
   it('suspend → restore moves standing SUSPENDED then ACTIVE', async () => {
@@ -154,11 +164,11 @@ describe('IAM identity lifecycle (e2e)', () => {
     await server().delete(`/api/v1/users/${id}/roles/ADMIN`).expect(HttpStatus.CONFLICT);
   });
 
-  it('sub-resource reads: session, roles, outside-identities', async () => {
+  it('sub-resource reads: session state, roles, outside-identities', async () => {
     const { id } = await signUpActive('reads');
 
-    const closed = await server().get(`/api/v1/users/${id}/sessions/current`).expect(HttpStatus.OK);
-    expect(closed.body).toMatchObject({ open: false });
+    const user = await server().get(`/api/v1/users/${id}`).expect(HttpStatus.OK);
+    expect(user.body.session).toBe('SESSION_CLOSED');
 
     const roles = await server().get(`/api/v1/users/${id}/roles`).expect(HttpStatus.OK);
     expect(roles.body).toContain('USER');
