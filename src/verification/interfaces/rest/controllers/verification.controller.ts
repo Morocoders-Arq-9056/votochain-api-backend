@@ -8,14 +8,12 @@ import type { VerificationQueryService } from '../../../domain/services/verifica
 import { AnswerVerificationChallengeCommand } from '../../../domain/model/commands/answer-verification-challenge.command.js';
 import { GetChallengeByIdQuery } from '../../../domain/model/queries/get-challenge-by-id.query.js';
 import { GetChallengeHistoryByPersonAndPurposeQuery } from '../../../domain/model/queries/get-challenge-history-by-person-and-purpose.query.js';
-import { GetChallengeStandingByPersonAndPurposeQuery } from '../../../domain/model/queries/get-challenge-standing-by-person-and-purpose.query.js';
 import { ChallengeId } from '../../../domain/model/valueobjects/challenge-id.value-object.js';
 import { ChallengeStanding } from '../../../domain/model/valueobjects/challenge-standing.value-object.js';
 import { VerificationChallenge } from '../../../domain/model/aggregates/verification-challenge.aggregate.js';
 import { RequestChallengeResource } from '../resources/request-challenge.resource.js';
 import { AnswerChallengeResource } from '../resources/answer-challenge.resource.js';
 import { ChallengeResource } from '../resources/challenge.resource.js';
-import { ChallengeStandingResource } from '../resources/challenge-standing.resource.js';
 import { RequestVerificationChallengeCommandFromResourceAssembler } from '../transform/request-verification-challenge-command-from-resource.assembler.js';
 import { VerificationParamsAssembler } from '../transform/verification-params.assembler.js';
 import { ChallengeResourceFromEntityAssembler } from '../transform/challenge-resource-from-entity.assembler.js';
@@ -32,8 +30,8 @@ import { VerificationExceptionFilter } from '../filters/verification-exception.f
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-24
  */
-@ApiTags('verifications')
-@Controller('verifications')
+@ApiTags('challenges')
+@Controller('challenges')
 @UseFilters(VerificationExceptionFilter)
 export class VerificationController {
   /**
@@ -49,7 +47,7 @@ export class VerificationController {
   /**
    * Opens a challenge for the pair, superseding the prior OPEN atomically.
    */
-  @Post('challenges')
+  @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiCreatedResponse({ type: ChallengeResource })
   @ApiUnprocessableEntityResponse({ description: 'Unknown purpose or contact not allowed' })
@@ -59,7 +57,7 @@ export class VerificationController {
   ): Promise<ChallengeResource> {
     const command = RequestVerificationChallengeCommandFromResourceAssembler.toCommandFromResource(resource);
     const challengeId = await this.commands.requestVerificationChallenge(command);
-    response.location(`/api/v1/verifications/challenges/${challengeId.value}`);
+    response.location(`/api/v1/challenges/${challengeId.value}`);
     return this.requery(challengeId);
   }
 
@@ -68,7 +66,7 @@ export class VerificationController {
    * Still OPEN after answering → 409 with remaining; consumed → 409 with
    * reason; window elapsed → 410 gone.
    */
-  @Post('challenges/:id/answer')
+  @Post(':id/answers')
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: ChallengeResource })
   @ApiConflictResponse({ description: 'Attempts remain or challenge consumed' })
@@ -90,31 +88,23 @@ export class VerificationController {
   }
 
   /**
-   * Answers usability and remaining attempts for the pair (UC4, no facts).
+   * Returns the challenge with its standing and remaining attempts.
    */
-  @Get('standing')
+  @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOkResponse({ type: ChallengeStandingResource })
-  async getStanding(
-    @Query('personId') personId: string,
-    @Query('purpose') purpose: string,
-  ): Promise<ChallengeStandingResource> {
-    const answer = await this.queries.getChallengeStandingByPersonAndPurpose(
-      new GetChallengeStandingByPersonAndPurposeQuery(
-        VerificationParamsAssembler.toPersonId(personId),
-        VerificationParamsAssembler.toPurpose(purpose),
-      ),
-    );
-    return new ChallengeStandingResource(answer.usable, answer.remaining);
+  @ApiOkResponse({ type: ChallengeResource })
+  @ApiNotFoundResponse({ description: 'No usable challenge' })
+  async getChallenge(@Param('id') id: string): Promise<ChallengeResource> {
+    return this.requery(VerificationParamsAssembler.toChallengeId(id));
   }
 
   /**
    * Returns every persisted challenge for the pair, ordered by request time.
    */
-  @Get('history')
+  @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: [ChallengeResource] })
-  async getHistory(
+  async getChallenges(
     @Query('personId') personId: string,
     @Query('purpose') purpose: string,
   ): Promise<ChallengeResource[]> {
