@@ -6,7 +6,8 @@ import { VerificationCommandServiceImpl } from "./application/internal/commandse
 import { VerificationQueryServiceImpl } from "./application/internal/queryservices/verification-query.service.impl.js";
 import { ChallengeConfirmedEventHandler } from "./application/internal/eventhandlers/challenge-confirmed.event-handler.js";
 import { VerificationContextFacadeImpl } from "./application/acl/verification-context-facade.impl.js";
-import { VerificationController } from "./interfaces/rest/controllers/verification.controller.js";
+import { ChallengesController } from "./interfaces/rest/controllers/challenges.controller.js";
+import { AnswersController } from "./interfaces/rest/controllers/answers.controller.js";
 import { VERIFICATION_CONTEXT_FACADE } from "./interfaces/acl/verification-context.facade.js";
 import { VERIFICATION_COMMAND_SERVICE } from "./domain/services/verification-command.service.js";
 import { VERIFICATION_QUERY_SERVICE } from "./domain/services/verification-query.service.js";
@@ -41,7 +42,7 @@ import { LogOnlyNotificationsService } from "./infrastructure/notifications/log-
  */
 @Module({
   imports: [TypeOrmModule.forFeature([ChallengeOrmEntity]), IamModule],
-  controllers: [VerificationController],
+  controllers: [ChallengesController, AnswersController],
   providers: [
     ChallengePersistenceAssembler,
     VerificationCommandServiceImpl,

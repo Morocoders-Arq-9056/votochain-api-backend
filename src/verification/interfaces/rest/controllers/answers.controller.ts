@@ -1,5 +1,5 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Query, Res, UseFilters } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiGoneResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags, ApiUnprocessableEntityResponse } from '@nestjs/swagger';
+import { Body, Controller, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
+import { ApiConflictResponse, ApiGoneResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { VERIFICATION_COMMAND_SERVICE } from '../../../domain/services/verification-command.service.js';
 import type { VerificationCommandService } from '../../../domain/services/verification-command.service.js';
@@ -7,33 +7,28 @@ import { VERIFICATION_QUERY_SERVICE } from '../../../domain/services/verificatio
 import type { VerificationQueryService } from '../../../domain/services/verification-query.service.js';
 import { AnswerVerificationChallengeCommand } from '../../../domain/model/commands/answer-verification-challenge.command.js';
 import { GetChallengeByIdQuery } from '../../../domain/model/queries/get-challenge-by-id.query.js';
-import { GetChallengeHistoryByPersonAndPurposeQuery } from '../../../domain/model/queries/get-challenge-history-by-person-and-purpose.query.js';
 import { ChallengeId } from '../../../domain/model/valueobjects/challenge-id.value-object.js';
 import { ChallengeStanding } from '../../../domain/model/valueobjects/challenge-standing.value-object.js';
 import { VerificationChallenge } from '../../../domain/model/aggregates/verification-challenge.aggregate.js';
-import { RequestChallengeResource } from '../resources/request-challenge.resource.js';
 import { AnswerChallengeResource } from '../resources/answer-challenge.resource.js';
 import { ChallengeResource } from '../resources/challenge.resource.js';
-import { RequestVerificationChallengeCommandFromResourceAssembler } from '../transform/request-verification-challenge-command-from-resource.assembler.js';
 import { VerificationParamsAssembler } from '../transform/verification-params.assembler.js';
 import { ChallengeResourceFromEntityAssembler } from '../transform/challenge-resource-from-entity.assembler.js';
 import { VerificationExceptionFilter } from '../filters/verification-exception.filter.js';
 
 /**
- * Thin inbound adapter for the Verification bounded context.
- *
- * Maps validated resources to command/query objects and delegates to the
- * service tokens; re-queries after writes to rebuild the response (accepted
- * CQRS round-trip). Holds no business rules. Domain rejections surface
- * through {@link VerificationExceptionFilter}.
+ * Thin inbound adapter for judging presented codes against an open challenge:
+ * confirms, counts, or consumes. Attempts never outlive the challenge they
+ * were presented against — this controller judges facets, the challenge in
+ * `ChallengesController` owns the lifecycle.
  *
  * @author Ethan Matias Aliaga Aguirre
- * @since 2026-09-24
+ * @since 2026-09-26
  */
-@ApiTags('challenges')
-@Controller('challenges')
+@ApiTags('answers')
+@Controller('challenges/:id/answers')
 @UseFilters(VerificationExceptionFilter)
-export class VerificationController {
+export class AnswersController {
   /**
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
@@ -45,28 +40,11 @@ export class VerificationController {
   ) {}
 
   /**
-   * Opens a challenge for the pair, superseding the prior OPEN atomically.
-   */
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiCreatedResponse({ type: ChallengeResource })
-  @ApiUnprocessableEntityResponse({ description: 'Unknown purpose or contact not allowed' })
-  async requestChallenge(
-    @Body() resource: RequestChallengeResource,
-    @Res({ passthrough: true }) response: Response,
-  ): Promise<ChallengeResource> {
-    const command = RequestVerificationChallengeCommandFromResourceAssembler.toCommandFromResource(resource);
-    const challengeId = await this.commands.requestVerificationChallenge(command);
-    response.location(`/api/v1/challenges/${challengeId.value}`);
-    return this.requery(challengeId);
-  }
-
-  /**
    * Judges one presented code: confirms, counts, or consumes the challenge.
    * Still OPEN after answering → 409 with remaining; consumed → 409 with
    * reason; window elapsed → 410 gone.
    */
-  @Post(':id/answers')
+  @Post()
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: ChallengeResource })
   @ApiConflictResponse({ description: 'Attempts remain or challenge consumed' })
@@ -88,38 +66,8 @@ export class VerificationController {
   }
 
   /**
-   * Returns the challenge with its standing and remaining attempts.
-   */
-  @Get(':id')
-  @HttpCode(HttpStatus.OK)
-  @ApiOkResponse({ type: ChallengeResource })
-  @ApiNotFoundResponse({ description: 'No usable challenge' })
-  async getChallenge(@Param('id') id: string): Promise<ChallengeResource> {
-    return this.requery(VerificationParamsAssembler.toChallengeId(id));
-  }
-
-  /**
-   * Returns every persisted challenge for the pair, ordered by request time.
-   */
-  @Get()
-  @HttpCode(HttpStatus.OK)
-  @ApiOkResponse({ type: [ChallengeResource] })
-  async getChallenges(
-    @Query('personId') personId: string,
-    @Query('purpose') purpose: string,
-  ): Promise<ChallengeResource[]> {
-    const challenges = await this.queries.getChallengeHistoryByPersonAndPurpose(
-      new GetChallengeHistoryByPersonAndPurposeQuery(
-        VerificationParamsAssembler.toPersonId(personId),
-        VerificationParamsAssembler.toPurpose(purpose),
-      ),
-    );
-    return challenges.map((challenge) => ChallengeResourceFromEntityAssembler.toResourceFromEntity(challenge));
-  }
-
-  /**
-   * Re-reads the saved aggregate to rebuild the response resource.
-   * @param challengeId Challenge just written.
+   * Re-reads the judged aggregate to rebuild the response resource.
+   * @param challengeId Challenge just answered.
    */
   private async requery(challengeId: ChallengeId): Promise<ChallengeResource> {
     const challenge: VerificationChallenge | null = await this.queries.getChallengeById(
