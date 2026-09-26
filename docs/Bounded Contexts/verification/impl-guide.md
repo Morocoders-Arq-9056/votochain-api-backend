@@ -315,7 +315,11 @@ export class ChallengeOrmEntity extends AuditableOrmEntity {
 
 ## 5. Capa de Interfaces
 
-Controller delgado + filtro BC. Rate-limit en `request` (guardia de ejecución, no regla de dominio).
+Controller delgado + filtro BC. Un agregado, dos controllers (H2: attempts are
+a counted facet — the lifecycle never splits, only code organization does):
+`ChallengesController` (`challenges`: request, read, list),
+`AnswersController` (`challenges/:id/answers`: judging presented codes).
+Rate-limit en `request` (guardia de ejecución, no regla de dominio).
 
 | Método | Endpoint | Descripción |
 |:--|:--|:--|

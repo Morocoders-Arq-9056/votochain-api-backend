@@ -322,7 +322,13 @@ Admins as `simple-json` (small, always loaded with root, never queried per-child
 
 ### 5.1 REST Controller
 
-`@Controller('communities')` (global `api/v1` prefix), `@UseFilters(CommunityExceptionFilter)`.
+One controller per independently-evolving concern (domain invariant 4:
+administration, configuration, and standing evolve independently):
+`CommunitiesController` (`communities`: identity, settings, standing),
+`PoliciesController` (`communities/:id/policy`: the participation rule
+Voting freezes by reference), `AdminsController`
+(`communities/:id/admins`: entrusted administrators, deliberately distinct
+from membership parts and system grants — H4). `@UseFilters(CommunityExceptionFilter)`.
 
 Filtro `CommunityExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `CommunityNotFoundError → 404`, `AdminNotHeldError → 404`, `PersonUnknownError → 404`, `PolicyUndefinedError → 422`, `CommunityAlreadyExistsError → 409`, `LastAdministratorError → 409` (incluye `last admin while active`), `AdminAlreadyAppointedError → 409`, `CommunityNotActiveError → 409`, `ArchivedIsTerminalError → 409`, `IllegalCommunityTransitionError → 409`.
 

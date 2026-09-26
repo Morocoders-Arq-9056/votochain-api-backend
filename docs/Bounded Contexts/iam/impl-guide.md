@@ -400,22 +400,30 @@ export class UserRepositoryImpl implements UserRepository {
 
 ### 5.1 REST Controller
 
-`@Controller('iam/users')` (global `api/v1` prefix), `@UseFilters(IamExceptionFilter)`, global `ValidationPipe`.
+One controller per domain concern (same URIs a single controller would serve —
+the split is code organization, the contract does not move):
+`UsersController` (`users`: the identity and its state),
+`AuthenticationController` (`users/:id`: sessions + outside factors — how
+identity is proven), `AuthorizationController` (`users/:id/roles`: grants —
+what identity may do). `@UseFilters(IamExceptionFilter)`, global `ValidationPipe`.
 
-| Method | Endpoint | Command |
-|:--|:--|:--|
-| `POST` | `/api/v1/iam/users` | `SignUpCommand` → 201 + `Location` |
-| `GET` | `/api/v1/iam/users/:id` | `GetUserByIdQuery` |
-| `POST` | `/api/v1/iam/users/:id/sessions` | `SignInCommand` → 201 + `Location` |
-| `DELETE` | `/api/v1/iam/users/:id/sessions/current` | `SignOutCommand` → 204 |
-| `PATCH` | `/api/v1/iam/users/:id/secret` | `ChangeSecretCommand` |
-| `PATCH` | `/api/v1/iam/users/:id/email` | `ChangeEmailCommand` |
-| `POST` | `/api/v1/iam/users/:id/email/verifications` | `VerifyEmailCommand` → 201 |
-| `POST` | `/api/v1/iam/users/:id/outside-identities` | `LinkOutsideIdentityCommand` → 201 + `Location` |
-| `DELETE` | `/api/v1/iam/users/:id/outside-identities/:provider` | `UnlinkOutsideIdentityCommand` → 204 |
-| `POST` | `/api/v1/iam/users/:id/roles` | `GrantSystemRoleCommand` → 201 + `Location` |
-| `DELETE` | `/api/v1/iam/users/:id/roles/:role` | `RevokeSystemRoleCommand` → 204 |
-| `PATCH` | `/api/v1/iam/users/:id/standing` | `SuspendAccessCommand` / `RestoreAccessCommand` |
+| Controller | Method | Endpoint | Command |
+|:--|:--|:--|:--|
+| Users | `POST` | `/api/v1/users` | `SignUpCommand` → 201 + `Location` |
+| Users | `GET` | `/api/v1/users/:id` | `GetUserByIdQuery` |
+| Users | `PATCH` | `/api/v1/users/:id/secret` | `ChangeSecretCommand` |
+| Users | `PATCH` | `/api/v1/users/:id/email` | `ChangeEmailCommand` |
+| Users | `POST` | `/api/v1/users/:id/email/verifications` | `VerifyEmailCommand` → 201 |
+| Users | `PATCH` | `/api/v1/users/:id/standing` | `SuspendAccessCommand` / `RestoreAccessCommand` |
+| Authentication | `POST` | `/api/v1/users/:id/sessions` | `SignInCommand` → 201 + `Location` |
+| Authentication | `GET` | `/api/v1/users/:id/sessions/current` | read open state |
+| Authentication | `DELETE` | `/api/v1/users/:id/sessions/current` | `SignOutCommand` → 204 |
+| Authentication | `POST` | `/api/v1/users/:id/outside-identities` | `LinkOutsideIdentityCommand` → 201 + `Location` |
+| Authentication | `GET` | `/api/v1/users/:id/outside-identities` | read linked factors |
+| Authentication | `DELETE` | `/api/v1/users/:id/outside-identities/:provider` | `UnlinkOutsideIdentityCommand` → 204 |
+| Authorization | `POST` | `/api/v1/users/:id/roles` | `GrantSystemRoleCommand` → 201 + `Location` |
+| Authorization | `GET` | `/api/v1/users/:id/roles` | `GetSystemRolesByPersonQuery` |
+| Authorization | `DELETE` | `/api/v1/users/:id/roles/:role` | `RevokeSystemRoleCommand` → 204 |
 
 ### 5.2 Resources + Transform
 
@@ -476,7 +484,7 @@ CREATE INDEX idx_users_standing ON iam.users (standing);
 ### 7.1 SignUp (UC1)
 
 ```
-POST /api/v1/iam/users { email }
+POST /api/v1/users { email }
  -> ValidationPipe -> SignupCommandFromResourceAssembler.toCommand() (mapea email -> ContactAddress, sin generar IDs)
  -> UserCommandServiceImpl.signUp() inside UNIT_OF_WORK.run()
      -> users.findByEmail() != null else AddressAlreadyHeldError
@@ -489,7 +497,7 @@ POST /api/v1/iam/users { email }
 ### 7.2 SignIn anchor (UC2)
 
 ```
-POST /api/v1/iam/users/:id/sessions { proofKind }
+POST /api/v1/users/:id/sessions { proofKind }
  -> SignInCommand -> UserCommandServiceImpl.signIn()
      -> proofs.holds() BEFORE run() (Auth0 executor verdict, observed never performed; red fuera del tx)
      -> inside UNIT_OF_WORK.run(): findById() else UserNotFoundError
