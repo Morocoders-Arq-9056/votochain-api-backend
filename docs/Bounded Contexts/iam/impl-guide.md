@@ -402,25 +402,26 @@ export class UserRepositoryImpl implements UserRepository {
 
 One controller per domain concern (same URIs a single controller would serve —
 the split is code organization, the contract does not move):
-`UsersController` (`users`: the identity and its state),
-`AuthenticationController` (`users/:id`: sessions + outside factors — how
-identity is proven), `AuthorizationController` (`users/:id/roles`: grants —
-what identity may do). `@UseFilters(IamExceptionFilter)`, global `ValidationPipe`.
+`UsersController` (`users`: the identity, its contact facts, and its linked
+factors), `AuthenticationController` (`auth`: the session cycle, working from
+what callers actually know — addresses, never user ids),
+`AuthorizationController` (`users/:id/roles`: grants — what identity may do).
+`@UseFilters(IamExceptionFilter)`, global `ValidationPipe`.
 
 | Controller | Method | Endpoint | Command |
 |:--|:--|:--|:--|
 | Users | `POST` | `/api/v1/users` | `SignUpCommand` → 201 + `Location` |
-| Users | `GET` | `/api/v1/users/:id` | `GetUserByIdQuery` |
+| Users | `GET` | `/api/v1/users/:id` | `GetUserByIdQuery` (+ `GetUserByEmailQuery` for address resolution) |
 | Users | `PATCH` | `/api/v1/users/:id/secret` | `ChangeSecretCommand` |
 | Users | `PATCH` | `/api/v1/users/:id/email` | `ChangeEmailCommand` |
 | Users | `POST` | `/api/v1/users/:id/email/verifications` | `VerifyEmailCommand` → 201 |
 | Users | `PATCH` | `/api/v1/users/:id/standing` | `SuspendAccessCommand` / `RestoreAccessCommand` |
-| Authentication | `POST` | `/api/v1/users/:id/sessions` | `SignInCommand` → 201 + `Location` |
-| Authentication | `GET` | `/api/v1/users/:id/sessions/current` | read open state |
-| Authentication | `DELETE` | `/api/v1/users/:id/sessions/current` | `SignOutCommand` → 204 |
-| Authentication | `POST` | `/api/v1/users/:id/outside-identities` | `LinkOutsideIdentityCommand` → 201 + `Location` |
-| Authentication | `GET` | `/api/v1/users/:id/outside-identities` | read linked factors |
-| Authentication | `DELETE` | `/api/v1/users/:id/outside-identities/:provider` | `UnlinkOutsideIdentityCommand` → 204 |
+| Users | `POST` | `/api/v1/users/:id/outside-identities` | `LinkOutsideIdentityCommand` → 201 + `Location` |
+| Users | `GET` | `/api/v1/users/:id/outside-identities` | read linked factors |
+| Users | `DELETE` | `/api/v1/users/:id/outside-identities/:provider` | `UnlinkOutsideIdentityCommand` → 204 |
+| Authentication | `POST` | `/api/v1/auth/sign-up` | `SignUpCommand` → 201 + `Location` |
+| Authentication | `POST` | `/api/v1/auth/sign-in` | resolve address → `SignInCommand` → 200 |
+| Authentication | `POST` | `/api/v1/auth/sign-out` | resolve address → `SignOutCommand` → 204 |
 | Authorization | `POST` | `/api/v1/users/:id/roles` | `GrantSystemRoleCommand` → 201 + `Location` |
 | Authorization | `GET` | `/api/v1/users/:id/roles` | `GetSystemRolesByPersonQuery` |
 | Authorization | `DELETE` | `/api/v1/users/:id/roles/:role` | `RevokeSystemRoleCommand` → 204 |
@@ -497,7 +498,7 @@ POST /api/v1/users { email }
 ### 7.2 SignIn anchor (UC2)
 
 ```
-POST /api/v1/users/:id/sessions { proofKind }
+POST /api/v1/auth/sign-in { email, proofKind }
  -> SignInCommand -> UserCommandServiceImpl.signIn()
      -> proofs.holds() BEFORE run() (Auth0 executor verdict, observed never performed; red fuera del tx)
      -> inside UNIT_OF_WORK.run(): findById() else UserNotFoundError
@@ -561,4 +562,4 @@ Open questions carried: supersede-vs-refuse confirmation; failed-proof threshold
 - **domain** (plain unit, sin `Test.createTestingModule`): `User.signup()` → `signIn` (2º supersede `SUPERSEDED`) → `signOut` → `suspend` (cierra sesión) → `restore`; `cancel`-like guards (`NoOpenSessionError`, `LastAdminRefusedError`); eventos drenados vía `pullDomainEvents()`.
 - **application**: mocks a mano de `UserRepository`/`ProofVerificationService`, o `overrideProvider(USER_REPOSITORY)` / `overrideProvider(PROOF_VERIFICATION_SERVICE)` (Fake sigue como double de test).
 - **infrastructure**: Testcontainers Postgres real — round-trip `iam.users`, `parseAccessStanding()` con fila corrupta (lanza, nunca `as`), `findByEmail` único.
-- **interfaces**: supertest (`POST users → POST :id/sessions → DELETE :id/sessions/current → PATCH :id/standing`) o controller con tokens mockeados.
+- **interfaces**: supertest (`POST users|auth/sign-up → auth/sign-in → auth/sign-out → PATCH :id/standing`) o controller con tokens mockeados.
