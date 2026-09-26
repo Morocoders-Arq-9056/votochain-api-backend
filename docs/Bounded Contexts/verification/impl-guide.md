@@ -319,14 +319,14 @@ Controller delgado + filtro BC. Rate-limit en `request` (guardia de ejecución, 
 
 | Método | Endpoint | Descripción |
 |:--|:--|:--|
-| `POST` | `/api/v1/verifications/challenges` | `RequestVerificationChallengeCommand` → 201 + `Location` (entrega sync vía ACL, no en eventos) |
-| `POST` | `/api/v1/verifications/challenges/:id/answer` | `AnswerVerificationChallengeCommand` → confirma / cuenta / invalida |
-| `GET` | `/api/v1/verifications/standing?personId=&purpose=` | UC4: usable ahora + intentos restantes |
-| `GET` | `/api/v1/verifications/history?personId=&purpose=` | Scrutiny |
+| `POST` | `/api/v1/challenges` | `RequestVerificationChallengeCommand` → 201 + `Location` (entrega sync vía ACL, no en eventos) |
+| `POST` | `/api/v1/challenges/:id/answers` | `AnswerVerificationChallengeCommand` → confirma / cuenta / invalida |
+| `GET` | `/api/v1/challenges/:id` | Challenge con standing e intentos restantes |
+| `GET` | `/api/v1/challenges?personId=&purpose=` | Scrutiny: todas las de la pareja, ordenadas |
 
 ```json
-POST /api/v1/verifications/challenges        { "personId": "per-uuid", "purpose": "login" }  → 201 { "challengeId": "ch-xxx", "expiresAt": "..." }
-POST /api/v1/verifications/challenges/:id/answer  { "code": "482913" }  → 200 { "standing": "CONFIRMED" } | 409 { "standing": "OPEN", "remaining": 3 } | 410 gone
+POST /api/v1/challenges        { "personId": "per-uuid", "purpose": "login" }  → 201 { "challengeId": "ch-xxx", "expiresAt": "..." }
+POST /api/v1/challenges/:id/answers  { "code": "482913" }  → 200 { "standing": "CONFIRMED" } | 409 { "standing": "OPEN", "remaining": 3 } | 410 gone
 ```
 
 ACL publicada (primitivas): `export const VERIFICATION_CONTEXT_FACADE = Symbol('VERIFICATION_CONTEXT_FACADE'); export interface VerificationContextFacade { requestChallenge(personId, purpose): Promise<string>; answerChallenge(challengeId, code): Promise<{ standing: string; remaining: number }>; getStanding(personId, purpose): Promise<{ usable: boolean; remaining: number }>; }` + impl en `application/acl/`; `verification.module.ts` `exports: [VERIFICATION_CONTEXT_FACADE]`. Resources con `class-validator`; assemblers estáticos. `VerificationExceptionFilter` mapea los 5 errores (`NoUsableChallengeError`/`AttemptNotHeldError` → 404, `AlreadyAnsweredError` → 409, `PurposeUnknownError`/`ContactNotAllowedError` → 422).
@@ -358,7 +358,7 @@ CREATE INDEX ix_standing ON verification.challenges (person_id, purpose, standin
 ## 7. Flujos CQRS por Caso de Uso
 
 **UC1 Request:** `POST /challenges` → valida `Purpose` cerrado + `mayContactNow` (403 `ContactNotAllowed`) → UoW: supersede del OPEN previo + `request()` + `save` → publicar `ChallengeRequestedEvent`/`ChallengeInvalidatedEvent` tras commit → instrucción sync a Notifications → 201 + `Location`.
-**UC2 Answer (ancla):** `POST /challenges/:id/answer` → UoW: `findById` → `compare.matches(plain, codeHash)` (juzgado fuera, nunca guardado) → `answer(holds)` → `save` → publicar tras commit (`ChallengeConfirmedEvent` | `ChallengeAttemptFailedEvent` [+ `ChallengeInvalidatedEvent` si agotó]) → handler interno → IAM (R9, solo el hecho).
+**UC2 Answer (ancla):** `POST /challenges/:id/answers` → UoW: `findById` → `compare.matches(plain, codeHash)` (juzgado fuera, nunca guardado) → `answer(holds)` → `save` → publicar tras commit (`ChallengeConfirmedEvent` | `ChallengeAttemptFailedEvent` [+ `ChallengeInvalidatedEvent` si agotó]) → handler interno → IAM (R9, solo el hecho).
 **UC3 Expire (lazy, sin scheduler en Sprint-01):** el juicio autoritativo vive en `answer(holds, now)` (rama expirada) y `answerChallengeStanding(now)`; `expireVerificationChallenge` ejecuta `expire(now)` como barrido explicito/admin → `ChallengeExpiredEvent` si el OPEN vencio. **UC4 Standing:** query → `answerChallengeStanding()` → `{ usable, remaining }` (flujos IAM, throttling).
 
 ## 8. Integración con otros BCs
@@ -393,4 +393,4 @@ Project override: ALL events carry Event suffix (deviates from skill collision-o
 - **domain** (plain unit): `request()` → `answer` wrong ×5 → `INVALIDATED`; `request()` → `answer` correct → `CONFIRMED`; segundo `request` supersede el OPEN previo; `answerChallengeStanding()` no muta ni emite.
 - **application**: mocks de repo + `CODE_COMPARE_SERVICE` (Fake) + `ExternalIamService`/`ExternalConsentService`, o `overrideProvider(...)`.
 - **infrastructure**: Testcontainers Postgres — `uq_open_pair` parcial, round-trip + `parsePurpose()` corrupto.
-- **interfaces**: supertest (`POST challenges → answer ×5 → INVALIDATED`; `request → answer → CONFIRMED`).
+- **interfaces**: supertest (`POST challenges → POST :id/answers ×5 → INVALIDATED`; `request → answer → CONFIRMED`).

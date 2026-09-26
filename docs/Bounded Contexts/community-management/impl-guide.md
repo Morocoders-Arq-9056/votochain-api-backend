@@ -322,21 +322,18 @@ Admins as `simple-json` (small, always loaded with root, never queried per-child
 
 ### 5.1 REST Controller
 
-`@Controller('api/v1/communities')`, `@UseFilters(CommunityExceptionFilter)`.
+`@Controller('communities')` (global `api/v1` prefix), `@UseFilters(CommunityExceptionFilter)`.
 
-Filtro `CommunityExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `CommunityNotFoundError → 404`, `AdminNotHeldError → 404`, `PolicyUndefinedError → 422`, `CommunityAlreadyExistsError → 409`, `LastAdministratorError → 409` (incluye `last admin while active`), `AdminAlreadyAppointedError → 409`, `CommunityNotActiveError → 409`, `ArchivedIsTerminalError → 409`, `IllegalCommunityTransitionError → 409`.
+Filtro `CommunityExceptionFilter` (skill: toda excepción del agregado tiene entrada `@Catch`): `CommunityNotFoundError → 404`, `AdminNotHeldError → 404`, `PersonUnknownError → 404`, `PolicyUndefinedError → 422`, `CommunityAlreadyExistsError → 409`, `LastAdministratorError → 409` (incluye `last admin while active`), `AdminAlreadyAppointedError → 409`, `CommunityNotActiveError → 409`, `ArchivedIsTerminalError → 409`, `IllegalCommunityTransitionError → 409`.
 
 | Method | Endpoint | Command |
 |:--|:--|:--|
-| `POST` | `/api/v1/communities` | `RegisterCommunityCommand` |
-| `POST` | `/api/v1/communities/:id/activate` | `ActivateCommunityCommand` |
+| `POST` | `/api/v1/communities` | `RegisterCommunityCommand` → 201 + `Location` |
+| `PATCH` | `/api/v1/communities/:id/standing` | `Activate/Suspend/Reactivate/ArchiveCommunityCommand` (estado deseado, no acción) |
 | `PATCH` | `/api/v1/communities/:id/settings` | `UpdateCommunitySettingsCommand` |
 | `PUT` | `/api/v1/communities/:id/policy` | `DefineVotingPolicyCommand` |
-| `POST` | `/api/v1/communities/:id/admins` | `AppointCommunityAdminCommand` |
-| `DELETE` | `/api/v1/communities/:id/admins/:personId` | `RemoveCommunityAdminCommand` |
-| `POST` | `/api/v1/communities/:id/suspend` | `SuspendCommunityCommand` |
-| `POST` | `/api/v1/communities/:id/reactivate` | `ReactivateCommunityCommand` |
-| `POST` | `/api/v1/communities/:id/archive` | `ArchiveCommunityCommand` |
+| `POST` | `/api/v1/communities/:id/admins` | `AppointCommunityAdminCommand` → 201 + `Location` |
+| `DELETE` | `/api/v1/communities/:id/admins/:personId` | `RemoveCommunityAdminCommand` → 204 |
 | `GET` | `/api/v1/communities/:id` (+ `/policy`, `/standing`, `/admins`) | queries |
 
 ### 5.2 Resources + Transform
@@ -462,4 +459,4 @@ Open questions carried: who may define policy/suspend (product+legal); suspensio
 - **domain** (plain unit): `register()` → `defineVotingPolicy()` (supersede-chain, copias congeladas intactas) → `activate` (exige policy + ≥1 admin) → `archive` terminal (`assertMutable()` rechaza todo después).
 - **application**: mocks de `CommunityRepository` + `ExternalIamService`, o `overrideProvider(COMMUNITY_REPOSITORY)`.
 - **infrastructure**: Testcontainers Postgres — round-trip `community.communities` (`policy`/`admins` JSONB), parsers con dato corrupto.
-- **interfaces**: supertest (`POST communities → PUT policy → POST activate → GET standing{acceptsMembers:true}`).
+- **interfaces**: supertest (`POST communities → PUT policy → PATCH standing{ACTIVE} → GET standing{acceptsMembers:true}`).

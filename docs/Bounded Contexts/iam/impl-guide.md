@@ -28,7 +28,7 @@ src/iam/
 │   │   ├── iam.controller.ts
 │   │   ├── resources/                  # DTOs con class-validator
 │   │   │   ├── signup-user.resource.ts
-│   │   │   ├── signin-user.resource.ts
+  │   │   │   ├── sign-in.resource.ts
 │   │   │   ├── change-email.resource.ts
 │   │   │   └── user.resource.ts
 │   │   ├── transform/                  # assemblers resource <-> command
@@ -400,19 +400,22 @@ export class UserRepositoryImpl implements UserRepository {
 
 ### 5.1 REST Controller
 
-`@Controller('api/v1/iam/users')`, `@UseFilters(IamExceptionFilter)`, global `ValidationPipe`.
+`@Controller('iam/users')` (global `api/v1` prefix), `@UseFilters(IamExceptionFilter)`, global `ValidationPipe`.
 
 | Method | Endpoint | Command |
 |:--|:--|:--|
-| `POST` | `/api/v1/iam/users/signup` | `SignUpCommand` |
-| `POST` | `/api/v1/iam/users/signin` | `SignInCommand` |
-| `POST` | `/api/v1/iam/users/signout` | `SignOutCommand` |
-| `PATCH` | `/api/v1/iam/users/email` | `ChangeEmailCommand` |
-| `POST` | `/api/v1/iam/users/email/verify` | `VerifyEmailCommand` |
-| `POST` | `/api/v1/iam/users/roles` | `GrantSystemRoleCommand` |
-| `DELETE` | `/api/v1/iam/users/roles` | `RevokeSystemRoleCommand` |
-| `POST` | `/api/v1/iam/users/suspend` | `SuspendAccessCommand` |
-| `POST` | `/api/v1/iam/users/restore` | `RestoreAccessCommand` |
+| `POST` | `/api/v1/iam/users` | `SignUpCommand` → 201 + `Location` |
+| `GET` | `/api/v1/iam/users/:id` | `GetUserByIdQuery` |
+| `POST` | `/api/v1/iam/users/:id/sessions` | `SignInCommand` → 201 + `Location` |
+| `DELETE` | `/api/v1/iam/users/:id/sessions/current` | `SignOutCommand` → 204 |
+| `PATCH` | `/api/v1/iam/users/:id/secret` | `ChangeSecretCommand` |
+| `PATCH` | `/api/v1/iam/users/:id/email` | `ChangeEmailCommand` |
+| `POST` | `/api/v1/iam/users/:id/email/verifications` | `VerifyEmailCommand` → 201 |
+| `POST` | `/api/v1/iam/users/:id/outside-identities` | `LinkOutsideIdentityCommand` → 201 + `Location` |
+| `DELETE` | `/api/v1/iam/users/:id/outside-identities/:provider` | `UnlinkOutsideIdentityCommand` → 204 |
+| `POST` | `/api/v1/iam/users/:id/roles` | `GrantSystemRoleCommand` → 201 + `Location` |
+| `DELETE` | `/api/v1/iam/users/:id/roles/:role` | `RevokeSystemRoleCommand` → 204 |
+| `PATCH` | `/api/v1/iam/users/:id/standing` | `SuspendAccessCommand` / `RestoreAccessCommand` |
 
 ### 5.2 Resources + Transform
 
@@ -473,7 +476,7 @@ CREATE INDEX idx_users_standing ON iam.users (standing);
 ### 7.1 SignUp (UC1)
 
 ```
-POST /api/v1/iam/users/signup { email }
+POST /api/v1/iam/users { email }
  -> ValidationPipe -> SignupCommandFromResourceAssembler.toCommand() (mapea email -> ContactAddress, sin generar IDs)
  -> UserCommandServiceImpl.signUp() inside UNIT_OF_WORK.run()
      -> users.findByEmail() != null else AddressAlreadyHeldError
@@ -486,7 +489,7 @@ POST /api/v1/iam/users/signup { email }
 ### 7.2 SignIn anchor (UC2)
 
 ```
-POST /api/v1/iam/users/signin { userId, proofKind }
+POST /api/v1/iam/users/:id/sessions { proofKind }
  -> SignInCommand -> UserCommandServiceImpl.signIn()
      -> proofs.holds() BEFORE run() (Auth0 executor verdict, observed never performed; red fuera del tx)
      -> inside UNIT_OF_WORK.run(): findById() else UserNotFoundError
@@ -550,4 +553,4 @@ Open questions carried: supersede-vs-refuse confirmation; failed-proof threshold
 - **domain** (plain unit, sin `Test.createTestingModule`): `User.signup()` → `signIn` (2º supersede `SUPERSEDED`) → `signOut` → `suspend` (cierra sesión) → `restore`; `cancel`-like guards (`NoOpenSessionError`, `LastAdminRefusedError`); eventos drenados vía `pullDomainEvents()`.
 - **application**: mocks a mano de `UserRepository`/`ProofVerificationService`, o `overrideProvider(USER_REPOSITORY)` / `overrideProvider(PROOF_VERIFICATION_SERVICE)` (Fake sigue como double de test).
 - **infrastructure**: Testcontainers Postgres real — round-trip `iam.users`, `parseAccessStanding()` con fila corrupta (lanza, nunca `as`), `findByEmail` único.
-- **interfaces**: supertest (`POST signup → signin → signout → suspend → restore`) o controller con tokens mockeados.
+- **interfaces**: supertest (`POST users → POST :id/sessions → DELETE :id/sessions/current → PATCH :id/standing`) o controller con tokens mockeados.
