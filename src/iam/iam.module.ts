@@ -11,6 +11,8 @@ import { PROOF_VERIFICATION_SERVICE } from "./application/internal/outboundservi
 import { SESSION_ARTIFACT_SERVICE } from "./application/internal/outboundservices/session/session-artifact.service.js";
 import { EXTERNAL_NOTIFICATIONS_SERVICE } from "./application/internal/outboundservices/acl/external-notifications.service.js";
 import { AuthenticationController } from "./interfaces/rest/controllers/authentication.controller.js";
+import { AuthorizationController } from "./interfaces/rest/controllers/authorization.controller.js";
+import { UsersController } from "./interfaces/rest/controllers/users.controller.js";
 import { IAM_CONTEXT_FACADE } from "./interfaces/acl/iam-context.facade.js";
 import { UserRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/user-repository.impl.js";
 import { UserPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/user-persistence.assembler.js";
@@ -33,7 +35,7 @@ import { LogOnlyNotificationsFacade } from "./infrastructure/notifications/log-o
  */
 @Module({
   imports: [TypeOrmModule.forFeature([UserOrmEntity])],
-  controllers: [AuthenticationController],
+  controllers: [UsersController, AuthenticationController, AuthorizationController],
   providers: [
     UserPersistenceAssembler,
     UserCommandServiceImpl,
