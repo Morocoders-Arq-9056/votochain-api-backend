@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Patch, Post, Res, UseFilters } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Patch, Post, Res, UseFilters } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
@@ -10,12 +10,14 @@ import { UserResource } from '../resources/user.resource.js';
 import { SignUpResource } from '../resources/sign-up.resource.js';
 import { ChangeEmailResource, VerifyEmailResource } from '../resources/change-email.resource.js';
 import { StandingUpdateResource } from '../resources/standing-update.resource.js';
-import { ChangeSecretResource } from '../resources/outside-identity.resource.js';
+import { ChangeSecretResource, LinkOutsideIdentityResource } from '../resources/outside-identity.resource.js';
 import { UserResourceFromEntityAssembler } from '../transform/user-resource-from-entity.assembler.js';
 import { SignUpCommandFromResourceAssembler } from '../transform/sign-up-command-from-resource.assembler.js';
 import { ChangeSecretCommand } from '../../../domain/model/commands/change-secret.command.js';
 import { ChangeEmailCommand } from '../../../domain/model/commands/change-email.command.js';
 import { VerifyEmailCommand } from '../../../domain/model/commands/verify-email.command.js';
+import { LinkOutsideIdentityCommand } from '../../../domain/model/commands/link-outside-identity.command.js';
+import { UnlinkOutsideIdentityCommand } from '../../../domain/model/commands/unlink-outside-identity.command.js';
 import { SuspendAccessCommand } from '../../../domain/model/commands/suspend-access.command.js';
 import { RestoreAccessCommand } from '../../../domain/model/commands/restore-access.command.js';
 import { UserId } from '../../../domain/model/valueobjects/user-id.value-object.js';
@@ -125,11 +127,59 @@ export class UsersController {
   }
 
   /**
+   * Links a proof factor to the account.
+   */
+  @Post(':id/outside-identities')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiCreatedResponse({ type: UserResource })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Already linked or not active' })
+  async linkOutside(
+    @Param('id') id: string,
+    @Body() resource: LinkOutsideIdentityResource,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<UserResource> {
+    const userId = this.toUserId(id);
+    await this.commands.linkOutsideIdentity(
+      new LinkOutsideIdentityCommand(userId, resource.provider, resource.externalId),
+    );
+    response.location(`/api/v1/users/${userId.value}/outside-identities/${resource.provider}`);
+    return this.requery(userId);
+  }
+
+  /**
+   * Lists the proof factors linked to the account (at most one in Sprint-01).
+   */
+  @Get(':id/outside-identities')
+  @ApiOkResponse({ description: 'Linked outside proof factors' })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  async listOutside(@Param('id') id: string): Promise<{ provider: string }[]> {
+    const user = await this.requery(this.toUserId(id));
+    return user.outsideProver ? [{ provider: user.outsideProver }] : [];
+  }
+
+  /**
+   * Unlinks a proof factor (refused when final way to prove).
+   */
+  @Delete(':id/outside-identities/:provider')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOkResponse({ description: 'Outside proof unlinked' })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  @ApiConflictResponse({ description: 'Last proof refused' })
+  async unlinkOutside(
+    @Param('id') id: string,
+    @Param('provider') provider: string,
+  ): Promise<void> {
+    await this.commands.unlinkOutsideIdentity(
+      new UnlinkOutsideIdentityCommand(this.toUserId(id), provider),
+    );
+  }
+
+  /**
    * Moves the identity to the desired standing. The body carries state,
    * not an action: the server still judges the transition and refuses
    * illegal ones (422) or a missing suspend reason (422).
-   */
-  @Patch(':id/standing')
+   */  @Patch(':id/standing')
   @ApiOkResponse({ type: UserResource })
   @ApiNotFoundResponse({ description: 'User not found' })
   async updateStanding(

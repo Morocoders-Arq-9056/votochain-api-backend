@@ -1,4 +1,5 @@
 import { GetAccessStandingByPersonQuery } from "../model/queries/get-access-standing-by-person.query.js";
+import { GetUserByEmailQuery } from "../model/queries/get-user-by-email.query.js";
 import { GetUserByIdQuery } from "../model/queries/get-user-by-id.query.js";
 import { User } from "../model/aggregates/user.aggregate.js"
 import { GetSystemRolesByPersonQuery } from "../model/queries/get-system-roles-by-person.query.js";
@@ -19,6 +20,15 @@ export interface UserQueryService {
    * @returns a promise that resolves to the User if found, or null if not found.
    */
   getUserById(query: GetUserByIdQuery): Promise<User | null>;
+
+  /**
+   * Handles the retrieval of a User by their contact address.
+   * Lets inbound adapters resolve the identity callers actually know (email)
+   * into the technical id the commands require; unknown addresses yield null.
+   * @param query the query containing the email address.
+   * @returns a promise that resolves to the User if found, or null if not found.
+   */
+  getUserByEmail(query: GetUserByEmailQuery): Promise<User | null>;
 
   /**
    * Answers the access standing of a User by their associated person identifier.

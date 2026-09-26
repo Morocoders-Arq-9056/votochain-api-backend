@@ -4,6 +4,7 @@ import type { UserRepository } from '../../../domain/repositories/user.repositor
 import { UserQueryService } from '../../../domain/services/user-query.service.js';
 import { GetAccessStandingByPersonQuery } from '../../../domain/model/queries/get-access-standing-by-person.query.js';
 import { GetSystemRolesByPersonQuery } from '../../../domain/model/queries/get-system-roles-by-person.query.js';
+import { GetUserByEmailQuery } from '../../../domain/model/queries/get-user-by-email.query.js';
 import { GetUserByIdQuery } from '../../../domain/model/queries/get-user-by-id.query.js';
 import { User } from '../../../domain/model/aggregates/user.aggregate.js';
 import type { SystemRole } from '../../../domain/model/valueobjects/system-role.value-object.js';
@@ -31,6 +32,14 @@ export class UserQueryServiceImpl implements UserQueryService {
    */
   async getUserById(query: GetUserByIdQuery): Promise<User | null> {
     return this.users.findById(query.userId);
+  }
+
+  /**
+   * Returns the user holding the given address, or null when nobody does.
+   * @inheritdoc
+   */
+  async getUserByEmail(query: GetUserByEmailQuery): Promise<User | null> {
+    return this.users.findByEmail(query.email);
   }
 
   /**
