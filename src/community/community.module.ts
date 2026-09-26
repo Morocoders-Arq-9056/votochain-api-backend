@@ -12,7 +12,9 @@ import { CommunityRepositoryImpl } from "./infrastructure/persistence/typeorm/ad
 import { CommunityPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/community-persistence.assembler.js";
 import { CommunityOrmEntity } from "./infrastructure/persistence/typeorm/entities/community.orm-entity.js";
 import { ExternalIamServiceImpl } from "./infrastructure/iam/external-iam.service.js";
-import { CommunityController } from "./interfaces/rest/controllers/community.controller.js";
+import { CommunitiesController } from "./interfaces/rest/controllers/communities.controller.js";
+import { PoliciesController } from "./interfaces/rest/controllers/policies.controller.js";
+import { AdminsController } from "./interfaces/rest/controllers/admins.controller.js";
 import { CommunityContextFacadeImpl } from "./application/acl/community-context-facade.impl.js";
 import { COMMUNITY_CONTEXT_FACADE } from "./interfaces/acl/community-context.facade.js";
 
@@ -32,7 +34,7 @@ import { COMMUNITY_CONTEXT_FACADE } from "./interfaces/acl/community-context.fac
  */
 @Module({
   imports: [TypeOrmModule.forFeature([CommunityOrmEntity]), IamModule],
-  controllers: [CommunityController],
+  controllers: [CommunitiesController, PoliciesController, AdminsController],
   providers: [
     CommunityPersistenceAssembler,
     CommunityCommandServiceImpl,
