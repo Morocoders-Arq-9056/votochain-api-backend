@@ -19,6 +19,7 @@ import { RegisterCommunityResource } from '../resources/register-community.resou
 import { UpdateCommunitySettingsResource } from '../resources/update-community-settings.resource.js';
 import { StandingUpdateResource } from '../resources/standing-update.resource.js';
 import { CommunityResource } from '../resources/community.resource.js';
+import { CommunityStandingResource } from '../resources/community-standing.resource.js';
 import { CommunityParamsAssembler } from '../transform/community-params.assembler.js';
 import { RegisterCommunityCommandFromResourceAssembler } from '../transform/register-community-command-from-resource.assembler.js';
 import { UpdateCommunitySettingsCommandFromResourceAssembler } from '../transform/update-settings-command-from-resource.assembler.js';
@@ -145,6 +146,20 @@ export class CommunitiesController {
   private requireReason(reason: string | undefined): string {
     if (!reason?.trim()) throw new IllegalCommunityTransitionError('reason required');
     return reason;
+  }
+
+  /**
+   * Answers the standing question: standing plus acceptance (UC10, no facts).
+   */
+  @Get(':id/standing')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ type: CommunityStandingResource })
+  @ApiNotFoundResponse({ description: 'Unknown community' })
+  async getStanding(@Param('id') id: string): Promise<CommunityStandingResource> {
+    const answer = await this.queries.getStandingByCommunity(
+      new GetStandingByCommunityQuery(CommunityParamsAssembler.toCommunityId(id)),
+    );
+    return new CommunityStandingResource(answer.standing, answer.acceptsMembers, answer.acceptsProposals);
   }
 
   /**
