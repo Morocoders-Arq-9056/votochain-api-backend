@@ -59,7 +59,7 @@ describe('Community lifecycle (e2e)', () => {
     const { id } = await register('flow');
 
     await server().put(`/api/v1/communities/${id}/policy`).send(policy).expect(HttpStatus.OK);
-    const activated = await server().post(`/api/v1/communities/${id}/activate`).expect(HttpStatus.OK);
+    const activated = await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' }).expect(HttpStatus.OK);
     expect(activated.body.standing).toBe('ACTIVE');
 
     const standing = await server().get(`/api/v1/communities/${id}/standing`).expect(HttpStatus.OK);
@@ -71,7 +71,7 @@ describe('Community lifecycle (e2e)', () => {
 
   it('activate before any policy → 422 PolicyUndefined', async () => {
     const { id } = await register('nopolitics');
-    const res = await server().post(`/api/v1/communities/${id}/activate`)
+    const res = await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' })
       .expect(HttpStatus.UNPROCESSABLE_ENTITY);
 
     expect(res.body.statusCode).toBe(HttpStatus.UNPROCESSABLE_ENTITY);
@@ -87,13 +87,13 @@ describe('Community lifecycle (e2e)', () => {
   it('suspend → refuses beginnings; reactivate → accepts again', async () => {
     const { id } = await register('pause');
     await server().put(`/api/v1/communities/${id}/policy`).send(policy).expect(HttpStatus.OK);
-    await server().post(`/api/v1/communities/${id}/activate`).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' }).expect(HttpStatus.OK);
 
-    await server().post(`/api/v1/communities/${id}/suspend`).send({ reason: 'roll review' }).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'SUSPENDED', reason: 'roll review' }).expect(HttpStatus.OK);
     const suspended = await server().get(`/api/v1/communities/${id}/standing`).expect(HttpStatus.OK);
     expect(suspended.body).toMatchObject({ standing: 'SUSPENDED', acceptsMembers: false, acceptsProposals: false });
 
-    await server().post(`/api/v1/communities/${id}/reactivate`).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' }).expect(HttpStatus.OK);
     const active = await server().get(`/api/v1/communities/${id}/standing`).expect(HttpStatus.OK);
     expect(active.body).toMatchObject({ standing: 'ACTIVE', acceptsMembers: true });
   });
@@ -101,7 +101,7 @@ describe('Community lifecycle (e2e)', () => {
   it('remove last admin while ACTIVE → 409', async () => {
     const { id } = await register('lastadmin');
     await server().put(`/api/v1/communities/${id}/policy`).send(policy).expect(HttpStatus.OK);
-    await server().post(`/api/v1/communities/${id}/activate`).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' }).expect(HttpStatus.OK);
 
     await server().delete(`/api/v1/communities/${id}/admins/${founder}`).expect(HttpStatus.CONFLICT);
   });
@@ -116,17 +116,25 @@ describe('Community lifecycle (e2e)', () => {
   it('archive → terminal: settings, policy and activate all refuse', async () => {
     const { id } = await register('end');
     await server().put(`/api/v1/communities/${id}/policy`).send(policy).expect(HttpStatus.OK);
-    await server().post(`/api/v1/communities/${id}/activate`).expect(HttpStatus.OK);
-    await server().post(`/api/v1/communities/${id}/archive`).send({ reason: 'dissolved' }).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' }).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ARCHIVED', reason: 'dissolved' }).expect(HttpStatus.OK);
 
     await server().patch(`/api/v1/communities/${id}/settings`)
       .send({ name: name('x'), domicile: 'Lima, Peru', contact: 'contact@example.dev' })
       .expect(HttpStatus.CONFLICT);
     await server().put(`/api/v1/communities/${id}/policy`).send(policy).expect(HttpStatus.CONFLICT);
-    await server().post(`/api/v1/communities/${id}/activate`).expect(HttpStatus.CONFLICT);
+    await server().patch(`/api/v1/communities/${id}/standing`).send({ standing: 'ACTIVE' }).expect(HttpStatus.CONFLICT);
 
     const standing = await server().get(`/api/v1/communities/${id}/standing`).expect(HttpStatus.OK);
     expect(standing.body).toMatchObject({ standing: 'ARCHIVED', acceptsMembers: false });
+  });
+
+  it('remove admin while REGISTERED → 204', async () => {
+    const { id } = await register('dropadmin');
+    await server().delete(`/api/v1/communities/${id}/admins/${founder}`).expect(HttpStatus.NO_CONTENT);
+
+    const res = await server().get(`/api/v1/communities/${id}`).expect(HttpStatus.OK);
+    expect(res.body.admins).toHaveLength(0);
   });
 
   it('GET unknown community → 404', async () => {

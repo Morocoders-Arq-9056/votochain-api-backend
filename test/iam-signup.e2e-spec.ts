@@ -5,7 +5,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from './../src/app.module.js';
 import { GlobalExceptionFilter } from './../src/shared/interfaces/rest/filters/global-exception.filter.js';
 
-describe('IAM signup (e2e)', () => {
+describe('IAM identity lifecycle (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
@@ -26,37 +26,135 @@ describe('IAM signup (e2e)', () => {
     await app.close();
   });
 
-  const email = (tag: string) => `signup-${tag}-${Date.now()}@votachain.dev`;
+  const server = () => request(app.getHttpServer());
+  const email = (tag: string) => `lifecycle-${tag}-${Date.now()}@votachain.dev`;
 
-  it('POST /api/v1/iam/users/signup → 201 + UserResource without token', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/iam/users/signup')
-      .send({ email: email('new') })
-      .expect(HttpStatus.CREATED);
+  async function signUp(tag: string): Promise<{ id: string; email: string }> {
+    const address = email(tag);
+    const res = await server().post('/api/v1/iam/users').send({ email: address }).expect(HttpStatus.CREATED);
 
     expect(res.body.userId).toMatch(/^usr-/);
-    expect(res.body.email).toContain('@votachain.dev');
     expect(res.body.token).toBeUndefined();
+    expect(res.headers.location).toContain(res.body.userId);
+    return { id: res.body.userId as string, email: address };
+  }
+
+  async function signUpActive(tag: string): Promise<{ id: string; email: string }> {
+    const created = await signUp(tag);
+    await server()
+      .post(`/api/v1/iam/users/${created.id}/email/verifications`)
+      .send({ email: created.email })
+      .expect(HttpStatus.CREATED);
+    return created;
+  }
+
+  it('POST /api/v1/iam/users → 201 + UserResource without token', async () => {
+    const { email: address } = await signUp('new');
+    expect(address).toContain('@votachain.dev');
   });
 
   it('POST the same email twice → 201 then 409', async () => {
     const dup = email('dup');
-    await request(app.getHttpServer())
-      .post('/api/v1/iam/users/signup')
-      .send({ email: dup })
-      .expect(HttpStatus.CREATED);
-    const res = await request(app.getHttpServer())
-      .post('/api/v1/iam/users/signup')
-      .send({ email: dup })
-      .expect(HttpStatus.CONFLICT);
+    await server().post('/api/v1/iam/users').send({ email: dup }).expect(HttpStatus.CREATED);
+    const res = await server().post('/api/v1/iam/users').send({ email: dup }).expect(HttpStatus.CONFLICT);
 
     expect(res.body.statusCode).toBe(HttpStatus.CONFLICT);
   });
 
   it('POST a malformed email → 400', async () => {
-    await request(app.getHttpServer())
-      .post('/api/v1/iam/users/signup')
-      .send({ email: 'not-an-email' })
-      .expect(HttpStatus.BAD_REQUEST);
+    await server().post('/api/v1/iam/users').send({ email: 'not-an-email' }).expect(HttpStatus.BAD_REQUEST);
+  });
+
+  it('signin → signout moves the session open then closed', async () => {
+    const { id } = await signUpActive('session');
+
+    const opened = await server()
+      .post(`/api/v1/iam/users/${id}/sessions`)
+      .send({ proofKind: 'LOCAL' })
+      .expect(HttpStatus.CREATED);
+    expect(opened.body.session).toBe('SESSION_OPEN');
+    expect(opened.headers.location).toContain(`/api/v1/iam/users/${id}/sessions/current`);
+
+    await server().delete(`/api/v1/iam/users/${id}/sessions/current`).expect(HttpStatus.NO_CONTENT);
+    const closed = await server().get(`/api/v1/iam/users/${id}`).expect(HttpStatus.OK);
+    expect(closed.body.session).toBe('SESSION_CLOSED');
+  });
+
+  it('signout with no open session → 409', async () => {
+    const { id } = await signUp('nosession');
+    await server().delete(`/api/v1/iam/users/${id}/sessions/current`).expect(HttpStatus.CONFLICT);
+  });
+
+  it('suspend → restore moves standing SUSPENDED then ACTIVE', async () => {
+    const { id } = await signUp('standing');
+
+    const suspended = await server()
+      .patch(`/api/v1/iam/users/${id}/standing`)
+      .send({ standing: 'SUSPENDED', reason: 'abuse' })
+      .expect(HttpStatus.OK);
+    expect(suspended.body.standing).toBe('SUSPENDED');
+
+    const restored = await server()
+      .patch(`/api/v1/iam/users/${id}/standing`)
+      .send({ standing: 'ACTIVE' })
+      .expect(HttpStatus.OK);
+    expect(restored.body.standing).toBe('ACTIVE');
+  });
+
+  it('suspend without reason → 422', async () => {
+    const { id } = await signUp('noreason');
+    await server()
+      .patch(`/api/v1/iam/users/${id}/standing`)
+      .send({ standing: 'SUSPENDED' })
+      .expect(HttpStatus.UNPROCESSABLE_ENTITY);
+  });
+
+  it('change secret → 200; change email → 200 unverified; verify → 201 ACTIVE', async () => {
+    const { id } = await signUp('contact');
+
+    await server().patch(`/api/v1/iam/users/${id}/secret`).send({ newSecret: 'ref-2' }).expect(HttpStatus.OK);
+
+    const changed = email('changed');
+    const emailChanged = await server()
+      .patch(`/api/v1/iam/users/${id}/email`)
+      .send({ newEmail: changed })
+      .expect(HttpStatus.OK);
+    expect(emailChanged.body.email).toBe(changed);
+    expect(emailChanged.body.emailVerified).toBe(false);
+
+    const verified = await server()
+      .post(`/api/v1/iam/users/${id}/email/verifications`)
+      .send({ email: changed })
+      .expect(HttpStatus.CREATED);
+    expect(verified.body.emailVerified).toBe(true);
+    expect(verified.body.standing).toBe('ACTIVE');
+  });
+
+  it('link → 201 + Location; link again → 409; unlink → 204', async () => {
+    const { id } = await signUpActive('outside');
+
+    const linked = await server()
+      .post(`/api/v1/iam/users/${id}/outside-identities`)
+      .send({ provider: 'auth0', externalId: 'auth0|123456' })
+      .expect(HttpStatus.CREATED);
+    expect(linked.headers.location).toContain(`/api/v1/iam/users/${id}/outside-identities/auth0`);
+
+    await server()
+      .post(`/api/v1/iam/users/${id}/outside-identities`)
+      .send({ provider: 'auth0', externalId: 'auth0|123456' })
+      .expect(HttpStatus.CONFLICT);
+
+    await server().delete(`/api/v1/iam/users/${id}/outside-identities/auth0`).expect(HttpStatus.NO_CONTENT);
+  });
+
+  it('grant held role → 409; revoke missing role → 409', async () => {
+    const { id } = await signUp('roles');
+
+    await server().post(`/api/v1/iam/users/${id}/roles`).send({ role: 'USER' }).expect(HttpStatus.CONFLICT);
+    await server().delete(`/api/v1/iam/users/${id}/roles/ADMIN`).expect(HttpStatus.CONFLICT);
+  });
+
+  it('GET unknown user → 404', async () => {
+    await server().get('/api/v1/iam/users/usr-missing').expect(HttpStatus.NOT_FOUND);
   });
 });
