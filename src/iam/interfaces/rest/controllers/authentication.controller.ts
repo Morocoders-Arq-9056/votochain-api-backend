@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
@@ -61,6 +61,17 @@ export class AuthenticationController {
   }
 
   /**
+   * Returns whether the single session is currently open.
+   */
+  @Get('sessions/current')
+  @ApiOkResponse({ description: 'Whether the session is open' })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  async getSession(@Param('id') id: string): Promise<{ open: boolean }> {
+    const user = await this.requery(this.toUserId(id));
+    return { open: user.session === 'SESSION_OPEN' };
+  }
+
+  /**
    * Closes the open session.
    */
   @Delete('sessions/current')
@@ -91,6 +102,17 @@ export class AuthenticationController {
     );
     response.location(`/api/v1/users/${userId.value}/outside-identities/${resource.provider}`);
     return this.requery(userId);
+  }
+
+  /**
+   * Lists the linked outside proof factors (at most one in Sprint-01).
+   */
+  @Get('outside-identities')
+  @ApiOkResponse({ description: 'Linked outside proof factors' })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  async listOutside(@Param('id') id: string): Promise<{ provider: string }[]> {
+    const user = await this.requery(this.toUserId(id));
+    return user.outsideProver ? [{ provider: user.outsideProver }] : [];
   }
 
   /**

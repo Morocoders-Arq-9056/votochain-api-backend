@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
@@ -6,6 +6,7 @@ import type { UserCommandService } from '../../../domain/services/user-command.s
 import { USER_QUERY_SERVICE } from '../../../domain/services/user-query.service.js';
 import type { UserQueryService } from '../../../domain/services/user-query.service.js';
 import { GetUserByIdQuery } from '../../../domain/model/queries/get-user-by-id.query.js';
+import { GetSystemRolesByPersonQuery } from '../../../domain/model/queries/get-system-roles-by-person.query.js';
 import { UserResource } from '../resources/user.resource.js';
 import { GrantRoleResource } from '../resources/system-role.resource.js';
 import { UserResourceFromEntityAssembler } from '../transform/user-resource-from-entity.assembler.js';
@@ -37,6 +38,19 @@ export class AuthorizationController {
     @Inject(USER_COMMAND_SERVICE) private readonly commands: UserCommandService,
     @Inject(USER_QUERY_SERVICE) private readonly queries: UserQueryService,
   ) {}
+
+  /**
+   * Lists the system roles held by the identity.
+   */
+  @Get()
+  @ApiOkResponse({ type: [String] })
+  @ApiNotFoundResponse({ description: 'User not found' })
+  async listRoles(@Param('id') id: string): Promise<string[]> {
+    const userId = this.toUserId(id);
+    const user = await this.queries.getUserById(new GetUserByIdQuery(userId));
+    if (!user) throw new NotFoundException();
+    return this.queries.getSystemRolesByPerson(new GetSystemRolesByPersonQuery(user.personId));
+  }
 
   /**
    * Grants a global technical system role.

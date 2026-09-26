@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Query, Res, UseFilters } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Query, Res, UseFilters, BadRequestException } from '@nestjs/common';
 import { ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags, ApiUnprocessableEntityResponse } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { VERIFICATION_COMMAND_SERVICE } from '../../../domain/services/verification-command.service.js';
@@ -81,6 +81,8 @@ export class ChallengesController {
     @Query('personId') personId: string,
     @Query('purpose') purpose: string,
   ): Promise<ChallengeResource[]> {
+    if (!personId?.trim() || !purpose?.trim())
+      throw new BadRequestException('personId and purpose are required');
     const challenges = await this.queries.getChallengeHistoryByPersonAndPurpose(
       new GetChallengeHistoryByPersonAndPurposeQuery(
         VerificationParamsAssembler.toPersonId(personId),
