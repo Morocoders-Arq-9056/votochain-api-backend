@@ -1,10 +1,12 @@
 import { GetAccessStandingByPersonQuery } from "../model/queries/get-access-standing-by-person.query.js";
+import { GetIdentityHistoryByPersonQuery } from "../model/queries/get-identity-history-by-person.query.js";
 import { GetUserByEmailQuery } from "../model/queries/get-user-by-email.query.js";
 import { GetUserByIdQuery } from "../model/queries/get-user-by-id.query.js";
 import { User } from "../model/aggregates/user.aggregate.js"
 import { GetSystemRolesByPersonQuery } from "../model/queries/get-system-roles-by-person.query.js";
 import type { SystemRole } from "../model/valueobjects/system-role.value-object.js";
 import type { AccessStandingAnswer } from "../model/valueobjects/access-standing-answer.value-object.js";
+import type { UserHistoryEntry } from "../model/valueobjects/user-history-entry.value-object.js";
 
 /**
  * Interface for the user query service.
@@ -43,5 +45,13 @@ export interface UserQueryService {
    * @returns a promise that resolves to an array of SystemRole values.
    */
   getSystemRolesByPerson(query: GetSystemRolesByPersonQuery): Promise<SystemRole[]>;
+
+  /**
+   * Handles the retrieval of identity history for scrutiny, in order:
+   * sign-ups, proofs, sessions, roles, suspensions.
+   * @param query the query containing the person identifier.
+   * @returns a promise that resolves to the history entries, oldest first.
+   */
+  getIdentityHistoryByPerson(query: GetIdentityHistoryByPersonQuery): Promise<UserHistoryEntry[]>;
 }
 export const USER_QUERY_SERVICE = Symbol('USER_QUERY_SERVICE');

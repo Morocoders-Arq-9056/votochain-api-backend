@@ -3,12 +3,14 @@ import { USER_REPOSITORY } from '../../../domain/repositories/user.repository.js
 import type { UserRepository } from '../../../domain/repositories/user.repository.js';
 import { UserQueryService } from '../../../domain/services/user-query.service.js';
 import { GetAccessStandingByPersonQuery } from '../../../domain/model/queries/get-access-standing-by-person.query.js';
+import { GetIdentityHistoryByPersonQuery } from '../../../domain/model/queries/get-identity-history-by-person.query.js';
 import { GetSystemRolesByPersonQuery } from '../../../domain/model/queries/get-system-roles-by-person.query.js';
 import { GetUserByEmailQuery } from '../../../domain/model/queries/get-user-by-email.query.js';
 import { GetUserByIdQuery } from '../../../domain/model/queries/get-user-by-id.query.js';
 import { User } from '../../../domain/model/aggregates/user.aggregate.js';
 import type { SystemRole } from '../../../domain/model/valueobjects/system-role.value-object.js';
 import type { AccessStandingAnswer } from '../../../domain/model/valueobjects/access-standing-answer.value-object.js';
+import type { UserHistoryEntry } from '../../../domain/model/valueobjects/user-history-entry.value-object.js';
 
 /**
  * Read-only query service for User standing, roles and identity lookup.
@@ -58,5 +60,15 @@ export class UserQueryServiceImpl implements UserQueryService {
   async getSystemRolesByPerson(query: GetSystemRolesByPersonQuery): Promise<SystemRole[]> {
     const user = await this.users.findByPersonId(query.personId);
     return user ? [...user.roles] : [];
+  }
+
+  /**
+   * Returns identity history for scrutiny, oldest first.
+   * No event store in Sprint-01: resolves empty; contract kept stable for later.
+   * @inheritdoc
+   */
+  async getIdentityHistoryByPerson(query: GetIdentityHistoryByPersonQuery): Promise<UserHistoryEntry[]> {
+    void query;
+    return [];
   }
 }
