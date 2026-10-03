@@ -2,6 +2,7 @@ import { GetAccessStandingByPersonQuery } from "../model/queries/get-access-stan
 import { GetIdentityHistoryByPersonQuery } from "../model/queries/get-identity-history-by-person.query.js";
 import { GetUserByEmailQuery } from "../model/queries/get-user-by-email.query.js";
 import { GetUserByIdQuery } from "../model/queries/get-user-by-id.query.js";
+import { GetUserByPersonIdQuery } from "../model/queries/get-user-by-person-id.query.js";
 import { User } from "../model/aggregates/user.aggregate.js"
 import { GetSystemRolesByPersonQuery } from "../model/queries/get-system-roles-by-person.query.js";
 import type { SystemRole } from "../model/valueobjects/system-role.value-object.js";
@@ -31,6 +32,15 @@ export interface UserQueryService {
    * @returns a promise that resolves to the User if found, or null if not found.
    */
   getUserByEmail(query: GetUserByEmailQuery): Promise<User | null>;
+
+  /**
+   * Handles the retrieval of a User by their associated person identifier.
+   * Lets inbound ACL consumers (e.g. verification confirmations) resolve
+   * the identity without touching the repository port directly.
+   * @param query the query containing the person identifier.
+   * @returns a promise that resolves to the User if found, or null if not found.
+   */
+  getUserByPersonId(query: GetUserByPersonIdQuery): Promise<User | null>;
 
   /**
    * Answers the access standing of a User by their associated person identifier.

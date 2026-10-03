@@ -4,6 +4,9 @@
  *
  * Sprint-01 has no event store, so queries resolve `[]`; the shape stays
  * stable for the later persistence-backed implementation.
+ *
+ * @author Ethan Matias Aliaga Aguirre
+ * @since 2026-09-28
  */
 export class UserHistoryEntry {
   constructor(

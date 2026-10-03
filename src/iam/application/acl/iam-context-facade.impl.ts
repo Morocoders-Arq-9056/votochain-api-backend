@@ -6,9 +6,8 @@ import type { UserCommandService } from "../../domain/services/user-command.serv
 import { PersonId } from "../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { GetAccessStandingByPersonQuery } from "../../domain/model/queries/get-access-standing-by-person.query.js";
 import { GetSystemRolesByPersonQuery } from "../../domain/model/queries/get-system-roles-by-person.query.js";
+import { GetUserByPersonIdQuery } from "../../domain/model/queries/get-user-by-person-id.query.js";
 import { VerifyEmailCommand } from "../../domain/model/commands/verify-email.command.js";
-import { USER_REPOSITORY } from "../../domain/repositories/user.repository.js";
-import type { UserRepository } from "../../domain/repositories/user.repository.js";
 import type { AccessStandingAnswerDto, IamContextFacade } from "../../interfaces/acl/iam-context.facade.js";
 
 /**
@@ -23,15 +22,14 @@ import type { AccessStandingAnswerDto, IamContextFacade } from "../../interfaces
 @Injectable()
 export class IamContextFacadeImpl implements IamContextFacade {
   /**
-   * Wires the facade over query/command services and the repository.
+   * Wires the facade over query/command services only. Inbound ACLs never
+   * touch repositories directly: user resolution runs through the query side.
    * @param queries Read-only query service.
    * @param commands Write command service.
-   * @param users Repository used to resolve userId from personId for verify.
    */
   constructor(
     @Inject(USER_QUERY_SERVICE) private readonly queries: UserQueryService,
     @Inject(USER_COMMAND_SERVICE) private readonly commands: UserCommandService,
-    @Inject(USER_REPOSITORY) private readonly users: UserRepository,
   ) {}
 
   /**
@@ -59,8 +57,8 @@ export class IamContextFacadeImpl implements IamContextFacade {
    * @param personId Person id (`per-` prefixed string).
    */
   async markVerified(personId: string): Promise<void> {
-    const user = await this.users.findByPersonId(PersonId.of(personId));
+    const user = await this.queries.getUserByPersonId(new GetUserByPersonIdQuery(PersonId.of(personId)));
     if (!user) return;
-    await this.commands.verifyEmail(new VerifyEmailCommand(user.id, user.contact.email));
+    await this.commands.verifyEmail(new VerifyEmailCommand(user.id));
   }
 }

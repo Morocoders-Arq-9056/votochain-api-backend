@@ -7,6 +7,7 @@ import { GetIdentityHistoryByPersonQuery } from '../../../domain/model/queries/g
 import { GetSystemRolesByPersonQuery } from '../../../domain/model/queries/get-system-roles-by-person.query.js';
 import { GetUserByEmailQuery } from '../../../domain/model/queries/get-user-by-email.query.js';
 import { GetUserByIdQuery } from '../../../domain/model/queries/get-user-by-id.query.js';
+import { GetUserByPersonIdQuery } from '../../../domain/model/queries/get-user-by-person-id.query.js';
 import { User } from '../../../domain/model/aggregates/user.aggregate.js';
 import type { SystemRole } from '../../../domain/model/valueobjects/system-role.value-object.js';
 import type { AccessStandingAnswer } from '../../../domain/model/valueobjects/access-standing-answer.value-object.js';
@@ -42,6 +43,14 @@ export class UserQueryServiceImpl implements UserQueryService {
    */
   async getUserByEmail(query: GetUserByEmailQuery): Promise<User | null> {
     return this.users.findByEmail(query.email);
+  }
+
+  /**
+   * Returns the user for the given person id, or null when unknown.
+   * @inheritdoc
+   */
+  async getUserByPersonId(query: GetUserByPersonIdQuery): Promise<User | null> {
+    return this.users.findByPersonId(query.personId);
   }
 
   /**

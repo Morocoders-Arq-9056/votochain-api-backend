@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsString } from 'class-validator';
 
 /**
  * Request rotating the local secret (ends the open session).
@@ -23,8 +23,8 @@ export class ChangeSecretResource {
  */
 export class LinkOutsideIdentityResource {
   /** Outside prover name (`auth0` in Sprint-01). */
-  @ApiProperty({ example: 'auth0' })
-  @IsString() @IsNotEmpty() provider: string;
+  @ApiProperty({ example: 'auth0', enum: ['auth0'] })
+  @IsString() @IsNotEmpty() @IsIn(['auth0']) provider: string;
 
   /** External id at the prover. */
   @ApiProperty({ example: 'auth0|123456' })

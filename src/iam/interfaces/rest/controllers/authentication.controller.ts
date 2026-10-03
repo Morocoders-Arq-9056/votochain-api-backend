@@ -1,4 +1,5 @@
 import { Body, Controller, HttpCode, HttpStatus, Inject, NotFoundException, Post, Res, UseFilters } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
@@ -14,9 +15,9 @@ import { SignInResource } from '../resources/sign-in.resource.js';
 import { SignOutResource } from '../resources/sign-out.resource.js';
 import { UserResourceFromEntityAssembler } from '../transform/user-resource-from-entity.assembler.js';
 import { SignUpCommandFromResourceAssembler } from '../transform/sign-up-command-from-resource.assembler.js';
+import { IamParamsAssembler } from '../transform/iam-params.assembler.js';
 import { SignInCommand } from '../../../domain/model/commands/sign-in.command.js';
 import { SignOutCommand } from '../../../domain/model/commands/sign-out.command.js';
-import { parseProofKind } from '../../../domain/model/valueobjects/proof-kind.value-object.js';
 import { UserNotFoundError } from '../../../domain/exceptions/user-not-found.error.js';
 import { IamExceptionFilter } from '../filters/iam-exception.filter.js';
 
@@ -38,10 +39,12 @@ export class AuthenticationController {
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
    * @param queries Read-side application service.
+   * @param config Reads the global API prefix for Location headers.
    */
   constructor(
     @Inject(USER_COMMAND_SERVICE) private readonly commands: UserCommandService,
     @Inject(USER_QUERY_SERVICE) private readonly queries: UserQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -58,7 +61,7 @@ export class AuthenticationController {
   ): Promise<UserResource> {
     const command = SignUpCommandFromResourceAssembler.toCommandFromResource(resource);
     const userId = await this.commands.signUp(command);
-    response.location(`/api/v1/users/${userId.value}`);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/users/${userId.value}`);
     const user = await this.queries.getUserById(new GetUserByIdQuery(userId));
     if (!user) throw new NotFoundException();
     return UserResourceFromEntityAssembler.toResourceFromEntity(user);
@@ -74,7 +77,7 @@ export class AuthenticationController {
   @ApiConflictResponse({ description: 'Suspended or proof not held' })
   async signIn(@Body() resource: SignInResource): Promise<UserResource> {
     const user = await this.requireByEmail(resource.email);
-    await this.commands.signIn(new SignInCommand(user.id, parseProofKind(resource.proofKind)));
+    await this.commands.signIn(new SignInCommand(user.id, IamParamsAssembler.toProofKind(resource.proofKind)));
     const current = await this.queries.getUserById(new GetUserByIdQuery(user.id));
     if (!current) throw new NotFoundException();
     return UserResourceFromEntityAssembler.toResourceFromEntity(current);

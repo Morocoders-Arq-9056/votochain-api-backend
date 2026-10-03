@@ -121,10 +121,10 @@ export class UserCommandServiceImpl implements UserCommandService {
    */
   async changeEmail(command: ChangeEmailCommand): Promise<void> {
     const user = await this.unitOfWork.run(async () => {
-      const holder = await this.userRepository.findByEmail(command.newEmail);
+      const holder = await this.userRepository.findByEmail(command.contact.email);
       if (holder && !holder.id.equals(command.userId)) throw new AddressAlreadyHeldError('address already held');
       const u = await this.require(command.userId);
-      u.changeEmail(command.newEmail);
+      u.changeEmail(command.contact);
       await this.userRepository.save(u);
       return u;
     });

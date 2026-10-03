@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Patch, Post, Res, UseFilters } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
@@ -13,16 +14,15 @@ import { StandingUpdateResource } from '../resources/standing-update.resource.js
 import { ChangeSecretResource, LinkOutsideIdentityResource } from '../resources/outside-identity.resource.js';
 import { UserResourceFromEntityAssembler } from '../transform/user-resource-from-entity.assembler.js';
 import { SignUpCommandFromResourceAssembler } from '../transform/sign-up-command-from-resource.assembler.js';
-import { ChangeSecretCommand } from '../../../domain/model/commands/change-secret.command.js';
-import { ChangeEmailCommand } from '../../../domain/model/commands/change-email.command.js';
-import { VerifyEmailCommand } from '../../../domain/model/commands/verify-email.command.js';
-import { LinkOutsideIdentityCommand } from '../../../domain/model/commands/link-outside-identity.command.js';
-import { UnlinkOutsideIdentityCommand } from '../../../domain/model/commands/unlink-outside-identity.command.js';
+import { ChangeSecretCommandFromResourceAssembler } from '../transform/change-secret-command-from-resource.assembler.js';
+import { ChangeEmailCommandFromResourceAssembler } from '../transform/change-email-command-from-resource.assembler.js';
+import { VerifyEmailCommandFromResourceAssembler } from '../transform/verify-email-command-from-resource.assembler.js';
+import { LinkOutsideIdentityCommandFromResourceAssembler } from '../transform/link-outside-identity-command-from-resource.assembler.js';
+import { UnlinkOutsideIdentityCommandFromResourceAssembler } from '../transform/unlink-outside-identity-command-from-resource.assembler.js';
+import { IamParamsAssembler } from '../transform/iam-params.assembler.js';
 import { SuspendAccessCommand } from '../../../domain/model/commands/suspend-access.command.js';
 import { RestoreAccessCommand } from '../../../domain/model/commands/restore-access.command.js';
-import { UserId } from '../../../domain/model/valueobjects/user-id.value-object.js';
-import { IllegalUserStateError } from '../../../domain/exceptions/illegal-user-state.error.js';
-import { UserNotFoundError } from '../../../domain/exceptions/user-not-found.error.js';
+import type { UserId } from '../../../domain/model/valueobjects/user-id.value-object.js';
 import { IamExceptionFilter } from '../filters/iam-exception.filter.js';
 
 /**
@@ -42,10 +42,12 @@ export class UsersController {
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
    * @param queries Read-side application service.
+   * @param config Reads the global API prefix for Location headers.
    */
   constructor(
     @Inject(USER_COMMAND_SERVICE) private readonly commands: UserCommandService,
     @Inject(USER_QUERY_SERVICE) private readonly queries: UserQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -62,7 +64,7 @@ export class UsersController {
   ): Promise<UserResource> {
     const command = SignUpCommandFromResourceAssembler.toCommandFromResource(resource);
     const userId = await this.commands.signUp(command);
-    response.location(`/api/v1/users/${userId.value}`);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/users/${userId.value}`);
     return this.requery(userId);
   }
 
@@ -73,7 +75,7 @@ export class UsersController {
   @ApiOkResponse({ type: UserResource })
   @ApiNotFoundResponse({ description: 'User not found' })
   async getUser(@Param('id') id: string): Promise<UserResource> {
-    return this.requery(this.toUserId(id));
+    return this.requery(IamParamsAssembler.toUserId(id));
   }
 
   /**
@@ -86,8 +88,8 @@ export class UsersController {
     @Param('id') id: string,
     @Body() resource: ChangeSecretResource,
   ): Promise<UserResource> {
-    const userId = this.toUserId(id);
-    await this.commands.changeSecret(new ChangeSecretCommand(userId, resource.newSecret));
+    const userId = IamParamsAssembler.toUserId(id);
+    await this.commands.changeSecret(ChangeSecretCommandFromResourceAssembler.toCommand(id, resource));
     return this.requery(userId);
   }
 
@@ -103,8 +105,8 @@ export class UsersController {
     @Param('id') id: string,
     @Body() resource: ChangeEmailResource,
   ): Promise<UserResource> {
-    const userId = this.toUserId(id);
-    await this.commands.changeEmail(new ChangeEmailCommand(userId, resource.newEmail));
+    const userId = IamParamsAssembler.toUserId(id);
+    await this.commands.changeEmail(ChangeEmailCommandFromResourceAssembler.toCommand(id, resource));
     return this.requery(userId);
   }
 
@@ -120,9 +122,9 @@ export class UsersController {
     @Body() resource: VerifyEmailResource,
     @Res({ passthrough: true }) response: Response,
   ): Promise<UserResource> {
-    const userId = this.toUserId(id);
-    await this.commands.verifyEmail(new VerifyEmailCommand(userId, resource.email));
-    response.location(`/api/v1/users/${userId.value}/email`);
+    const userId = IamParamsAssembler.toUserId(id);
+    await this.commands.verifyEmail(VerifyEmailCommandFromResourceAssembler.toCommand(id));
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/users/${userId.value}/email`);
     return this.requery(userId);
   }
 
@@ -139,11 +141,11 @@ export class UsersController {
     @Body() resource: LinkOutsideIdentityResource,
     @Res({ passthrough: true }) response: Response,
   ): Promise<UserResource> {
-    const userId = this.toUserId(id);
+    const userId = IamParamsAssembler.toUserId(id);
     await this.commands.linkOutsideIdentity(
-      new LinkOutsideIdentityCommand(userId, resource.provider, resource.externalId),
+      LinkOutsideIdentityCommandFromResourceAssembler.toCommand(id, resource),
     );
-    response.location(`/api/v1/users/${userId.value}/outside-identities/${resource.provider}`);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/users/${userId.value}/outside-identities/${resource.provider}`);
     return this.requery(userId);
   }
 
@@ -154,7 +156,7 @@ export class UsersController {
   @ApiOkResponse({ description: 'Linked outside proof factors' })
   @ApiNotFoundResponse({ description: 'User not found' })
   async listOutside(@Param('id') id: string): Promise<{ provider: string }[]> {
-    const user = await this.requery(this.toUserId(id));
+    const user = await this.requery(IamParamsAssembler.toUserId(id));
     return user.outsideProver ? [{ provider: user.outsideProver }] : [];
   }
 
@@ -171,7 +173,7 @@ export class UsersController {
     @Param('provider') provider: string,
   ): Promise<void> {
     await this.commands.unlinkOutsideIdentity(
-      new UnlinkOutsideIdentityCommand(this.toUserId(id), provider),
+      UnlinkOutsideIdentityCommandFromResourceAssembler.toCommand(id, provider),
     );
   }
 
@@ -186,32 +188,11 @@ export class UsersController {
     @Param('id') id: string,
     @Body() resource: StandingUpdateResource,
   ): Promise<UserResource> {
-    const userId = this.toUserId(id);
+    const userId = IamParamsAssembler.toUserId(id);
     if (resource.standing === 'SUSPENDED')
-      await this.commands.suspendAccess(new SuspendAccessCommand(userId, this.requireReason(resource.reason)));
+      await this.commands.suspendAccess(new SuspendAccessCommand(userId, IamParamsAssembler.toReason(resource.reason)));
     else await this.commands.restoreAccess(new RestoreAccessCommand(userId));
     return this.requery(userId);
-  }
-
-  /**
-   * Parses an identity path string or raises the read rejection.
-   * @param id Raw user id string.
-   */
-  private toUserId(id: string): UserId {
-    try {
-      return UserId.of(id);
-    } catch {
-      throw new UserNotFoundError('user not found');
-    }
-  }
-
-  /**
-   * Requires a recorded reason for suspension.
-   * @param reason Raw reason string.
-   */
-  private requireReason(reason: string | undefined): string {
-    if (!reason?.trim()) throw new IllegalUserStateError('reason required');
-    return reason;
   }
 
   /**

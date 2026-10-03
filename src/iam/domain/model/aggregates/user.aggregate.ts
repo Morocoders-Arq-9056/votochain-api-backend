@@ -1,4 +1,5 @@
 import { AggregateRoot } from "../../../../shared/domain/model/aggregate-root.js";
+import type { DomainEvent } from "../../../../shared/domain/model/domain-event.js";
 import { IllegalUserStateError } from "../../exceptions/illegal-user-state.error.js";
 import { LastAdminRefusedError } from "../../exceptions/last-admin-refused.error.js";
 import { LastProofRefusedError } from "../../exceptions/last-proof-refused.error.js";
@@ -89,10 +90,10 @@ export class User extends AggregateRoot implements AccessStandable {
    * Validates a standing transition, mutates standing and registers the event.
    * Shared guard for suspend/restore; throws on illegal origin state.
    */
-  protected applyStandingTransition(from: AccessStanding, to: AccessStanding, event: { eventName: string }): void {
+  private applyStandingTransition(from: AccessStanding, to: AccessStanding, event: DomainEvent): void {
     if (this._standing !== from) throw new IllegalUserStateError(`standing ${this._standing} != ${from}`);
     this._standing = to;
-    this.registerEvent(event as never);
+    this.registerEvent(event);
   }
 
   /**
@@ -145,13 +146,15 @@ export class User extends AggregateRoot implements AccessStandable {
 
   /**
    * Changes the contact address, resetting verified standing until confirmation.
-   * @param newEmail Fresh, well-formed address held by nobody else.
+   * Rebuilds from the address so verification always resets, no matter how
+   * the caller constructed the contact.
+   * @param contact Fresh address held by nobody else.
    */
-  changeEmail(newEmail: string): void {
+  changeEmail(contact: ContactAddress): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     const oldEmail = this._contact.email;
-    this._contact = this._contact.change(newEmail);
-    this.registerEvent(new EmailChangedEvent(this._id, this._personId, oldEmail, newEmail));
+    this._contact = ContactAddress.create(contact.email);
+    this.registerEvent(new EmailChangedEvent(this._id, this._personId, oldEmail, this._contact.email));
   }
 
   /**

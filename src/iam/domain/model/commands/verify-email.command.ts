@@ -1,11 +1,7 @@
 import { UserId } from "../valueobjects/user-id.value-object.js";
 
 export class VerifyEmailCommand {
-  constructor(
-    public readonly userId: UserId,
-    public readonly email: string,
-  ) {
+  constructor(public readonly userId: UserId) {
     if (!userId) throw new Error('userId required');
-    if (!email?.trim()) throw new Error('email required');
   }
 }

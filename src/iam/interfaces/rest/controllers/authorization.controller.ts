@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
@@ -10,11 +11,10 @@ import { GetSystemRolesByPersonQuery } from '../../../domain/model/queries/get-s
 import { UserResource } from '../resources/user.resource.js';
 import { GrantRoleResource } from '../resources/system-role.resource.js';
 import { UserResourceFromEntityAssembler } from '../transform/user-resource-from-entity.assembler.js';
+import { IamParamsAssembler } from '../transform/iam-params.assembler.js';
 import { GrantSystemRoleCommand } from '../../../domain/model/commands/grant-system-role.command.js';
 import { RevokeSystemRoleCommand } from '../../../domain/model/commands/revoke-system-role.command.js';
-import { UserId } from '../../../domain/model/valueobjects/user-id.value-object.js';
-import { parseSystemRole } from '../../../domain/model/valueobjects/system-role.value-object.js';
-import { UserNotFoundError } from '../../../domain/exceptions/user-not-found.error.js';
+import type { UserId } from '../../../domain/model/valueobjects/user-id.value-object.js';
 import { IamExceptionFilter } from '../filters/iam-exception.filter.js';
 
 /**
@@ -33,10 +33,12 @@ export class AuthorizationController {
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
    * @param queries Read-side application service.
+   * @param config Reads the global API prefix for Location headers.
    */
   constructor(
     @Inject(USER_COMMAND_SERVICE) private readonly commands: UserCommandService,
     @Inject(USER_QUERY_SERVICE) private readonly queries: UserQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -46,7 +48,7 @@ export class AuthorizationController {
   @ApiOkResponse({ type: [String] })
   @ApiNotFoundResponse({ description: 'User not found' })
   async listRoles(@Param('id') id: string): Promise<string[]> {
-    const userId = this.toUserId(id);
+    const userId = IamParamsAssembler.toUserId(id);
     const user = await this.queries.getUserById(new GetUserByIdQuery(userId));
     if (!user) throw new NotFoundException();
     return this.queries.getSystemRolesByPerson(new GetSystemRolesByPersonQuery(user.personId));
@@ -65,9 +67,9 @@ export class AuthorizationController {
     @Body() resource: GrantRoleResource,
     @Res({ passthrough: true }) response: Response,
   ): Promise<UserResource> {
-    const userId = this.toUserId(id);
-    await this.commands.grantSystemRole(new GrantSystemRoleCommand(userId, parseSystemRole(resource.role)));
-    response.location(`/api/v1/users/${userId.value}/roles/${resource.role}`);
+    const userId = IamParamsAssembler.toUserId(id);
+    await this.commands.grantSystemRole(new GrantSystemRoleCommand(userId, IamParamsAssembler.toSystemRole(resource.role)));
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/users/${userId.value}/roles/${resource.role}`);
     return this.requery(userId);
   }
 
@@ -84,20 +86,8 @@ export class AuthorizationController {
     @Param('role') role: string,
   ): Promise<void> {
     await this.commands.revokeSystemRole(
-      new RevokeSystemRoleCommand(this.toUserId(id), parseSystemRole(role)),
+      new RevokeSystemRoleCommand(IamParamsAssembler.toUserId(id), IamParamsAssembler.toSystemRole(role)),
     );
-  }
-
-  /**
-   * Parses an identity path string or raises the read rejection.
-   * @param id Raw user id string.
-   */
-  private toUserId(id: string): UserId {
-    try {
-      return UserId.of(id);
-    } catch {
-      throw new UserNotFoundError('user not found');
-    }
   }
 
   /**
