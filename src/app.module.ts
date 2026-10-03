@@ -8,6 +8,9 @@ import { SharedModule } from './shared/shared.module.js';
 import { IamModule } from './iam/iam.module.js';
 import { VerificationModule } from './verification/verification.module.js';
 import { CommunityModule } from './community/community.module.js';
+import { MembershipModule } from './membership/membership.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
+import { VotingModule } from './voting/voting.module.js';
 import appConfig from './shared/infrastructure/application/configuration/app.config.js';
 import databaseConfig from './shared/infrastructure/persistence/configuration/database.config.js';
 import idempotencyConfig from './shared/infrastructure/idempotency/configuration/idempotency.config.js';
@@ -33,6 +36,9 @@ import { buildTypeOrmOptions } from './shared/infrastructure/persistence/typeorm
     IamModule,
     VerificationModule,
     CommunityModule,
+    MembershipModule,
+    NotificationsModule,
+    VotingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
