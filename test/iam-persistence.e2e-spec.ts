@@ -1,7 +1,6 @@
 import { DataSource, type Repository } from 'typeorm';
 import { PostgreSQLContainer, type StartedPostgreSQLContainer } from 'testcontainers';
 import { UserOrmEntity } from '../src/iam/infrastructure/persistence/typeorm/entities/user.orm-entity.js';
-import { SystemRoleAssignmentOrmEntity } from '../src/iam/infrastructure/persistence/typeorm/entities/system-role-assignment.orm-entity.js';
 import { UserPersistenceAssembler } from '../src/iam/infrastructure/persistence/typeorm/assemblers/user-persistence.assembler.js';
 import { User } from '../src/iam/domain/model/aggregates/user.aggregate.js';
 import { ContactAddress } from '../src/iam/domain/model/valueobjects/contact-address.value-object.js';
@@ -24,7 +23,7 @@ describe('IAM persistence (Testcontainers)', () => {
       username: container.getUsername(),
       password: container.getPassword(),
       database: container.getDatabase(),
-      entities: [UserOrmEntity, SystemRoleAssignmentOrmEntity],
+      entities: [UserOrmEntity],
       synchronize: true,
     });
     await ds.initialize();
@@ -36,21 +35,17 @@ describe('IAM persistence (Testcontainers)', () => {
     await container?.stop();
   });
 
-  it('round-trips a user with assignments, preserving grantedAt', async () => {
+  it('round-trips a user with roles, preserving the granted set', async () => {
     if (!repo) throw new Error('repository missing');
     const user = User.signUp({ contact: ContactAddress.create(mail('roundtrip')) });
 
     await repo.save(assembler.toOrmFromDomain(user));
-    const found = await repo.findOne({
-      where: { id: user.id.value },
-      relations: { assignments: true },
-    });
+    const found = await repo.findOne({ where: { id: user.id.value } });
     if (!found) throw new Error('seed missing');
 
     const rehydrated = assembler.toDomainFromOrm(found);
-    expect(rehydrated.roleAssignments).toHaveLength(1);
-    expect(rehydrated.roleAssignments[0]?.role).toBe(SystemRole.USER);
-    expect(rehydrated.roleAssignments[0]?.grantedAt).toBeInstanceOf(Date);
+    expect(rehydrated.roles).toEqual([SystemRole.USER]);
+    expect(rehydrated.contact.email).toBe(user.contact.email);
   });
 
   it('parseAccessStanding throws on a corrupt row instead of casting', async () => {
@@ -59,10 +54,7 @@ describe('IAM persistence (Testcontainers)', () => {
     await repo.save(assembler.toOrmFromDomain(user));
 
     await ds.query(`update iam.users set standing = 'BOGUS' where id = $1`, [user.id.value]);
-    const found = await repo.findOne({
-      where: { id: user.id.value },
-      relations: { assignments: true },
-    });
+    const found = await repo.findOne({ where: { id: user.id.value } });
     if (!found) throw new Error('seed missing');
 
     expect(() => assembler.toDomainFromOrm(found)).toThrow();
