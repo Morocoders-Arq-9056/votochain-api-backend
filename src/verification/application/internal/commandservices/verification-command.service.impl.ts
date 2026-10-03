@@ -8,11 +8,8 @@ import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-wor
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
 import { CODE_COMPARE_SERVICE } from "../outboundservices/codecompare/code-compare.service.js";
 import type { CodeCompareService } from "../outboundservices/codecompare/code-compare.service.js";
-import { EXTERNAL_CONSENT_SERVICE } from "../outboundservices/acl/external-consent.service.js";
 import type { ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
-import { EXTERNAL_IAM_SERVICE } from "../outboundservices/acl/external-iam.service.js";
 import type { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
-import { EXTERNAL_NOTIFICATIONS_SERVICE } from "../outboundservices/acl/external-notifications.service.js";
 import type { ExternalNotificationsService } from "../outboundservices/acl/external-notifications.service.js";
 import { VerificationChallenge } from "../../../domain/model/aggregates/verification-challenge.aggregate.js";
 import { ChallengeId } from "../../../domain/model/valueobjects/challenge-id.value-object.js";
@@ -65,9 +62,9 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     @Inject(VERIFICATION_CHALLENGE_REPOSITORY) private readonly challenges: VerificationChallengeRepository,
     @Inject(UNIT_OF_WORK) private readonly unitOfWork: IUnitOfWork,
     @Inject(CODE_COMPARE_SERVICE) private readonly compare: CodeCompareService,
-    @Inject(EXTERNAL_IAM_SERVICE) private readonly iam: ExternalIamService,
-    @Inject(EXTERNAL_CONSENT_SERVICE) private readonly consent: ExternalConsentService,
-    @Inject(EXTERNAL_NOTIFICATIONS_SERVICE) private readonly notifications: ExternalNotificationsService,
+    private readonly iam: ExternalIamService,
+    private readonly consent: ExternalConsentService,
+    private readonly notifications: ExternalNotificationsService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 

@@ -36,8 +36,8 @@ export class VerificationChallenge extends AggregateRoot implements ChallengeSta
   }
 
   answer(holds: boolean, now: Date): void {
-    if (this._standing !== ChallengeStanding.OPEN) throw new AlreadyAnsweredError('challenge ya respondido');
-    if (this._window.isElapsed(now)) { this._standing = ChallengeStanding.EXPIRED; this.registerEvent(new ChallengeExpiredEvent(this._id, this._personId, this._purpose)); throw new AlreadyAnsweredError('ventana vencida'); }
+    if (this._standing !== ChallengeStanding.OPEN) throw new AlreadyAnsweredError('challenge already answered');
+    if (this._window.isElapsed(now)) { this._standing = ChallengeStanding.EXPIRED; this.registerEvent(new ChallengeExpiredEvent(this._id, this._personId, this._purpose)); throw new AlreadyAnsweredError('validity window elapsed'); }
     if (holds) { this._standing = ChallengeStanding.CONFIRMED; this.registerEvent(new ChallengeConfirmedEvent(this._id, this._personId, this._purpose)); return; }
     this._attempts = this._attempts.counted();
     this.registerEvent(new ChallengeAttemptFailedEvent(this._id, this._personId, this._purpose, this._attempts.remaining()));

@@ -1,8 +1,7 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { ChallengeConfirmedEvent } from "../../../domain/model/events/challenge-confirmed.event.js";
 import { Purpose } from "../../../domain/model/valueobjects/purpose.value-object.js";
-import { EXTERNAL_IAM_SERVICE } from "../outboundservices/acl/external-iam.service.js";
 import type { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
 
 /**
@@ -24,14 +23,14 @@ export class ChallengeConfirmedEventHandler {
    * Wires the handler over the IAM ACL port.
    * @param iam Identity-existence and mark-verified gate.
    */
-  constructor(@Inject(EXTERNAL_IAM_SERVICE) private readonly iam: ExternalIamService) {}
+  constructor(private readonly iam: ExternalIamService) {}
 
   /**
    * Forwards email-verification confirmations to IAM (fact-only, never secret).
    * @param event The confirmed-challenge fact.
    */
   @OnEvent(ChallengeConfirmedEvent.eventName, { async: true })
-  async handle(event: ChallengeConfirmedEvent): Promise<void> {
+  async handleChallengeConfirmed(event: ChallengeConfirmedEvent): Promise<void> {
     try {
       if (event.purpose !== Purpose.EMAIL_VERIFICATION) {
         this.logger.log(`confirmed ${event.purpose} challenge for ${event.personId.value}: no consumer in Sprint-01`);

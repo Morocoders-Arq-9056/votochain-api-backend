@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { VERIFICATION_COMMAND_SERVICE } from "../../domain/services/verification-command.service.js";
 import type { VerificationCommandService } from "../../domain/services/verification-command.service.js";
 import { VERIFICATION_QUERY_SERVICE } from "../../domain/services/verification-query.service.js";
@@ -56,7 +56,7 @@ export class VerificationContextFacadeImpl implements VerificationContextFacade 
     const id = this.toChallengeId(challengeId);
     await this.commands.answerVerificationChallenge(new AnswerVerificationChallengeCommand(id, code));
     const challenge = await this.queries.getChallengeById(new GetChallengeByIdQuery(id));
-    if (!challenge) throw new NotFoundException();
+    if (!challenge) throw new NoUsableChallengeError('no usable challenge');
     return { standing: challenge.standing, remaining: challenge.attempts.remaining() };
   }
 

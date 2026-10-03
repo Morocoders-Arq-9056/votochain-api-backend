@@ -5,14 +5,13 @@ import { VERIFICATION_COMMAND_SERVICE } from '../../../domain/services/verificat
 import type { VerificationCommandService } from '../../../domain/services/verification-command.service.js';
 import { VERIFICATION_QUERY_SERVICE } from '../../../domain/services/verification-query.service.js';
 import type { VerificationQueryService } from '../../../domain/services/verification-query.service.js';
-import { AnswerVerificationChallengeCommand } from '../../../domain/model/commands/answer-verification-challenge.command.js';
 import { GetChallengeByIdQuery } from '../../../domain/model/queries/get-challenge-by-id.query.js';
 import { ChallengeId } from '../../../domain/model/valueobjects/challenge-id.value-object.js';
 import { ChallengeStanding } from '../../../domain/model/valueobjects/challenge-standing.value-object.js';
 import { VerificationChallenge } from '../../../domain/model/aggregates/verification-challenge.aggregate.js';
 import { AnswerChallengeResource } from '../resources/answer-challenge.resource.js';
 import { ChallengeResource } from '../resources/challenge.resource.js';
-import { VerificationParamsAssembler } from '../transform/verification-params.assembler.js';
+import { AnswerVerificationChallengeCommandFromResourceAssembler } from '../transform/answer-verification-challenge-command-from-resource.assembler.js';
 import { ChallengeResourceFromEntityAssembler } from '../transform/challenge-resource-from-entity.assembler.js';
 import { VerificationExceptionFilter } from '../filters/verification-exception.filter.js';
 
@@ -55,11 +54,9 @@ export class AnswersController {
     @Body() resource: AnswerChallengeResource,
     @Res({ passthrough: true }) response: Response,
   ): Promise<ChallengeResource> {
-    const challengeId = VerificationParamsAssembler.toChallengeId(id);
-    await this.commands.answerVerificationChallenge(
-      new AnswerVerificationChallengeCommand(challengeId, resource.code),
-    );
-    const challenge = await this.requery(challengeId);
+    const command = AnswerVerificationChallengeCommandFromResourceAssembler.toCommand(id, resource);
+    await this.commands.answerVerificationChallenge(command);
+    const challenge = await this.requery(command.challengeId);
     if (challenge.standing === ChallengeStanding.EXPIRED) response.status(HttpStatus.GONE);
     else if (challenge.standing !== ChallengeStanding.CONFIRMED) response.status(HttpStatus.CONFLICT);
     return challenge;

@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Query, Res, UseFilters, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags, ApiUnprocessableEntityResponse } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { VERIFICATION_COMMAND_SERVICE } from '../../../domain/services/verification-command.service.js';
@@ -31,10 +32,12 @@ export class ChallengesController {
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
    * @param queries Read-side application service.
+   * @param config Reads the global API prefix for Location headers.
    */
   constructor(
     @Inject(VERIFICATION_COMMAND_SERVICE) private readonly commands: VerificationCommandService,
     @Inject(VERIFICATION_QUERY_SERVICE) private readonly queries: VerificationQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -50,7 +53,7 @@ export class ChallengesController {
   ): Promise<ChallengeResource> {
     const command = RequestVerificationChallengeCommandFromResourceAssembler.toCommandFromResource(resource);
     const challengeId = await this.commands.requestVerificationChallenge(command);
-    response.location(`/api/v1/challenges/${challengeId.value}`);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/challenges/${challengeId.value}`);
     const challenge = await this.queries.getChallengeById(new GetChallengeByIdQuery(challengeId));
     if (!challenge) throw new NotFoundException();
     return ChallengeResourceFromEntityAssembler.toResourceFromEntity(challenge);
