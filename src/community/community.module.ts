@@ -7,11 +7,10 @@ import { CommunityEventLogger } from "./application/internal/eventhandlers/commu
 import { COMMUNITY_COMMAND_SERVICE } from "./domain/services/community-command.service.js";
 import { COMMUNITY_QUERY_SERVICE } from "./domain/services/community-query.service.js";
 import { COMMUNITY_REPOSITORY } from "./domain/repositories/community.repository.js";
-import { EXTERNAL_IAM_SERVICE } from "./application/internal/outboundservices/acl/external-iam.service.js";
+import { ExternalIamService } from "./application/internal/outboundservices/acl/external-iam.service.js";
 import { CommunityRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/community-repository.impl.js";
 import { CommunityPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/community-persistence.assembler.js";
 import { CommunityOrmEntity } from "./infrastructure/persistence/typeorm/entities/community.orm-entity.js";
-import { ExternalIamServiceImpl } from "./infrastructure/iam/external-iam.service.js";
 import { CommunitiesController } from "./interfaces/rest/controllers/communities.controller.js";
 import { PoliciesController } from "./interfaces/rest/controllers/policies.controller.js";
 import { AdminsController } from "./interfaces/rest/controllers/admins.controller.js";
@@ -40,12 +39,11 @@ import { COMMUNITY_CONTEXT_FACADE } from "./interfaces/acl/community-context.fac
     CommunityCommandServiceImpl,
     CommunityQueryServiceImpl,
     CommunityEventLogger,
-    ExternalIamServiceImpl,
+    ExternalIamService,
     CommunityContextFacadeImpl,
     { provide: COMMUNITY_REPOSITORY, useClass: CommunityRepositoryImpl },
     { provide: COMMUNITY_COMMAND_SERVICE, useClass: CommunityCommandServiceImpl },
     { provide: COMMUNITY_QUERY_SERVICE, useClass: CommunityQueryServiceImpl },
-    { provide: EXTERNAL_IAM_SERVICE, useClass: ExternalIamServiceImpl },
     { provide: COMMUNITY_CONTEXT_FACADE, useClass: CommunityContextFacadeImpl },
   ],
   exports: [COMMUNITY_CONTEXT_FACADE],

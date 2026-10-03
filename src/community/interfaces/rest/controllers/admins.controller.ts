@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Post, Res, UseFilters } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { COMMUNITY_COMMAND_SERVICE } from '../../../domain/services/community-command.service.js';
@@ -32,10 +33,12 @@ export class AdminsController {
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
    * @param queries Read-side application service.
+   * @param config Reads the global API prefix for Location headers.
    */
   constructor(
     @Inject(COMMUNITY_COMMAND_SERVICE) private readonly commands: CommunityCommandService,
     @Inject(COMMUNITY_QUERY_SERVICE) private readonly queries: CommunityQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -55,7 +58,7 @@ export class AdminsController {
     await this.commands.appointCommunityAdmin(
       AppointCommunityAdminCommandFromResourceAssembler.toCommand(id, resource),
     );
-    response.location(`/api/v1/communities/${communityId.value}/admins/${resource.personId}`);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/communities/${communityId.value}/admins/${resource.personId}`);
     const community = await this.requeryEntity(communityId);
     return CommunityResourceFromEntityAssembler.toResourceFromEntity(community);
   }

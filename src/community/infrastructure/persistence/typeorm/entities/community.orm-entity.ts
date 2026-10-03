@@ -32,7 +32,8 @@ export class CommunityOrmEntity extends AuditableOrmEntity {
   /** Current policy head with its nested supersedes chain, or null when undefined. */
   @Column({ type: 'jsonb', nullable: true })
   policy: { threshold: number; basis: string; majorityRule: string; supersedes: unknown | null } | null;
-  /** Entrusted administrators as person references with entrustment moments. */
+  /** Entrusted administrators as person references with entrustment moments.
+   *  JSONB by design: always loaded with the root, never queried per admin. */
   @Column({ type: 'jsonb', default: [] })
   admins: { personId: string; entrustedAt: string }[];
 }

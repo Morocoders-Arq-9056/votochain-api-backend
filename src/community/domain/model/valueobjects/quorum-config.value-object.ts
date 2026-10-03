@@ -7,16 +7,25 @@
  */
 export class QuorumConfig {
   /**
-   * Creates a new QuorumConfig instance.
+   * Creates a new QuorumConfig instance; use {@link QuorumConfig.of}.
    * @param threshold How much participation is enough.
    * @param basis Enough of what (members, units, weighted).
    */
-  constructor(
+  private constructor(
     public readonly threshold: number,
     public readonly basis: string,
   ) {
     if (!Number.isFinite(threshold) || threshold <= 0) throw new Error('threshold must be positive');
     if (!basis?.trim()) throw new Error('basis required');
+  }
+
+  /**
+   * Creates a quorum config from validated parts.
+   * @param threshold How much participation is enough.
+   * @param basis Enough of what (members, units, weighted).
+   */
+  static of(threshold: number, basis: string): QuorumConfig {
+    return new QuorumConfig(threshold, basis);
   }
 
   /**

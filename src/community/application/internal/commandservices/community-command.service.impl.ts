@@ -5,8 +5,7 @@ import { COMMUNITY_REPOSITORY } from "../../../domain/repositories/community.rep
 import type { CommunityRepository } from "../../../domain/repositories/community.repository.js";
 import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-work.js";
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
-import { EXTERNAL_IAM_SERVICE } from "../outboundservices/acl/external-iam.service.js";
-import type { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
+import { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
 import { ActivateCommunityCommand } from "../../../domain/model/commands/activate-community.command.js";
 import { AppointCommunityAdminCommand } from "../../../domain/model/commands/appoint-community-admin.command.js";
 import { ArchiveCommunityCommand } from "../../../domain/model/commands/archive-community.command.js";
@@ -16,10 +15,13 @@ import { RegisterCommunityCommand } from "../../../domain/model/commands/registe
 import { RemoveCommunityAdminCommand } from "../../../domain/model/commands/remove-community-admin.command.js";
 import { SuspendCommunityCommand } from "../../../domain/model/commands/suspend-community.command.js";
 import { UpdateCommunitySettingsCommand } from "../../../domain/model/commands/update-community-settings.command.js";
+import { UpdateCommunityStandingCommand } from "../../../domain/model/commands/update-community-standing.command.js";
 import { Community } from "../../../domain/model/aggregates/community.aggregate.js";
 import { CommunityId } from "../../../domain/model/valueobjects/community-id.value-object.js";
+import { CommunityStanding } from "../../../domain/model/valueobjects/community-standing.value-object.js";
 import { CommunityAlreadyExistsError } from "../../../domain/exceptions/community-already-exists.error.js";
 import { CommunityNotFoundError } from "../../../domain/exceptions/community-not-found.error.js";
+import { IllegalCommunityTransitionError } from "../../../domain/exceptions/illegal-community-transition.error.js";
 import { PersonUnknownError } from "../../../domain/exceptions/person-unknown.error.js";
 
 /**
@@ -45,7 +47,7 @@ export class CommunityCommandServiceImpl implements CommunityCommandService {
   constructor(
     @Inject(COMMUNITY_REPOSITORY) private readonly communities: CommunityRepository,
     @Inject(UNIT_OF_WORK) private readonly unitOfWork: IUnitOfWork,
-    @Inject(EXTERNAL_IAM_SERVICE) private readonly iam: ExternalIamService,
+    private readonly iam: ExternalIamService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -181,6 +183,35 @@ export class CommunityCommandServiceImpl implements CommunityCommandService {
   }
 
   /**
+   * Moves the community to the desired standing in one transaction: the
+   * current standing is read from the aggregate itself, so no stale
+   * query-then-command window exists.
+   * @inheritdoc
+   */
+  async updateCommunityStanding(command: UpdateCommunityStandingCommand): Promise<void> {
+    const community = await this.unitOfWork.run(async () => {
+      const c = await this.require(command.communityId);
+      switch (command.standing) {
+        case CommunityStanding.ACTIVE:
+          if (c.standing === CommunityStanding.SUSPENDED) c.reactivate();
+          else c.activate();
+          break;
+        case CommunityStanding.SUSPENDED:
+          c.suspend(this.requireReason(command.reason));
+          break;
+        case CommunityStanding.ARCHIVED:
+          c.archive(this.requireReason(command.reason));
+          break;
+        default:
+          throw new IllegalCommunityTransitionError('cannot transition to REGISTERED');
+      }
+      await this.communities.save(c);
+      return c;
+    });
+    this.publishDomainEvents(community);
+  }
+
+  /**
    * Loads the aggregate or raises the read/update rejection for unknown ids.
    * @param id Community identity id.
    */
@@ -188,6 +219,15 @@ export class CommunityCommandServiceImpl implements CommunityCommandService {
     const community = await this.communities.findById(id);
     if (!community) throw new CommunityNotFoundError('community not found');
     return community;
+  }
+
+  /**
+   * Requires a recorded reason for suspend/archive transitions.
+   * @param reason Raw reason string or null when the caller sent none.
+   */
+  private requireReason(reason: string | null): string {
+    if (!reason?.trim()) throw new IllegalCommunityTransitionError('reason required');
+    return reason;
   }
 
   /**

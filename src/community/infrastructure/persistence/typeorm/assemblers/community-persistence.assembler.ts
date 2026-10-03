@@ -13,10 +13,23 @@ import { CommunityOrmEntity } from "../entities/community.orm-entity.js";
  * with its superseded predecessors nested inline.
  */
 interface PolicyNode {
-  threshold: unknown;
-  basis: unknown;
-  majorityRule: unknown;
+  threshold: number;
+  basis: string;
+  majorityRule: string;
   supersedes: unknown;
+}
+
+/**
+ * Structural guard for a stored policy node: every field validated before
+ * the node is trusted, so a corrupt row throws where the corruption happened.
+ */
+function isPolicyNode(json: unknown): json is PolicyNode {
+  if (typeof json !== 'object' || json === null) return false;
+  const node = json as Record<string, unknown>;
+  return typeof node['threshold'] === 'number'
+    && typeof node['basis'] === 'string'
+    && typeof node['majorityRule'] === 'string'
+    && (node['supersedes'] === null || node['supersedes'] === undefined || typeof node['supersedes'] === 'object');
 }
 
 /**
@@ -43,8 +56,7 @@ export class CommunityPersistenceAssembler {
       standing: parseCommunityStanding(entity.standing),
       settings: CommunitySettings.create({ name: entity.name, domicile: entity.domicile, contact: entity.contact }),
       policy: this.toPolicy(entity.policy),
-      admins: (entity.admins ?? []).map((a) =>
-        CommunityAdmin.of(PersonId.of(a.personId), new Date(a.entrustedAt))),
+      admins: (entity.admins ?? []).map((a) => this.toAdmin(a)),
     });
   }
 
@@ -54,16 +66,27 @@ export class CommunityPersistenceAssembler {
    */
   private toPolicy(json: unknown): VotingPolicy | null {
     if (json === null || json === undefined) return null;
-    if (typeof json !== 'object') throw new Error('invalid policy node');
-    const node = json as PolicyNode;
-    if (typeof node.threshold !== 'number' || typeof node.basis !== 'string' || typeof node.majorityRule !== 'string')
-      throw new Error('invalid policy node');
+    if (!isPolicyNode(json)) throw new Error('invalid policy node');
     return VotingPolicy.define({
-      threshold: node.threshold,
-      basis: node.basis,
-      majorityRule: node.majorityRule,
-      supersedes: this.toPolicy(node.supersedes ?? null),
+      threshold: json.threshold,
+      basis: json.basis,
+      majorityRule: json.majorityRule,
+      supersedes: this.toPolicy(json.supersedes ?? null),
     });
+  }
+
+  /**
+   * Rebuilds one administrator reference from its stored shape.
+   * @param json The stored admin node.
+   */
+  private toAdmin(json: unknown): CommunityAdmin {
+    if (typeof json !== 'object' || json === null) throw new Error('invalid admin node');
+    const node = json as Record<string, unknown>;
+    if (typeof node['personId'] !== 'string' || typeof node['entrustedAt'] !== 'string')
+      throw new Error('invalid admin node');
+    const entrustedAt = new Date(node['entrustedAt']);
+    if (Number.isNaN(entrustedAt.getTime())) throw new Error('invalid admin node');
+    return CommunityAdmin.of(PersonId.of(node['personId']), entrustedAt);
   }
 
   /**

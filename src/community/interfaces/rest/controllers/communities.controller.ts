@@ -1,20 +1,16 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, NotFoundException, Param, Patch, Post, Res, UseFilters } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { COMMUNITY_COMMAND_SERVICE } from '../../../domain/services/community-command.service.js';
 import type { CommunityCommandService } from '../../../domain/services/community-command.service.js';
 import { COMMUNITY_QUERY_SERVICE } from '../../../domain/services/community-query.service.js';
 import type { CommunityQueryService } from '../../../domain/services/community-query.service.js';
-import { ActivateCommunityCommand } from '../../../domain/model/commands/activate-community.command.js';
-import { ArchiveCommunityCommand } from '../../../domain/model/commands/archive-community.command.js';
-import { ReactivateCommunityCommand } from '../../../domain/model/commands/reactivate-community.command.js';
-import { SuspendCommunityCommand } from '../../../domain/model/commands/suspend-community.command.js';
+import { UpdateCommunityStandingCommand } from '../../../domain/model/commands/update-community-standing.command.js';
 import { GetCommunityByIdQuery } from '../../../domain/model/queries/get-community-by-id.query.js';
 import { GetStandingByCommunityQuery } from '../../../domain/model/queries/get-standing-by-community.query.js';
 import { Community } from '../../../domain/model/aggregates/community.aggregate.js';
 import { CommunityId } from '../../../domain/model/valueobjects/community-id.value-object.js';
-import { CommunityStanding, parseCommunityStanding } from '../../../domain/model/valueobjects/community-standing.value-object.js';
-import { IllegalCommunityTransitionError } from '../../../domain/exceptions/illegal-community-transition.error.js';
 import { RegisterCommunityResource } from '../resources/register-community.resource.js';
 import { UpdateCommunitySettingsResource } from '../resources/update-community-settings.resource.js';
 import { StandingUpdateResource } from '../resources/standing-update.resource.js';
@@ -44,10 +40,12 @@ export class CommunitiesController {
    * Wires the controller over command and query service ports.
    * @param commands Write-side application service.
    * @param queries Read-side application service.
+   * @param config Reads the global API prefix for Location headers.
    */
   constructor(
     @Inject(COMMUNITY_COMMAND_SERVICE) private readonly commands: CommunityCommandService,
     @Inject(COMMUNITY_QUERY_SERVICE) private readonly queries: CommunityQueryService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -64,7 +62,7 @@ export class CommunitiesController {
     const communityId = await this.commands.registerCommunity(
       RegisterCommunityCommandFromResourceAssembler.toCommandFromResource(resource),
     );
-    response.location(`/api/v1/communities/${communityId.value}`);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/communities/${communityId.value}`);
     return this.requery(communityId);
   }
 
@@ -113,39 +111,12 @@ export class CommunitiesController {
     @Body() resource: StandingUpdateResource,
   ): Promise<CommunityResource> {
     const communityId = CommunityParamsAssembler.toCommunityId(id);
-    const standing = parseCommunityStanding(resource.standing);
-    const current = (
-      await this.queries.getStandingByCommunity(new GetStandingByCommunityQuery(communityId))
-    ).standing;
-    switch (standing) {
-      case CommunityStanding.ACTIVE:
-        if (current === CommunityStanding.SUSPENDED)
-          await this.commands.reactivateCommunity(new ReactivateCommunityCommand(communityId));
-        else await this.commands.activateCommunity(new ActivateCommunityCommand(communityId));
-        break;
-      case CommunityStanding.SUSPENDED:
-        await this.commands.suspendCommunity(
-          new SuspendCommunityCommand(communityId, this.requireReason(resource.reason)),
-        );
-        break;
-      case CommunityStanding.ARCHIVED:
-        await this.commands.archiveCommunity(
-          new ArchiveCommunityCommand(communityId, this.requireReason(resource.reason)),
-        );
-        break;
-      default:
-        throw new IllegalCommunityTransitionError('cannot transition to REGISTERED');
-    }
+    await this.commands.updateCommunityStanding(new UpdateCommunityStandingCommand(
+      communityId,
+      CommunityParamsAssembler.toStanding(resource.standing),
+      resource.reason ?? null,
+    ));
     return this.requery(communityId);
-  }
-
-  /**
-   * Requires a recorded reason for suspend/archive transitions.
-   * @param reason Raw reason string.
-   */
-  private requireReason(reason: string | undefined): string {
-    if (!reason?.trim()) throw new IllegalCommunityTransitionError('reason required');
-    return reason;
   }
 
   /**

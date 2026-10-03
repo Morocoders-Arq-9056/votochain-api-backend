@@ -29,7 +29,7 @@ export class VotingPolicy {
    * @returns A new instance of VotingPolicy.
    */
   static define(input: { threshold: number; basis: string; majorityRule: string; supersedes: VotingPolicy | null }): VotingPolicy {
-    const quorum = new QuorumConfig(input.threshold, input.basis);
+    const quorum = QuorumConfig.of(input.threshold, input.basis);
     if (!input.majorityRule?.trim()) throw new Error('majorityRule required');
     return new VotingPolicy(quorum.threshold, quorum.basis, input.majorityRule, input.supersedes);
   }

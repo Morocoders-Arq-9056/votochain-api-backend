@@ -7,6 +7,7 @@ import { RegisterCommunityCommand } from "../model/commands/register-community.c
 import { RemoveCommunityAdminCommand } from "../model/commands/remove-community-admin.command.js";
 import { SuspendCommunityCommand } from "../model/commands/suspend-community.command.js";
 import { UpdateCommunitySettingsCommand } from "../model/commands/update-community-settings.command.js";
+import { UpdateCommunityStandingCommand } from "../model/commands/update-community-standing.command.js";
 import { CommunityId } from "../model/valueobjects/community-id.value-object.js";
 
 /**
@@ -76,6 +77,14 @@ export interface CommunityCommandService {
    * @param command Carries communityId and reason.
    */
   archiveCommunity(command: ArchiveCommunityCommand): Promise<void>;
+
+  /**
+   * Moves the community to the desired standing, judging the transition.
+   * ACTIVE from SUSPENDED reactivates, from REGISTERED activates; SUSPENDED
+   * and ARCHIVED require a recorded reason; REGISTERED is refused.
+   * @param command Carries communityId, desired standing and optional reason.
+   */
+  updateCommunityStanding(command: UpdateCommunityStandingCommand): Promise<void>;
 }
 /**
  * Injection token for the {@link CommunityCommandService} port.

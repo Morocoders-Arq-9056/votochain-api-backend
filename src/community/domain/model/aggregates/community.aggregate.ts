@@ -72,7 +72,7 @@ export class Community extends AggregateRoot implements CommunityStandable {
    * Validates a standing transition, mutates standing and registers the event.
    * Shared guard for activate/suspend/reactivate/archive; throws on illegal origin state.
    */
-  protected applyStandingTransition(from: CommunityStanding, to: CommunityStanding, event: DomainEvent): void {
+  private applyStandingTransition(from: CommunityStanding, to: CommunityStanding, event: DomainEvent): void {
     if (this._standing !== from) throw new IllegalCommunityTransitionError(`standing ${this._standing} != ${from}`);
     this._standing = to;
     this.registerEvent(event);
@@ -81,7 +81,7 @@ export class Community extends AggregateRoot implements CommunityStandable {
   /**
    * Guard: every mutation except rehydrate requires a non-ARCHIVED community.
    */
-  protected assertMutable(): void {
+  private assertMutable(): void {
     if (this._standing === CommunityStanding.ARCHIVED) throw new ArchivedIsTerminalError('terminal');
   }
 

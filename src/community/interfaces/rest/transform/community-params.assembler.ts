@@ -1,6 +1,8 @@
 import { PersonId } from "../../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { CommunityId } from "../../../domain/model/valueobjects/community-id.value-object.js";
+import { CommunityStanding, parseCommunityStanding } from "../../../domain/model/valueobjects/community-standing.value-object.js";
 import { CommunityNotFoundError } from "../../../domain/exceptions/community-not-found.error.js";
+import { IllegalCommunityTransitionError } from "../../../domain/exceptions/illegal-community-transition.error.js";
 import { PersonUnknownError } from "../../../domain/exceptions/person-unknown.error.js";
 
 /**
@@ -21,6 +23,14 @@ export class CommunityParamsAssembler {
       return PersonId.of(personId);
     } catch {
       throw new PersonUnknownError('person unknown');
+    }
+  }
+
+  static toStanding(standing: string): CommunityStanding {
+    try {
+      return parseCommunityStanding(standing);
+    } catch {
+      throw new IllegalCommunityTransitionError('unknown standing');
     }
   }
 }
