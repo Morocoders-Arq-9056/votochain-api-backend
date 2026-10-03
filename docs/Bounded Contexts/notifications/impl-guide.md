@@ -296,7 +296,7 @@ Swap SES ↔ SendGrid ↔ LogOnly by changing one provider line; application cod
 
 ```typescript
 @UseFilters(NotificationExceptionFilter) // interfaces/rest/filters/, @Catch de las 7 de §2.2 (skill: sin excepción sin entrada)
-@Controller('api/v1/notifications/dispatches')
+@Controller('notifications/dispatches')
 export class NotificationDispatchController {
   constructor(
     @Inject(NOTIFICATION_COMMAND_SERVICE) private readonly commands: NotificationDispatchCommandService,

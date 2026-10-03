@@ -24,7 +24,7 @@
 ## 1. Estructura del Proyecto
 
 ```
-src/voting-verifiable-ledger/
+src/voting/
 ├── interfaces/
 │   ├── rest/ (proposal / authorization / vote controllers, resources/, transform/)
 │   ├── acl/voting-context.facade.ts          # Reservada (sin consumidores hoy)
@@ -47,14 +47,14 @@ src/voting-verifiable-ledger/
 │   │   │                  vote-nonce, quorum-snapshot, eligibility-snapshot, tx-reference)
 │   │   ├── commands/ (draft/open/request-auth/cast/close/...)
 │   │   ├── queries/ (by-id, by-community-status, tally, receipt)
-│   │   └── events/ (19 hechos + ReplayRejectedEvent/LateVoteRejectedEvent)
+│   │   └── events/ (19 hechos)
 │   ├── services/ (3 command + 2 query, con tokens)
 │   ├── repositories/ (proposal / authorization / vote + tokens)
 │   └── exceptions/ (una por rechazo de negocio)
 ├── infrastructure/
 │   ├── persistence/typeorm/ (entities/, assemblers/ con parseX, adapters/)
 │   └── signing/ethers/ethers-signature-verification.service.ts
-└── voting-verifiable-ledger.module.ts
+└── voting.module.ts
 ```
 
 ---
@@ -182,7 +182,7 @@ Un solo voto inmutable: un segundo `CONFIRMED` por `(proposal, voter)` es replay
 
 `VoterAddress`: `of()` valida `0x + 40 hex`, guarda lowercase, `equals()` exacto — **== ecrecover**: el firmante recuperado debe igualar al declarado. `EIP712Signature { v, r, s }` sobre (proposal, voter, choice, nonce). `Choice` pertenece a `BallotOptions` (la propuesta ownea el ballot, `>= 2`, congelado al abrir). `VoteNonce` fresco por autorizacion (anti-replay). `QuorumSnapshot { threshold, basis }` congelado en `open()` con `verdictFor(turnout)`. `EligibilitySnapshot`: roster observado en UC3, congelado en `grant()`. `TransactionReference { txHash, blockNumber? }`: observado del chain, nunca inventado.
 
-### 2.5 Events (19 + 2 rechazos)
+### 2.5 Events (19)
 
 Proposal: `ProposalDraftedEvent/ProposalOpenedEvent/ProposalClosedEvent/ProposalTalliedEvent + QuorumReachedEvent/QuorumNotReachedEvent`. Autorizacion: `VoteAuthorizationRequestedEvent/VoteAuthorizationGrantedEvent/VoteAuthorizationDeniedEvent/VoteAuthorizationConsumedEvent/VoteAuthorizationExpiredEvent` (wire `eventName` inalterado). Voto: `VoteMessageBuiltEvent/VoteCastEvent/SignedVoteQueuedEvent/TransactionSentEvent/VoteConfirmedOnChainEvent/TransactionFailedEvent + ReplayRejectedEvent/LateVoteRejectedEvent`. Todos con `static eventName` (wire `'ProposalDrafted'`, `'ProposalOpened'`, `'ProposalClosed'`, `'VoteCast'`, etc. inalterado) y payload con VOs.
 
@@ -378,7 +378,7 @@ export const VOTING_CONTEXT_FACADE = Symbol('VOTING_CONTEXT_FACADE');
 export interface VotingContextFacade { getTally(proposalId: string): Promise<{ counts: Record<string, number>; turnout: number; quorumMet: boolean }>; getProof(voteId: string): Promise<{ choice: string; signature: { v: number; r: string; s: string }; txHash: string | null; recovered: string }>; }
 ```
 
-Hoy sin consumidores cross-modulo (reads los consume la UI). Impl en `application/acl/voting-context-facade.impl.ts` delegando a los query services; primitivos (el consumidor traduce a sus VOs). `voting-verifiable-ledger.module.ts` `exports: [VOTING_CONTEXT_FACADE]`. Si Relay/Voting llegan a importarse mutuamente, usar `forwardRef(() => ...)` en los modulos — hoy innecesario (dependencia unidireccional Voting → Relay via ACL).
+Hoy sin consumidores cross-modulo (reads los consume la UI). Impl en `application/acl/voting-context-facade.impl.ts` delegando a los query services; primitivos (el consumidor traduce a sus VOs). `voting.module.ts` `exports: [VOTING_CONTEXT_FACADE]`. Si Relay/Voting llegan a importarse mutuamente, usar `forwardRef(() => ...)` en los modulos — hoy innecesario (dependencia unidireccional Voting → Relay via ACL).
 
 ---
 
@@ -460,7 +460,7 @@ Relay outcome -> markVoteConfirmed (factura al tally) | markVoteFailed (+retry m
 | R3 Biometric → Voting | Customer/Supplier | UC3: veredicto verified-now (ventana freshness) |
 | R4 Voting → Wallet | Customer/Supplier | UC4: firma de un contenido; de vuelta solo la firma |
 | R5 Voting → Relay | Customer/Supplier + OHS | UC5/UC6: signed-only; solo `DeliveryConfirmedEvent` alimenta tally |
-| R11 Voting → Notifications | OHS | Avisos cast/queue/confirm/fail (intents, nunca decisiones) |
+| R11 Voting → Notifications | OHS | Aviso vote-cast receipt via `ExternalNotificationsService` (dispatch real al audit mailbox; intents, nunca decisiones) |
 
 Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads los consume la UI, no otro BC). Si Reporting se escinde, nace ahi el primer consumidor publicado.
 
@@ -476,6 +476,7 @@ Voting publica `VOTING_CONTEXT_FACADE` (sin consumidores internos hoy; sus reads
 | Community/Membership/Biometric | `External{...}Service` | ACL en proceso | Consumidas (R1/R2/R3) |
 | `WALLET_CONTEXT_FACADE` | `ExternalWalletService` | ACL en proceso | Consumida (R4) |
 | `RELAY_CONTEXT_FACADE` | `ExternalRelayService` | ACL en proceso | Consumida (R5) |
+| Notifications (dispatch) | `ExternalNotificationsService` | `ExternalNotificationsService` (dispatch real al audit mailbox) | Real (R11) |
 | Postgres (`voting.*`) | 3 repository ports | 3 adapters + `TransactionContext` | Correcto |
 
 `voting.auth.ttl-minutes=${VOTING_AUTH_TTL_MINUTES:15}`, `voting.chain.id=${CHAIN_ID:80002}` (Amoy).
