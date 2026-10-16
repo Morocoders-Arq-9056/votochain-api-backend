@@ -1,5 +1,4 @@
 import { Membership } from "../../../domain/model/aggregates/membership.aggregate.js";
-import type { MembershipStatus } from "../../../domain/model/valueobjects/membership-status.value-object.js";
 import { EligibilitySnapshot } from "../../../domain/model/valueobjects/eligibility-snapshot.value-object.js";
 import { EligibilityAnswerResource } from "../resources/eligibility-answer.resource.js";
 import { MembershipResource } from "../resources/membership.resource.js";
@@ -30,15 +29,11 @@ export class MembershipResourceFromEntityAssembler {
   }
 
   /**
-   * Renders a resource per membership, preserving order, optionally narrowed
-   * to one standing. The status predicate lives here so the controller stays
-   * a thin orchestration line.
+   * Renders a resource per membership, preserving order.
    * @param memberships Aggregates to render (e.g. roster, person's pairs).
-   * @param status Standing to keep, or null for the whole list.
    */
-  static toResourceList(memberships: Membership[], status: MembershipStatus | null = null): MembershipResource[] {
-    const narrowed = status ? memberships.filter((m) => m.status === status) : memberships;
-    return narrowed.map((m) => this.toResourceFromEntity(m));
+  static toResourceList(memberships: Membership[]): MembershipResource[] {
+    return memberships.map((m) => this.toResourceFromEntity(m));
   }
 
   /**

@@ -245,8 +245,8 @@ export class MembershipController {
 
   /**
    * Lists memberships: `?personId=` for a person's live memberships,
-   * `?communityId=` (optionally `&status=`) for the roster. The roster
-   * answers ACTIVE memberships only.
+   * `?communityId=` for the roster. The roster answers ACTIVE memberships only
+   * (the finder already narrows by standing; no status filter is accepted).
    */
   @Get()
   @HttpCode(HttpStatus.OK)
@@ -254,7 +254,6 @@ export class MembershipController {
   async listMemberships(
     @Query('personId') personId?: string,
     @Query('communityId') communityId?: string,
-    @Query('status') status?: string,
   ): Promise<MembershipResource[]> {
     if (personId) {
       const list = await this.queries.getMembershipsByPerson(
@@ -266,8 +265,7 @@ export class MembershipController {
       const roster = await this.queries.getRosterByCommunity(
         new GetRosterByCommunityQuery(MembershipParamsAssembler.toCommunityId(communityId)),
       );
-      return MembershipResourceFromEntityAssembler.toResourceList(
-        roster, status ? MembershipParamsAssembler.toStatus(status) : null);
+      return MembershipResourceFromEntityAssembler.toResourceList(roster);
     }
     return [];
   }

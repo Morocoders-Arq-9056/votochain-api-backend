@@ -2,7 +2,6 @@ import { CommunityId } from "../../../domain/model/valueobjects/community-id.val
 import { parseCommunityRole } from "../../../domain/model/valueobjects/community-role.value-object.js";
 import type { CommunityRole } from "../../../domain/model/valueobjects/community-role.value-object.js";
 import { MembershipId } from "../../../domain/model/valueobjects/membership-id.value-object.js";
-import { MembershipStatus, parseMembershipStatus } from "../../../domain/model/valueobjects/membership-status.value-object.js";
 import { PersonId } from "../../../domain/model/valueobjects/person-id.value-object.js";
 import { Unit } from "../../../domain/model/valueobjects/unit.value-object.js";
 import { IllegalMembershipTransitionError } from "../../../domain/exceptions/illegal-membership-transition.error.js";
@@ -59,13 +58,5 @@ export class MembershipParamsAssembler {
   static toReason(reason: string | undefined): string {
     if (!reason?.trim()) throw new IllegalMembershipTransitionError('reason required');
     return reason;
-  }
-
-  static toStatus(status: string): MembershipStatus {
-    try {
-      return parseMembershipStatus(status);
-    } catch {
-      throw new IllegalMembershipTransitionError('unknown status');
-    }
   }
 }

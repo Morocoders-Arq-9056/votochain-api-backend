@@ -5,6 +5,7 @@ import { MEMBERSHIP_QUERY_SERVICE } from "../../domain/services/membership-query
 import type { MembershipQueryService } from "../../domain/services/membership-query.service.js";
 import { JudgeEligibilityCommand } from "../../domain/model/commands/judge-eligibility.command.js";
 import { GetMembershipByPersonAndCommunityQuery } from "../../domain/model/queries/get-membership-by-person-and-community.query.js";
+import { GetMembershipsByPersonQuery } from "../../domain/model/queries/get-memberships-by-person.query.js";
 import { GetRosterByCommunityQuery } from "../../domain/model/queries/get-roster-by-community.query.js";
 import { CommunityId } from "../../domain/model/valueobjects/community-id.value-object.js";
 import { PersonId } from "../../domain/model/valueobjects/person-id.value-object.js";
@@ -57,6 +58,16 @@ export class MembershipContextFacadeImpl implements MembershipContextFacade {
     const community = this.toCommunityId(communityId);
     const roster = await this.queries.getRosterByCommunity(new GetRosterByCommunityQuery(community));
     return roster.map((m) => m.personId.value);
+  }
+
+  /**
+   * Answers whether the person holds any live membership, anywhere.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async belongsToAnyCommunity(personId: string): Promise<boolean> {
+    const person = this.toPersonId(personId);
+    const live = await this.queries.getMembershipsByPerson(new GetMembershipsByPersonQuery(person));
+    return live.length > 0;
   }
 
   /**

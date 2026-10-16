@@ -42,11 +42,8 @@ import { MembershipController } from "./interfaces/rest/controllers/membership.c
   controllers: [MembershipController],
   providers: [
     MembershipPersistenceAssembler,
-    MembershipCommandServiceImpl,
-    MembershipQueryServiceImpl,
     EligibilityJudgedEventHandler,
     MembershipEventLogger,
-    MembershipContextFacadeImpl,
     ExternalIamService,
     ExternalCommunityService,
     ExternalVotingService,

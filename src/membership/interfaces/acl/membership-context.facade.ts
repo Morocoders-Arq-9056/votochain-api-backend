@@ -39,4 +39,11 @@ export interface MembershipContextFacade {
    * @param communityId Community id (`com-` prefixed string).
    */
   getRoster(communityId: string): Promise<string[]>;
+
+  /**
+   * Answers whether the person holds any live (non-terminated) membership,
+   * regardless of community (R8 belonging precondition for OCR).
+   * @param personId Person id (`per-` prefixed string).
+   */
+  belongsToAnyCommunity(personId: string): Promise<boolean>;
 }
