@@ -24,6 +24,7 @@ function requestAuth(): VoteAuthorization {
     AuthorizationId.generate(),
     ProposalId.of('prop-1'),
     voter(),
+    PersonId.of('per-1'),
     60,
   );
 }
@@ -43,10 +44,24 @@ describe('VoteAuthorization aggregate', () => {
 
     expect(auth.status).toBe(AuthorizationStatus.PENDING);
     expect(auth.voterAddress.equals(voter())).toBe(true);
+    expect(auth.personId.value).toBe('per-1');
 
     const events = auth.pullDomainEvents();
     expect(events).toHaveLength(1);
     expect(events[0]).toBeInstanceOf(VoteAuthorizationRequestedEvent);
+  });
+
+  it('isConsumedOrExpired is false while PENDING and fresh, true once consumed', () => {
+    const auth = requestAuth();
+    auth.pullDomainEvents();
+    expect(auth.isConsumedOrExpired()).toBe(false);
+
+    auth.grant(eligibility());
+    auth.pullDomainEvents();
+    expect(auth.isConsumedOrExpired()).toBe(false);
+
+    auth.consume(VoteId.generate());
+    expect(auth.isConsumedOrExpired()).toBe(true);
   });
 
   it('grants while staying PENDING and denies to DENIED', () => {

@@ -142,6 +142,17 @@ describe('Proposal aggregate', () => {
     expect(() => open.assertOpen()).toThrow(ProposalNotOpenError);
   });
 
+  it('isOpen answers the OPEN status without throwing', () => {
+    const draft = draftProposal();
+    expect(draft.isOpen()).toBe(false);
+
+    const open = openProposal();
+    expect(open.isOpen()).toBe(true);
+
+    open.close();
+    expect(open.isOpen()).toBe(false);
+  });
+
   it('assertChoice throws InvalidChoiceError for an unknown choice', () => {
     const proposal = openProposal();
 
