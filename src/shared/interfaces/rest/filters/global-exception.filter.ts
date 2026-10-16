@@ -14,10 +14,14 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse<Response>();
     if (exception instanceof HttpException) {
       const status = exception.getStatus();
-      response.status(status).json({
-        message: exception.message,
-        statusCode: status,
-      });
+      // Preserve the structured detail: ValidationPipe carries the field-level
+      // error array in getResponse(), which exception.message ("Bad Request")
+      // would otherwise discard.
+      const detail = exception.getResponse();
+      const body = typeof detail === 'object' && detail !== null
+        ? { ...(detail as Record<string, unknown>), statusCode: status }
+        : { message: exception.message, statusCode: status };
+      response.status(status).json(body);
       return;
     }
     response.status(500).json({
