@@ -36,11 +36,8 @@ import { COMMUNITY_CONTEXT_FACADE } from "./interfaces/acl/community-context.fac
   controllers: [CommunitiesController, PoliciesController, AdminsController],
   providers: [
     CommunityPersistenceAssembler,
-    CommunityCommandServiceImpl,
-    CommunityQueryServiceImpl,
     CommunityEventLogger,
     ExternalIamService,
-    CommunityContextFacadeImpl,
     { provide: COMMUNITY_REPOSITORY, useClass: CommunityRepositoryImpl },
     { provide: COMMUNITY_COMMAND_SERVICE, useClass: CommunityCommandServiceImpl },
     { provide: COMMUNITY_QUERY_SERVICE, useClass: CommunityQueryServiceImpl },
