@@ -5,6 +5,7 @@ import { IllegalProposalTransitionError } from "../../exceptions/illegal-proposa
 import { AuthorizationId } from "../valueobjects/authorization-id.value-object.js";
 import { AuthorizationStatus } from "../valueobjects/authorization-status.value-object.js";
 import { EligibilitySnapshot } from "../valueobjects/eligibility-snapshot.value-object.js";
+import { PersonId } from "../valueobjects/person-id.value-object.js";
 import { ProposalId } from "../valueobjects/proposal-id.value-object.js";
 import { VoteId } from "../valueobjects/vote-id.value-object.js";
 import { VoterAddress } from "../valueobjects/voter-address.value-object.js";
@@ -34,21 +35,22 @@ export class VoteAuthorization extends AggregateRoot implements Authorizable {
     private readonly _id: AuthorizationId,
     private readonly _proposalId: ProposalId,
     private readonly _voterAddress: VoterAddress,
+    private readonly _personId: PersonId,
     private _status: AuthorizationStatus,
     private _eligibility: EligibilitySnapshot | null,
     private _denialReason: AuthorizationDenialReason | null,
     private readonly _expiresAt: Date,
   ) { super(); }
 
-  static request(id: AuthorizationId, proposalId: ProposalId, voter: VoterAddress, ttlMinutes: number): VoteAuthorization {
-    const auth = new VoteAuthorization(id, proposalId, voter, AuthorizationStatus.PENDING, null, null,
+  static request(id: AuthorizationId, proposalId: ProposalId, voter: VoterAddress, personId: PersonId, ttlMinutes: number): VoteAuthorization {
+    const auth = new VoteAuthorization(id, proposalId, voter, personId, AuthorizationStatus.PENDING, null, null,
       new Date(Date.now() + ttlMinutes * 60_000));
     auth.registerEvent(new VoteAuthorizationRequestedEvent(id, proposalId, voter));
     return auth;
   }
 
-  static rehydrate(input: { id: AuthorizationId; proposalId: ProposalId; voterAddress: VoterAddress; status: AuthorizationStatus; eligibility: EligibilitySnapshot | null; denialReason: AuthorizationDenialReason | null; expiresAt: Date }): VoteAuthorization {
-    return new VoteAuthorization(input.id, input.proposalId, input.voterAddress, input.status, input.eligibility, input.denialReason, input.expiresAt);
+  static rehydrate(input: { id: AuthorizationId; proposalId: ProposalId; voterAddress: VoterAddress; personId: PersonId; status: AuthorizationStatus; eligibility: EligibilitySnapshot | null; denialReason: AuthorizationDenialReason | null; expiresAt: Date }): VoteAuthorization {
+    return new VoteAuthorization(input.id, input.proposalId, input.voterAddress, input.personId, input.status, input.eligibility, input.denialReason, input.expiresAt);
   }
 
   grant(eligibility: EligibilitySnapshot): void {
@@ -96,6 +98,7 @@ export class VoteAuthorization extends AggregateRoot implements Authorizable {
   get id(): AuthorizationId { return this._id; }
   get proposalId(): ProposalId { return this._proposalId; }
   get voterAddress(): VoterAddress { return this._voterAddress; }
+  get personId(): PersonId { return this._personId; }
   get status(): AuthorizationStatus { return this._status; }
   get eligibility(): EligibilitySnapshot | null { return this._eligibility; }
   get denialReason(): AuthorizationDenialReason | null { return this._denialReason; }

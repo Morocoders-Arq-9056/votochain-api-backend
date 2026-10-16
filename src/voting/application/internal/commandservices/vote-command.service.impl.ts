@@ -10,11 +10,15 @@ import { MarkVoteFailedCommand } from "../../../domain/model/commands/mark-vote-
 import { MarkVoteQueuedCommand } from "../../../domain/model/commands/mark-vote-queued.command.js";
 import { MarkVoteSentCommand } from "../../../domain/model/commands/mark-vote-sent.command.js";
 import { EIP712Signature } from "../../../domain/model/valueobjects/eip712-signature.value-object.js";
+import { LateVoteRejectedEvent } from "../../../domain/model/events/late-vote-rejected.event.js";
+import { ReplayRejectedEvent } from "../../../domain/model/events/replay-rejected.event.js";
 import { VoteId } from "../../../domain/model/valueobjects/vote-id.value-object.js";
 import { VoteNonce } from "../../../domain/model/valueobjects/vote-nonce.value-object.js";
 import { VoterAddress } from "../../../domain/model/valueobjects/voter-address.value-object.js";
 import { AuthorizationNotFoundError } from "../../../domain/exceptions/authorization-not-found.error.js";
+import { ProposalNotOpenError } from "../../../domain/exceptions/proposal-not-open.error.js";
 import { ProposalNotFoundError } from "../../../domain/exceptions/proposal-not-found.error.js";
+import { ReplayRejectedError } from "../../../domain/exceptions/replay-rejected.error.js";
 import { VoteNotFoundError } from "../../../domain/exceptions/vote-not-found.error.js";
 import { AUTHORIZATION_REPOSITORY } from "../../../domain/repositories/authorization.repository.js";
 import type { VoteAuthorizationRepository } from "../../../domain/repositories/authorization.repository.js";
@@ -34,11 +38,12 @@ import type { SignaturePolicy } from "../outboundservices/signing/signature-poli
  * Application orchestration for UC4 (anchor) + UC5/UC6 tracking.
  *
  * UC4: guards (auth PENDING, proposal OPEN, choice valid) → buildMessage →
- * wallet.sign (R4, MemorySign fake) → recoverSigner == voter → single
- * `uow.run()` (re-read auth → consume → cast → save both) → post-commit
- * publish → notifications.voteCast (R11). A failed persist discards the
- * signature: retry is a new CastVoteCommand against the still-PENDING auth.
- * UC4 never re-asks eligibility or liveness (trusts the UC3 frozen copy).
+ * wallet.sign (R4, real custody: reconstruct → sign transient → forget) →
+ * recoverSigner == voter (real EIP-712 ecrecover) → single `uow.run()`
+ * (re-read auth → consume → cast → save both) → post-commit publish →
+ * notifications.voteCast (R11). A failed persist discards the signature:
+ * retry is a new CastVoteCommand against the still-PENDING auth. UC4 never
+ * re-asks eligibility or liveness (trusts the UC3 frozen copy).
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-28
@@ -79,13 +84,25 @@ export class VoteCommandServiceImpl implements VoteCommandService {
   async castVote(command: CastVoteCommand): Promise<VoteId> {
     const auth = await this.auths.findById(command.authorizationId);
     if (!auth) throw new AuthorizationNotFoundError('authorization not found');
+    if (auth.isConsumedOrExpired()) {
+      // Replay/late guard BEFORE any signature is produced: the wallet is never
+      // reached a second time. The rejection fact is published so affected
+      // parties observe the refused replay (use-case §3 / §guards).
+      this.events.emit(ReplayRejectedEvent.eventName,
+        new ReplayRejectedEvent(auth.proposalId, auth.voterAddress, 'authorization consumed or expired'));
+      throw new ReplayRejectedError('ReplayRejected');
+    }
     const proposal = await this.proposals.findById(auth.proposalId);
     if (!proposal) throw new ProposalNotFoundError('proposal not found');
-    proposal.assertOpen();
+    if (!proposal.isOpen()) {
+      this.events.emit(LateVoteRejectedEvent.eventName,
+        new LateVoteRejectedEvent(auth.proposalId, auth.voterAddress, 'proposal not open'));
+      throw new ProposalNotOpenError('ProposalNotOpen');
+    }
     proposal.assertChoice(command.choice);
     const nonce = VoteNonce.fresh();
     const contentRef = Vote.buildMessage(proposal.id, auth.voterAddress, command.choice, nonce);
-    const sigRaw = await this.wallet.sign(null, contentRef);
+    const sigRaw = await this.wallet.sign(auth.personId.value, contentRef);
     const recovered = VoterAddress.of(await this.signatures.recoverSigner(contentRef, sigRaw));
     const vote = await this.uow.run(async () => {
       const fresh = await this.auths.findById(command.authorizationId);

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { MarkVoteConfirmedCommand } from "../../../domain/model/commands/mark-vote-confirmed.command.js";
+import { MarkVoteFailedCommand } from "../../../domain/model/commands/mark-vote-failed.command.js";
 import { MarkVoteQueuedCommand } from "../../../domain/model/commands/mark-vote-queued.command.js";
 import { MarkVoteSentCommand } from "../../../domain/model/commands/mark-vote-sent.command.js";
 import { VoteCastEvent } from "../../../domain/model/events/vote-cast.event.js";
@@ -10,15 +11,10 @@ import { type ExternalRelayService } from "../outboundservices/acl/external-rela
 
 /**
  * UC5 DeliverVote: reacts to VoteCast in-module → markVoteQueued →
- * ExternalRelayService.acceptSigned (R5) → markVoteSent. Handler failures
+ * ExternalRelayService.acceptSigned (R5, real Sprint-04 delivery) →
+ * markVoteSent → markVoteConfirmed (only this feeds the tally, H4) or
+ * markVoteFailed (+retry reuses the same vote identity). Handler failures
  * never roll back the cast commit; each step is its own transaction.
- *
- * InstantConfirm fake: after acceptSigned returns, the handler calls back
- * markVoteConfirmed directly to simulate immediate confirmation
- * (TECH-DEBT: Sprint-04 replaces this with real relay outcome events).
- *
- * @author Ethan Matias Aliaga Aguirre
- * @since 2026-09-28
  */
 @Injectable()
 export class VoteCastEventHandler {
@@ -33,14 +29,15 @@ export class VoteCastEventHandler {
   async handleVoteCast(event: VoteCastEvent): Promise<void> {
     try {
       await this.votes.markVoteQueued(new MarkVoteQueuedCommand(event.voteId));
-      await this.relay.acceptSigned(event.voteId.value, event.signature.toString(),
+      const outcome = await this.relay.acceptSigned(event.voteId.value, event.signature.toString(),
         VoteCastEventHandler.txPayloadOf(event));
-      await this.votes.markVoteSent(new MarkVoteSentCommand(event.voteId,
-        TransactionReference.of({ txHash: `fake-tx-${event.voteId.value}` })));
-      // TECH-DEBT InstantConfirm: simulate immediate chain confirmation here;
-      // Sprint-04 delivers DeliveryConfirmedEvent from the real relay instead.
-      await this.votes.markVoteConfirmed(new MarkVoteConfirmedCommand(event.voteId,
-        TransactionReference.of({ txHash: `fake-tx-${event.voteId.value}` }), 1));
+      const reference = TransactionReference.of({ txHash: outcome.orderId ? `relay:${outcome.orderId}` : `vote:${event.voteId.value}` });
+      await this.votes.markVoteSent(new MarkVoteSentCommand(event.voteId, reference));
+      if (outcome.confirmed) {
+        await this.votes.markVoteConfirmed(new MarkVoteConfirmedCommand(event.voteId, reference, 1));
+      } else {
+        await this.votes.markVoteFailed(new MarkVoteFailedCommand(event.voteId, outcome.reason ?? 'LEDGER_REJECTED', true));
+      }
     } catch (e) {
       this.logger.error(`UC5 failed for vote ${event.voteId.value}: ${e instanceof Error ? e.message : String(e)}`);
     }

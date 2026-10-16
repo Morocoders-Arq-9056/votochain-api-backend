@@ -20,10 +20,8 @@ import { type ExternalCommunityService } from "../outboundservices/acl/external-
  * Application orchestration for proposal writes: UC1 draft, UC2 open
  * (policy via R1, frozen once), UC7 close, UC8 tally.
  *
- * UC8 TECH-DEBT-01 (accepted this sprint): with InstantConfirm every stored
- * vote is effectively confirmed, so the tally counts SIGNED/QUEUED/CONFIRMED
- * as a stand-in. Sprint-04 enforces CONFIRMED-only (H4) and re-enables the
- * skipped regression test.
+ * UC8 (H4 intent-vs-fact): the tally counts CONFIRMED votes only, read
+ * against the quorum snapshot frozen at open() (TECH-DEBT-01 closed Sprint-04).
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-28
@@ -72,8 +70,7 @@ export class ProposalCommandServiceImpl implements ProposalCommandService {
   }
 
   async tallyProposal(command: TallyProposalCommand): Promise<void> {
-    // TECH-DEBT-01: stand-in counts SIGNED/QUEUED/SENT/CONFIRMED for now;
-    // Sprint-04 restricts to CONFIRMED-only (H4: only CONFIRMED counts).
+    // H4: CONFIRMED-only — SIGNED/QUEUED/SENT never feed the tally.
     // The snapshot read runs inside the unit of work so the counts and the
     // tally write share one transaction.
     const updated = await this.uow.run(async () => {

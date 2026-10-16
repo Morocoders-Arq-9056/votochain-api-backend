@@ -11,7 +11,6 @@ import { RequestVoteAuthorizationCommand } from "../../../domain/model/commands/
 import { AuthorizationId } from "../../../domain/model/valueobjects/authorization-id.value-object.js";
 import { CommunityId } from "../../../domain/model/valueobjects/community-id.value-object.js";
 import { EligibilitySnapshot } from "../../../domain/model/valueobjects/eligibility-snapshot.value-object.js";
-import { PersonId } from "../../../domain/model/valueobjects/person-id.value-object.js";
 import { AuthorizationNotFoundError } from "../../../domain/exceptions/authorization-not-found.error.js";
 import { DuplicatePendingAuthorizationError } from "../../../domain/exceptions/duplicate-pending-authorization.error.js";
 import { ProposalNotFoundError } from "../../../domain/exceptions/proposal-not-found.error.js";
@@ -25,7 +24,7 @@ import { type ExternalMembershipService } from "../outboundservices/acl/external
 
 /**
  * Application orchestration for UC3: request → freeze eligibility (R2) →
- * liveness gate (R3, AlwaysVerified fake) → grant / deny. The TTL comes from
+ * liveness gate (R3, real Biometric facade) → grant / deny. The TTL comes from
  * `VOTING_AUTH_TTL_MINUTES` (default 15).
  *
  * @author Ethan Matias Aliaga Aguirre
@@ -50,7 +49,7 @@ export class AuthorizationCommandServiceImpl implements VoteAuthorizationCommand
       throw new DuplicatePendingAuthorizationError('duplicate pending authorization');
     const ttl = this.config.get<number>('VOTING_AUTH_TTL_MINUTES', 15);
     const auth = await this.uow.run(async () => {
-      const a = VoteAuthorization.request(AuthorizationId.generate(), command.proposalId, command.voterAddress, ttl);
+      const a = VoteAuthorization.request(AuthorizationId.generate(), command.proposalId, command.voterAddress, command.personId, ttl);
       await this.auths.save(a);
       return a;
     });
@@ -75,7 +74,7 @@ export class AuthorizationCommandServiceImpl implements VoteAuthorizationCommand
     const proposal = await this.proposals.findById(auth.proposalId);
     if (!proposal) throw new ProposalNotFoundError('proposal not found');
     await this.grantFor(command.authorizationId, EligibilitySnapshot.freeze({
-      personId: PersonId.of(auth.voterAddress.value), communityId: CommunityId.of(proposal.communityId.value),
+      personId: auth.personId, communityId: CommunityId.of(proposal.communityId.value),
       verdict: 'ELIGIBLE', reference: 'manual-grant',
     }));
   }

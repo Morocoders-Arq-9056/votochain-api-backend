@@ -50,6 +50,7 @@ export class VoteAuthorizationPersistenceAssembler {
       id: AuthorizationId.of(entity.id),
       proposalId: ProposalId.of(entity.proposalId),
       voterAddress: VoterAddress.of(entity.voterAddress),
+      personId: PersonId.of(entity.personId),
       status: parseAuthorizationStatus(entity.status),
       eligibility: this.toEligibility(entity.eligibilitySnapshot),
       denialReason: this.toDenialReason(entity.denialReason),
@@ -79,6 +80,7 @@ export class VoteAuthorizationPersistenceAssembler {
     orm.id = auth.id.value;
     orm.proposalId = auth.proposalId.value;
     orm.voterAddress = auth.voterAddress.value;
+    orm.personId = auth.personId.value;
     orm.status = auth.status;
     orm.denialReason = auth.denialReason;
     orm.expiresAt = auth.expiresAt;

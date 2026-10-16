@@ -11,6 +11,7 @@ export class VoteAuthorizationOrmEntity extends AuditableOrmEntity {
   @PrimaryColumn() id: string;
   @Column() proposalId: string;
   @Column() voterAddress: string;
+  @Column() personId: string;
   @Column() status: string;
   @Column({ nullable: true }) denialReason: string | null;
   @Column() expiresAt: Date;

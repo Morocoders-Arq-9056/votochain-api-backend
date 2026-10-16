@@ -1,6 +1,9 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { BiometricIdentityVerificationModule } from "../biometric-identity-verification/biometric-identity-verification.module.js";
+import { BlockchainRelayTransactionDeliveryModule } from "../blockchain-relay-transaction-delivery/blockchain-relay-transaction-delivery.module.js";
 import { CommunityModule } from "../community/community.module.js";
+import { CryptographicWalletCustodyModule } from "../cryptographic-wallet-custody/cryptographic-wallet-custody.module.js";
 import { MembershipModule } from "../membership/membership.module.js";
 import { NotificationsModule } from "../notifications/notifications.module.js";
 import { VOTING_CONTEXT_FACADE } from "./interfaces/acl/voting-context.facade.js";
@@ -38,7 +41,7 @@ import { ProposalOrmEntity } from "./infrastructure/persistence/typeorm/entities
 import { RequestLogOrmEntity } from "./infrastructure/persistence/typeorm/entities/request-log.orm-entity.js";
 import { VoteAuthorizationOrmEntity } from "./infrastructure/persistence/typeorm/entities/vote-authorization.orm-entity.js";
 import { VoteOrmEntity } from "./infrastructure/persistence/typeorm/entities/vote.orm-entity.js";
-import { FakeSignaturePolicyService } from "./infrastructure/signing/fake/fake-signature-policy.service.js";
+import { EthersSignatureVerificationService } from "./infrastructure/signing/ethers/ethers-signature-verification.service.js";
 import { AuthorizationsController } from "./interfaces/rest/controllers/authorizations.controller.js";
 import { ProposalsController } from "./interfaces/rest/controllers/proposals.controller.js";
 import { VotesController } from "./interfaces/rest/controllers/votes.controller.js";
@@ -50,17 +53,13 @@ import { VOTE_REPOSITORY } from "./domain/repositories/vote.repository.js";
  * Voting bounded context (core domain: verifiable intent becomes on-chain
  * fact). Three aggregates by identity reference, never embedded.
  *
- * Sprint-02 fakes: AlwaysVerifiedBiometric (verifiedNow true),
- * MemorySignWallet ('fake-sig'), InstantConfirmRelay (handler calls back
- * markVoteConfirmed), FakeSignaturePolicy (echo declared signer).
- * TECH-DEBT-01: tally counts SIGNED/QUEUED/CONFIRMED stand-in; Sprint-04
- * enforces CONFIRMED-only.
- *
- * Depends one-directionally on Community (policy ACL), Membership
- * (eligibility ACL) and Notifications (vote-cast intents via its published
- * facade): those modules are imported for their published tokens.
- * Notifications itself depends on nobody; Membership never imports Voting —
- * no cycles.
+ * Sprint-04: real Relay delivery (R5: acceptSigned → deliver → standing;
+ * only `DeliveryConfirmed` feeds the tally — TECH-DEBT-01 closed) and real
+ * Consent gates via owner modules. Depends one-directionally on Community
+ * (policy ACL), Membership (eligibility ACL), Biometric (liveness gate),
+ * Wallet (signing), Relay (delivery) and Notifications (vote-cast intents
+ * via its published facade): those modules are imported for their published
+ * tokens. None of them imports Voting — no cycles.
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-28
@@ -71,6 +70,9 @@ import { VOTE_REPOSITORY } from "./domain/repositories/vote.repository.js";
     CommunityModule,
     MembershipModule,
     NotificationsModule,
+    BiometricIdentityVerificationModule,
+    CryptographicWalletCustodyModule,
+    BlockchainRelayTransactionDeliveryModule,
   ],
   controllers: [ProposalsController, AuthorizationsController, VotesController],
   providers: [
@@ -78,22 +80,14 @@ import { VOTE_REPOSITORY } from "./domain/repositories/vote.repository.js";
     VoteAuthorizationPersistenceAssembler,
     VotePersistenceAssembler,
     RequestLogIdempotencyAdapter,
-    ProposalCommandServiceImpl,
-    AuthorizationCommandServiceImpl,
-    VoteCommandServiceImpl,
-    ProposalQueryServiceImpl,
-    AuthorizationQueryServiceImpl,
-    VoteQueryServiceImpl,
     VoteCastEventHandler,
     ProposalClosedEventHandler,
-    FakeSignaturePolicyService,
     ExternalBiometricService,
     ExternalWalletService,
     ExternalRelayService,
     ExternalMembershipService,
     ExternalCommunityService,
     ExternalNotificationsService,
-    VotingContextFacadeImpl,
     { provide: PROPOSAL_REPOSITORY, useClass: ProposalRepositoryImpl },
     { provide: AUTHORIZATION_REPOSITORY, useClass: AuthorizationRepositoryImpl },
     { provide: VOTE_REPOSITORY, useClass: VoteRepositoryImpl },
@@ -104,7 +98,7 @@ import { VOTE_REPOSITORY } from "./domain/repositories/vote.repository.js";
     { provide: PROPOSAL_QUERY_SERVICE, useClass: ProposalQueryServiceImpl },
     { provide: AUTHORIZATION_QUERY_SERVICE, useClass: AuthorizationQueryServiceImpl },
     { provide: VOTE_QUERY_SERVICE, useClass: VoteQueryServiceImpl },
-    { provide: SIGNATURE_POLICY, useClass: FakeSignaturePolicyService },
+    { provide: SIGNATURE_POLICY, useClass: EthersSignatureVerificationService },
     { provide: VOTING_CONTEXT_FACADE, useClass: VotingContextFacadeImpl },
   ],
   exports: [VOTING_CONTEXT_FACADE],

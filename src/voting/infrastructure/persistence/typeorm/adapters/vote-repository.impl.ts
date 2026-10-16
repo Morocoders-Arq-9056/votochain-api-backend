@@ -15,9 +15,8 @@ import { VoteOrmEntity } from "../entities/vote.orm-entity.js";
  * TypeORM implementation of the {@link VoteRepository} port. Joins the
  * running UoW transaction via TransactionContext.
  *
- * TECH-DEBT-01: `findConfirmedByProposal` currently returns every stored
- * vote regardless of tracking status (stand-in while InstantConfirm makes
- * every vote confirmed). Sprint-04 narrows the WHERE to CONFIRMED-only.
+ * H4 intent-vs-fact: `findConfirmedByProposal` answers CONFIRMED-only —
+ * only ledger-confirmed votes feed the tally (TECH-DEBT-01 closed Sprint-04).
  */
 @Injectable()
 export class VoteRepositoryImpl implements VoteRepository {
@@ -44,9 +43,10 @@ export class VoteRepositoryImpl implements VoteRepository {
   }
 
   async findConfirmedByProposal(proposalId: ProposalId): Promise<Vote[]> {
-    // TECH-DEBT-01 stand-in: counts SIGNED/QUEUED/CONFIRMED for now;
-    // Sprint-04 enforces CONFIRMED-only (H4). See tallyProposal.
-    const found = await this.repository.find({ where: { proposalId: proposalId.value } });
+    // H4: only CONFIRMED counts toward the tally (TECH-DEBT-01 closed).
+    const found = await this.repository.find({
+      where: { proposalId: proposalId.value, status: VoteStatus.CONFIRMED },
+    });
     return found.map((e) => this.assembler.toDomainFromOrm(e));
   }
 

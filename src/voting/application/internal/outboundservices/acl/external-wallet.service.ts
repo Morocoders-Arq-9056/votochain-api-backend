@@ -1,20 +1,23 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
+import { WALLET_CONTEXT_FACADE, type WalletContextFacade } from "../../../../../cryptographic-wallet-custody/interfaces/acl/wallet-context.facade.js";
 
 /**
  * Outbound ACL toward the cryptographic-wallet-custody BC: signing of the
  * assembled message content (R4, Customer/Supplier). Only the signature
- * travels back; the wallet never sees domain objects. No infrastructure of
- * this context may implement it: this consumer is the whole ACL until the
- * Wallet facade exists.
- * TECH-DEBT: Sprint-02 fake — signs any content with the constant
- * `'fake-sig'`. Deleted in Sprint-03 when the real wallet lands.
- *
- * @author Ethan Matias Aliaga Aguirre
- * @since 2026-09-28
+ * travels back; the wallet never sees domain objects. Reconstruct →
+ * sign transient → forget, memory-only.
  */
 @Injectable()
 export class ExternalWalletService {
-  async sign(_walletHint: string | null, _contentRef: string): Promise<string> {
-    return 'fake-sig';
+  constructor(@Inject(WALLET_CONTEXT_FACADE) private readonly facade: WalletContextFacade) {}
+
+  /**
+   * Signs one vote content with the person's live capability.
+   * @param personId Person id (`per-` prefixed string).
+   * @param contentRef Message content being signed.
+   * @returns `v:r:s` signature triple the domain parses.
+   */
+  async sign(personId: string, contentRef: string): Promise<string> {
+    return this.facade.sign(personId, contentRef);
   }
 }

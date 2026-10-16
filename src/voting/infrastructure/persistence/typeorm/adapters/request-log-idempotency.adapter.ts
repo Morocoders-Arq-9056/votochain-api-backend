@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { TransactionContext } from "../../../../../shared/infrastructure/persistence/typeorm/repositories/transaction-context.js";
-import { IDEMPOTENCY_KEY_STORE, type IdempotencyKeyStore } from "../../../../application/internal/outboundservices/idempotency/idempotency-key-store.service.js";
+import { type IdempotencyKeyStore } from "../../../../application/internal/outboundservices/idempotency/idempotency-key-store.service.js";
 import { RequestLogOrmEntity } from "../entities/request-log.orm-entity.js";
 
 /**

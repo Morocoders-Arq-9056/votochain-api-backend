@@ -39,8 +39,8 @@ export class VotesController {
     @Headers('idempotency-key') key: string,
     @Res({ passthrough: true }) response: Response,
   ): Promise<VoteReceiptResource> {
-    // Presence validation lives here: IdempotencyInterceptor only extracts the
-    // configured header onto the request, it never rejects a missing key.
+    // Presence validation lives here: the idempotency key is read straight
+    // from the header and a missing key is rejected before the use case.
     if (!key?.trim()) throw new BadRequestException('Idempotency-Key required');
     const { voteId } = await this.commands.castVoteIdempotent(
       CastVoteCommandFromResourceAssembler.toCommandFromResource(resource), key);

@@ -80,6 +80,9 @@ export class Proposal extends AggregateRoot implements Proposable {
     if (this._status !== ProposalStatus.OPEN) throw new ProposalNotOpenError('ProposalNotOpen');
   }
 
+  /** Answers whether votes may still be cast (status OPEN). */
+  isOpen(): boolean { return this._status === ProposalStatus.OPEN; }
+
   assertChoice(choice: Choice): void {
     if (!this._options.contains(choice)) throw new InvalidChoiceError('InvalidChoice');
   }
