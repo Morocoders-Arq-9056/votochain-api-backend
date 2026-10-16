@@ -106,6 +106,7 @@ export class UserCommandServiceImpl implements UserCommandService {
   async changeSecret(command: ChangeSecretCommand): Promise<void> {
     const holds = await this.proofs.holds(command.userId.value);
     if (!holds) throw new ProofNotHeldError('proof does not hold');
+    await this.proofs.applySecret(command.userId.value, command.newSecret);
     const user = await this.unitOfWork.run(async () => {
       const u = await this.require(command.userId);
       u.changeSecret();
@@ -152,7 +153,7 @@ export class UserCommandServiceImpl implements UserCommandService {
   async linkOutsideIdentity(command: LinkOutsideIdentityCommand): Promise<void> {
     const user = await this.unitOfWork.run(async () => {
       const u = await this.require(command.userId);
-      u.linkOutsideIdentity(OutsideProverRef.of(command.provider));
+      u.linkOutsideIdentity(OutsideProverRef.of(command.provider, command.externalId));
       await this.userRepository.save(u);
       return u;
     });
@@ -166,7 +167,7 @@ export class UserCommandServiceImpl implements UserCommandService {
   async unlinkOutsideIdentity(command: UnlinkOutsideIdentityCommand): Promise<void> {
     const user = await this.unitOfWork.run(async () => {
       const u = await this.require(command.userId);
-      u.unlinkOutsideIdentity(OutsideProverRef.of(command.provider));
+      u.unlinkOutsideIdentity(command.provider);
       await this.userRepository.save(u);
       return u;
     });

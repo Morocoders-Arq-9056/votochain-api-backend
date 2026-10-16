@@ -32,7 +32,9 @@ export class UserPersistenceAssembler {
       session: parseSessionStanding(entity.session),
       contact: ContactAddress.of(entity.email, entity.emailVerified),
       roles: (entity.roles ?? []).map((r) => parseSystemRole(r)),
-      outsideProver: entity.outsideProver ? OutsideProverRef.of(entity.outsideProver) : null,
+      outsideProver: entity.outsideProver
+        ? OutsideProverRef.of(entity.outsideProver, entity.outsideSubject ?? '')
+        : null,
     });
   }
 
@@ -51,6 +53,7 @@ export class UserPersistenceAssembler {
     ormEntity.emailVerified = user.contact.verified;
     ormEntity.roles = [...user.roles];
     ormEntity.outsideProver = user.outsideProver ? user.outsideProver.provider : null;
+    ormEntity.outsideSubject = user.outsideProver ? user.outsideProver.externalId : null;
     return ormEntity;
   }
 }

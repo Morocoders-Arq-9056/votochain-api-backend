@@ -29,4 +29,6 @@ export class UserOrmEntity extends AuditableOrmEntity {
   @Column('simple-array') roles: string[];
   /** Linked outside prover (`auth0`) or null. */
   @Column({ type: 'varchar', length: 64, nullable: true }) outsideProver: string | null;
+  /** Provider-side subject reference (`sub`) linked with the outside prover, or null. */
+  @Column({ type: 'varchar', length: 255, nullable: true }) outsideSubject: string | null;
 }

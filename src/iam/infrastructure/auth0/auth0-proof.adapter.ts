@@ -19,4 +19,15 @@ export class Auth0ProofAdapter implements ProofVerificationService {
     void userId;
     throw new Error("Auth0ProofAdapter not configured: bind FakeProofVerificationService in Sprint-01");
   }
+
+  /**
+   * Applies a rotated secret through Auth0 (not yet wired: throws).
+   * @param userId Technical identity id under rotation.
+   * @param newSecret Plain secret to install.
+   */
+  async applySecret(userId: string, newSecret: string): Promise<void> {
+    void userId;
+    void newSecret;
+    throw new Error("Auth0ProofAdapter not configured: bind FakeProofVerificationService in Sprint-01");
+  }
 }

@@ -20,4 +20,13 @@ export interface ProofVerificationService {
    * @param userId Technical identity id (`usr-` prefixed string).
    */
   holds(userId: string): Promise<boolean>;
+
+  /**
+   * Applies a rotated local secret through the proof executor (Auth0/fake).
+   * Execution lives outside this boundary (executor-first); IAM only judges
+   * and records the resulting fact. The secret never persists nor rides an event.
+   * @param userId Technical identity id (`usr-` prefixed string).
+   * @param newSecret The new plain secret to install.
+   */
+  applySecret(userId: string, newSecret: string): Promise<void>;
 }

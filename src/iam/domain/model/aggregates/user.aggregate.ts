@@ -2,7 +2,6 @@ import { AggregateRoot } from "../../../../shared/domain/model/aggregate-root.js
 import type { DomainEvent } from "../../../../shared/domain/model/domain-event.js";
 import { IllegalUserStateError } from "../../exceptions/illegal-user-state.error.js";
 import { LastAdminRefusedError } from "../../exceptions/last-admin-refused.error.js";
-import { LastProofRefusedError } from "../../exceptions/last-proof-refused.error.js";
 import { NoOpenSessionError } from "../../exceptions/no-open-session.error.js";
 import { OutsideProofAlreadyLinkedError } from "../../exceptions/outside-proof-already-linked.error.js";
 import { RoleAlreadyHeldError } from "../../exceptions/role-already-held.error.js";
@@ -181,14 +180,17 @@ export class User extends AggregateRoot implements AccessStandable {
   }
 
   /**
-   * Unlinks the outside proof; refused when it is the final way to prove.
+   * Unlinks the outside proof. The local secret always remains, so the final
+   * way to prove is never removed here (invariant 3 is preserved by LOCAL).
+   * @param provider The outside prover being removed (must match the linked one).
    */
-  unlinkOutsideIdentity(prover: OutsideProverRef): void {
+  unlinkOutsideIdentity(provider: string): void {
     if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     if (!this._outsideProver) throw new IllegalUserStateError('no outside proof linked');
-    if (this.proofKinds().length === 1) throw new LastProofRefusedError('last proof refused');
+    if (this._outsideProver.provider !== provider) throw new IllegalUserStateError('prover mismatch');
+    const removed = this._outsideProver;
     this._outsideProver = null;
-    this.registerEvent(new OutsideIdentityUnlinkedEvent(this._id, this._personId, prover));
+    this.registerEvent(new OutsideIdentityUnlinkedEvent(this._id, this._personId, removed));
   }
 
   /**

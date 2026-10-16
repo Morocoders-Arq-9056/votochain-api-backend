@@ -39,9 +39,6 @@ import { NotificationsModule } from "../notifications/notifications.module.js";
   controllers: [UsersController, AuthenticationController, AuthorizationController],
   providers: [
     UserPersistenceAssembler,
-    UserCommandServiceImpl,
-    UserQueryServiceImpl,
-    IamContextFacadeImpl,
     UserEventLogger,
     ExternalNotificationsService,
     { provide: USER_REPOSITORY, useClass: UserRepositoryImpl },

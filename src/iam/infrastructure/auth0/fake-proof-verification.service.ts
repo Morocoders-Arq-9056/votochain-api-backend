@@ -19,4 +19,13 @@ export class FakeProofVerificationService implements ProofVerificationService {
   async holds(_userId: string): Promise<boolean> {
     return true;
   }
+
+  /**
+   * Accepts the rotated secret without persisting it (fake executor).
+   * @param _userId Ignored technical identity id.
+   * @param _newSecret Ignored plain secret.
+   */
+  async applySecret(_userId: string, _newSecret: string): Promise<void> {
+    return;
+  }
 }

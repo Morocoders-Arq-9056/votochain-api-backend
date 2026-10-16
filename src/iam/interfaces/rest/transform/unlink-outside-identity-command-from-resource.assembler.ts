@@ -16,7 +16,7 @@ export class UnlinkOutsideIdentityCommandFromResourceAssembler {
   static toCommand(id: string, provider: string): UnlinkOutsideIdentityCommand {
     return new UnlinkOutsideIdentityCommand(
       IamParamsAssembler.toUserId(id),
-      IamParamsAssembler.toProver(provider).provider,
+      IamParamsAssembler.toProvider(provider),
     );
   }
 }

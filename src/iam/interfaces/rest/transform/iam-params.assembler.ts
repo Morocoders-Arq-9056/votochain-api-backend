@@ -39,9 +39,14 @@ export class IamParamsAssembler {
     }
   }
 
-  static toProver(provider: string): OutsideProverRef {
+  /**
+   * Validates a provider path param, allowing only supported provers.
+   * @param provider Raw prover name path string.
+   * @returns The validated provider name.
+   */
+  static toProvider(provider: string): string {
     try {
-      return OutsideProverRef.of(provider);
+      return OutsideProverRef.of(provider, provider).provider;
     } catch {
       throw new ProofNotHeldError('proof not held');
     }
