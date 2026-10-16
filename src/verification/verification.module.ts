@@ -15,12 +15,13 @@ import { VERIFICATION_CHALLENGE_REPOSITORY } from "./domain/repositories/verific
 import { CODE_COMPARE_SERVICE } from "./application/internal/outboundservices/codecompare/code-compare.service.js";
 import { ExternalConsentService } from "./application/internal/outboundservices/acl/external-consent.service.js";
 import { ExternalIamService } from "./application/internal/outboundservices/acl/external-iam.service.js";
-import { ExternalNotificationsService } from "./application/internal/outboundservices/acl/external-notifications.service.js";
+import { LogOnlyNotificationDeliveryAdapter, NOTIFICATION_DELIVERY_SERVICE } from "./application/internal/outboundservices/acl/external-notifications.service.js";
 import { ChallengeRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/challenge-repository.impl.js";
 import { ChallengePersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/challenge-persistence.assembler.js";
 import { ChallengeOrmEntity } from "./infrastructure/persistence/typeorm/entities/challenge.orm-entity.js";
 import { HmacCodeCompareService } from "./infrastructure/hashing/hmac/hmac-code-compare.service.js";
 import { FakeCodeCompareService } from "./infrastructure/hashing/fake/fake-code-compare.service.js";
+import { ConsentComplianceModule } from "../consent-compliance/consent-compliance.module.js";
 
 /**
  * Verification bounded context module (generic subdomain: channel proof).
@@ -30,7 +31,8 @@ import { FakeCodeCompareService } from "./infrastructure/hashing/fake/fake-code-
  * adapter, HMAC compare, Sprint-01 fakes) and interfaces (REST controller,
  * published facade). `IamModule` is imported for the
  * published `IAM_CONTEXT_FACADE` token (R9, ACL direction Verification→IAM).
- * Sprint-01 binds Fake/AllowAll/LogOnly adapters; swap via `useClass`.
+ * Sprint-01 binds Fake/LogOnly adapters; swap via `useClass`. Sprint-04 wires
+ * the real Consent gate (`mayContactNow`, opt-out) via ConsentComplianceModule.
  * `CODE_COMPARE_SERVICE` swaps on `verification.otp.hasher` (`hmac` default).
  * Publishes VERIFICATION_CONTEXT_FACADE for channel-proof consumers.
  *
@@ -38,21 +40,18 @@ import { FakeCodeCompareService } from "./infrastructure/hashing/fake/fake-code-
  * @since 2026-09-23
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([ChallengeOrmEntity]), IamModule],
+  imports: [TypeOrmModule.forFeature([ChallengeOrmEntity]), IamModule, ConsentComplianceModule],
   controllers: [ChallengesController, AnswersController],
   providers: [
     ChallengePersistenceAssembler,
-    VerificationCommandServiceImpl,
-    VerificationQueryServiceImpl,
     ChallengeConfirmedEventHandler,
-    VerificationContextFacadeImpl,
     ExternalIamService,
     ExternalConsentService,
-    ExternalNotificationsService,
     { provide: VERIFICATION_CHALLENGE_REPOSITORY, useClass: ChallengeRepositoryImpl },
     { provide: VERIFICATION_COMMAND_SERVICE, useClass: VerificationCommandServiceImpl },
     { provide: VERIFICATION_QUERY_SERVICE, useClass: VerificationQueryServiceImpl },
     { provide: VERIFICATION_CONTEXT_FACADE, useClass: VerificationContextFacadeImpl },
+    { provide: NOTIFICATION_DELIVERY_SERVICE, useClass: LogOnlyNotificationDeliveryAdapter },
     {
       provide: CODE_COMPARE_SERVICE,
       inject: [ConfigService],

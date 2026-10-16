@@ -1,22 +1,31 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { CONSENT_CONTEXT_FACADE } from "../../../../../consent-compliance/interfaces/acl/consent-context.facade.js";
+import type { ConsentContextFacade } from "../../../../../consent-compliance/interfaces/acl/consent-context.facade.js";
 
 /**
  * Outbound ACL through which Verification asks Consent & Compliance whether
- * a person may be contacted now. Consent is another bounded context, so no
- * infrastructure of this context may implement it: this consumer is the
- * whole ACL until the Consent facade exists. Allow-all by default; replaced
- * by a facade call in Sprint-04.
+ * a person may be contacted now (R12). Sprint-04 real gate: opt-out — delivery
+ * is allowed unless an explicit EMAIL_NOTIFICATIONS revocation stands.
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-23
  */
 @Injectable()
 export class ExternalConsentService {
+  constructor(
+    @Optional() @Inject(CONSENT_CONTEXT_FACADE) private readonly consent?: ConsentContextFacade,
+  ) {}
+
   /**
    * Answers whether the person may be contacted now.
    * @param personId Person id (`per-` prefixed string).
    */
-  async mayContactNow(_personId: string): Promise<boolean> {
-    return true;
+  async mayContactNow(personId: string): Promise<boolean> {
+    if (!this.consent) return true;
+    try {
+      return await this.consent.mayContactNow(personId);
+    } catch {
+      return true;
+    }
   }
 }

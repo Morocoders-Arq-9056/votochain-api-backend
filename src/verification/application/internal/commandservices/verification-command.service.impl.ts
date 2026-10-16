@@ -10,7 +10,8 @@ import { CODE_COMPARE_SERVICE } from "../outboundservices/codecompare/code-compa
 import type { CodeCompareService } from "../outboundservices/codecompare/code-compare.service.js";
 import type { ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
 import type { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
-import type { ExternalNotificationsService } from "../outboundservices/acl/external-notifications.service.js";
+import { NOTIFICATION_DELIVERY_SERVICE } from "../outboundservices/acl/external-notifications.service.js";
+import type { NotificationDeliveryService } from "../outboundservices/acl/external-notifications.service.js";
 import { VerificationChallenge } from "../../../domain/model/aggregates/verification-challenge.aggregate.js";
 import { ChallengeId } from "../../../domain/model/valueobjects/challenge-id.value-object.js";
 import { ValidityWindow } from "../../../domain/model/valueobjects/validity-window.value-object.js";
@@ -19,6 +20,7 @@ import { AnswerVerificationChallengeCommand } from "../../../domain/model/comman
 import { ExpireVerificationChallengeCommand } from "../../../domain/model/commands/expire-verification-challenge.command.js";
 import { ContactNotAllowedError } from "../../../domain/exceptions/contact-not-allowed.error.js";
 import { NoUsableChallengeError } from "../../../domain/exceptions/no-usable-challenge.error.js";
+import { ChallengeElapsedError } from "../../../domain/exceptions/challenge-elapsed.error.js";
 
 /**
  * Generates a numeric one-time code of the given length.
@@ -55,7 +57,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
    * @param compare Code hash/verdict executor port, observed never performed.
    * @param iam Identity-existence gate (R9 reception lives in the handler).
    * @param consent Opt-in gate, judged where consent lives.
-   * @param notifications Delivery-instruction ACL for the plain code.
+   * @param notifications Delivery-instruction port for the plain code.
    * @param eventEmitter In-process bus for in-module handlers only.
    */
   constructor(
@@ -64,7 +66,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     @Inject(CODE_COMPARE_SERVICE) private readonly compare: CodeCompareService,
     private readonly iam: ExternalIamService,
     private readonly consent: ExternalConsentService,
-    private readonly notifications: ExternalNotificationsService,
+    @Inject(NOTIFICATION_DELIVERY_SERVICE) private readonly notifications: NotificationDeliveryService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -108,14 +110,21 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     const probe = await this.challenges.findById(command.challengeId);
     if (!probe) throw new NoUsableChallengeError('no usable challenge');
     const holds = await this.compare.matches(command.presentedCode, probe.codeHash);
+    let elapsed: ChallengeElapsedError | null = null;
     const challenge = await this.unitOfWork.run(async () => {
       const found = await this.challenges.findById(command.challengeId);
       if (!found) throw new NoUsableChallengeError('no usable challenge');
-      found.answer(holds, new Date());
+      try {
+        found.answer(holds, new Date());
+      } catch (err) {
+        if (err instanceof ChallengeElapsedError) elapsed = err;
+        else throw err;
+      }
       await this.challenges.save(found);
       return found;
     });
     this.publishDomainEvents(challenge);
+    if (elapsed) throw elapsed;
   }
 
   /**

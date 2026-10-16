@@ -1,26 +1,46 @@
 import { Injectable, Logger } from "@nestjs/common";
 
 /**
- * Outbound ACL through which Verification instructs delivery of the plain
- * code. Notifications is another bounded context, so no infrastructure of
- * this context may implement it: this consumer is the whole ACL until
- * contact resolution (personId → email) exists. Logs and resolves, never
- * sends; the plain code is logged for dev visibility only.
+ * Outbound port through which Verification instructs delivery of the plain
+ * one-time code to a person's contact channel.
+ *
+ * Notifications is another bounded context, so no infrastructure of this
+ * context implements it: the adapter is the whole ACL. Sprint-01/02 bind a
+ * log-only adapter (no real email sender yet); once a sender exists, bind a
+ * facade-backed adapter over `NOTIFICATION_CONTEXT_FACADE` here — one-line
+ * swap, never an `if(mock)` in the command service.
+ *
+ * The plain code must never be written to logs or events (it is a secret):
+ * the log-only adapter records only the fact that a code was issued.
  *
  * @author Ethan Matias Aliaga Aguirre
  * @since 2026-09-23
  */
-@Injectable()
-export class ExternalNotificationsService {
-  private readonly logger = new Logger(ExternalNotificationsService.name);
+export const NOTIFICATION_DELIVERY_SERVICE = Symbol('NOTIFICATION_DELIVERY_SERVICE');
 
+export interface NotificationDeliveryService {
   /**
-   * Logs the delivery instruction instead of delivering it.
+   * Instructs delivery of the plain code for a challenge.
    * @param personId Person id (`per-` prefixed string).
-   * @param plainCode Plain code (dev log only, never persisted).
+   * @param plainCode Plain code; secret, never logged or persisted by the app.
    * @param purpose Proof purpose.
    */
-  async sendCode(personId: string, plainCode: string, purpose: string): Promise<void> {
-    this.logger.log(`sendCode to ${personId} for ${purpose}: ${plainCode}`);
+  sendCode(personId: string, plainCode: string, purpose: string): Promise<void>;
+}
+
+/**
+ * Log-only default adapter: records that a code was issued WITHOUT the code
+ * itself. Replaced by a facade-backed adapter once an email sender exists.
+ */
+@Injectable()
+export class LogOnlyNotificationDeliveryAdapter implements NotificationDeliveryService {
+  private readonly logger = new Logger(LogOnlyNotificationDeliveryAdapter.name);
+
+  /**
+   * Logs the issuance fact only; the plain code never reaches the logger.
+   * @inheritdoc
+   */
+  async sendCode(personId: string, _plainCode: string, purpose: string): Promise<void> {
+    this.logger.log(`code issued to ${personId} for ${purpose} (delivery not wired)`);
   }
 }
