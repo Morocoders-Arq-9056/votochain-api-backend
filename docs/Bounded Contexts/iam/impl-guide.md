@@ -241,6 +241,16 @@ export class UserId {
 
 `AlreadyRegisteredError`, `ProofNotHeldError`, `SuspendedRefusedError`, `NoOpenSessionError`, `LastProofRefusedError`, `LastAdminRefusedError`, `OutsideProofAlreadyLinkedError`, `AddressAlreadyHeldError`, `RoleAlreadyHeldError/RoleNotHeldError`, `IllegalUserStateError` (standing/session transitions), `UserNotFoundError` (read/update on unknown id) — all `Error` subclasses with `Object.setPrototypeOf`. `IamExceptionFilter` (`interfaces/rest/filters/`, `@UseFilters` on controller) mapea las 11: `UserNotFound → 404`, resto de guards → `409`/`422` según §5 (skill: sin excepción sin entrada `@Catch`).
 
+> **Supersede 2026-10-03 — reachability of `AlreadyRegistered` / `LastProofRefused`.**
+> `signUp()` mints a fresh `PersonId` server-side (executor-first), so the "sign-up asked for a
+> person that already has an identity" case cannot arise from the current `SignUpCommand`; the
+> reachable duplicate rejection is `AddressAlreadyHeld` (address held by another identity), which
+> remains the 409 on `POST /api/v1/users`. `LastProofRefused` is likewise unreachable from
+> `unlinkOutsideIdentity`: the local secret (`ProofKind.LOCAL`) is always present, so removing the
+> outside proof never leaves zero ways to prove (invariant 3). Both exception classes stay declared
+> and mapped so the documented `@Catch` catalog is stable; they are reserved for future command
+> shapes that carry a person id or a removable final proof.
+
 ### 2.6 Domain Events (12)
 
 `UserSignedUpEvent`, `UserSignedInEvent`, `UserSignedOutEvent(reason)`, `SecretChangedEvent`, `EmailChangedEvent`, `EmailVerifiedEvent`, `OutsideIdentityLinkedEvent`, `OutsideIdentityUnlinkedEvent`, `SystemRoleGrantedEvent`, `SystemRoleRevokedEvent`, `AccessSuspendedEvent`, `AccessRestoredEvent` — each `implements DomainEvent` with `static eventName`.

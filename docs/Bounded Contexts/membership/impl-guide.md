@@ -343,7 +343,7 @@ Controller delgado: resource → assembler → command → servicio (token) → 
 | `POST` | `/api/v1/memberships/:id/terminate` | Terminar (terminal) |
 | `POST` | `/api/v1/memberships/judge-eligibility` | Ancla UC10 → `EligibilityJudgedEvent` + snapshot |
 | `GET` | `/api/v1/memberships/:id` | Detalle |
-| `GET` | `/api/v1/memberships?communityId=&status=ACTIVE` | Roster (solo ACTIVE) |
+| `GET` | `/api/v1/memberships?communityId=` | Roster (solo ACTIVE; SUPERSEDE 2026-10-03: se quito `&status=`, el finder ya filtra ACTIVE y el param solo podia devolver `[]`) |
 | `GET` | `/api/v1/memberships?personId=` | Membresías de la persona |
 
 ACL publicada (`interfaces/acl/membership-context.facade.ts`, primitivas):

@@ -411,9 +411,12 @@ CREATE TABLE voting.votes (
   UNIQUE (proposal_id, voter_address, nonce)
 );
 -- Dedup de transporte (NO es agregado, sin puerto en domain/, solo lo usa la capa interfaces):
+-- SUPERSEDE 2026-10-03: la columna `receipt` fue eliminada por la migracion
+-- 1759276800000-drop-request-log-receipt. Solo se guarda idempotency_key -> vote_id; un reintento
+-- con la misma clave relee el voto por id en lugar de reproducir un snapshot de receipt.
 CREATE TABLE voting.request_log (
   idempotency_key TEXT PRIMARY KEY, vote_id TEXT NOT NULL REFERENCES voting.votes(id),
-  receipt JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX uq_auth_pending ON voting.authorizations (proposal_id, voter_address) WHERE status = 'PENDING';
 CREATE UNIQUE INDEX uq_vote_confirmed ON voting.votes (proposal_id, voter_address) WHERE status = 'CONFIRMED';
