@@ -6,6 +6,7 @@ import { MarkVoteQueuedCommand } from "../../../domain/model/commands/mark-vote-
 import { MarkVoteSentCommand } from "../../../domain/model/commands/mark-vote-sent.command.js";
 import { VoteCastEvent } from "../../../domain/model/events/vote-cast.event.js";
 import { TransactionReference } from "../../../domain/model/valueobjects/transaction-reference.value-object.js";
+import { VoteFailureReason } from "../../../domain/model/valueobjects/vote-failure-reason.value-object.js";
 import { VOTE_COMMAND_SERVICE, type VoteCommandService } from "../../../domain/services/vote-command.service.js";
 import { type ExternalRelayService } from "../outboundservices/acl/external-relay.service.js";
 
@@ -29,14 +30,18 @@ export class VoteCastEventHandler {
   async handleVoteCast(event: VoteCastEvent): Promise<void> {
     try {
       await this.votes.markVoteQueued(new MarkVoteQueuedCommand(event.voteId));
-      const outcome = await this.relay.acceptSigned(event.voteId.value, event.signature.toString(),
+      // Serialization-safe: outbox recovery replays plain-JSON payloads, so
+      // read plain-data fields (`v/r/s`) instead of the `toString()` method.
+      const rawSig = event.signature as unknown as { v: number; r: string; s: string };
+      const signature = `${rawSig.v}:${rawSig.r}:${rawSig.s}`;
+      const outcome = await this.relay.acceptSigned(event.voteId.value, signature,
         VoteCastEventHandler.txPayloadOf(event));
       const reference = TransactionReference.of({ txHash: outcome.orderId ? `relay:${outcome.orderId}` : `vote:${event.voteId.value}` });
       await this.votes.markVoteSent(new MarkVoteSentCommand(event.voteId, reference));
       if (outcome.confirmed) {
         await this.votes.markVoteConfirmed(new MarkVoteConfirmedCommand(event.voteId, reference, 1));
       } else {
-        await this.votes.markVoteFailed(new MarkVoteFailedCommand(event.voteId, outcome.reason ?? 'LEDGER_REJECTED', true));
+        await this.votes.markVoteFailed(new MarkVoteFailedCommand(event.voteId, VoteFailureReason.fromUnknown(outcome.reason), true));
       }
     } catch (e) {
       this.logger.error(`UC5 failed for vote ${event.voteId.value}: ${e instanceof Error ? e.message : String(e)}`);
@@ -44,6 +49,7 @@ export class VoteCastEventHandler {
   }
 
   private static txPayloadOf(event: VoteCastEvent): string {
-    return `signed:${event.proposalId.value}:${event.voterAddress.value}:${event.signature.toString()}`;
+    const rawSig = event.signature as unknown as { v: number; r: string; s: string };
+    return `signed:${event.proposalId.value}:${event.voterAddress.value}:${rawSig.v}:${rawSig.r}:${rawSig.s}`;
   }
 }
