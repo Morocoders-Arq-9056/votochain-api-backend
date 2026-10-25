@@ -5,6 +5,7 @@ import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of
 import { RetentionPolicy } from "../../../domain/model/aggregates/retention-policy.aggregate.js";
 import { DefineRetentionPolicyCommand } from "../../../domain/model/commands/consent.commands.js";
 import { RetentionPolicyId } from "../../../domain/model/valueobjects/retention-policy-id.value-object.js";
+import { PolicySupersedes } from "../../../domain/model/valueobjects/policy-supersedes.value-object.js";
 import { RETENTION_REPOSITORY } from "../../../domain/repositories/retention.repository.js";
 import type { RetentionRepository } from "../../../domain/repositories/retention.repository.js";
 import { RetentionCommandService } from "../../../domain/services/consent.services.js";
@@ -24,7 +25,7 @@ export class RetentionCommandServiceImpl implements RetentionCommandService {
         id: RetentionPolicyId.generate(),
         category: cmd.category,
         terms: cmd.terms,
-        supersedes: latest?.id.value ?? cmd.supersedes,
+        supersedes: latest ? PolicySupersedes.of(latest.id.value) : cmd.supersedes,
       });
       await this.policies.save(created);
       return created;

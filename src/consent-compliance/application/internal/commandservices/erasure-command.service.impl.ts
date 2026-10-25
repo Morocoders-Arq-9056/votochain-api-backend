@@ -6,6 +6,7 @@ import { DataSubjectRequest } from "../../../domain/model/aggregates/data-subjec
 import { ConfirmErasureRequestCommand, RecordRevocationConfirmationCommand, SubmitErasureRequestCommand } from "../../../domain/model/commands/consent.commands.js";
 import { DataSubjectRequestId } from "../../../domain/model/valueobjects/data-subject-request-id.value-object.js";
 import { ERASURE_OWNERS } from "../../../domain/model/valueobjects/consent-standings.value-object.js";
+import { ErasureOwner } from "../../../domain/model/valueobjects/erasure-owner.value-object.js";
 import { RevocationConfirmations } from "../../../domain/model/valueobjects/revocation-confirmations.value-object.js";
 import { ErasureAlreadyOpenError } from "../../../domain/exceptions/erasure-already-open.error.js";
 import { RequestNotFoundError } from "../../../domain/exceptions/request-not-found.error.js";
@@ -50,7 +51,7 @@ export class ErasureCommandServiceImpl implements ErasureCommandService {
       const r = await this.requests.findById(cmd.requestId);
       if (!r) throw new RequestNotFoundError();
       r.confirm();
-      r.coordinateRevocation([...ERASURE_OWNERS]);
+      r.coordinateRevocation(ERASURE_OWNERS.map((o) => ErasureOwner.of(o)));
       await this.requests.save(r);
       return r;
     });

@@ -1,6 +1,7 @@
 import { IsIn, IsNotEmpty, IsObject, IsOptional, IsString } from "class-validator";
 import { ConsentScopeValue } from "../../../domain/model/valueobjects/consent-scope.value-object.js";
 import { ConsentStanding } from "../../../domain/model/valueobjects/consent-standings.value-object.js";
+import { ErasureOwnerValue } from "../../../domain/model/valueobjects/erasure-owner.value-object.js";
 
 export class GrantConsentResource {
   @IsString()
@@ -40,7 +41,7 @@ export class SubmitErasureRequestResource {
 
 export class RecordRevocationConfirmationResource {
   @IsString()
-  @IsNotEmpty()
+  @IsIn(Object.values(ErasureOwnerValue))
   owner!: string;
 }
 

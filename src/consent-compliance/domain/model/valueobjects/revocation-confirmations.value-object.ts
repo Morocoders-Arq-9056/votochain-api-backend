@@ -1,6 +1,9 @@
+import { ErasureOwner } from "./erasure-owner.value-object.js";
+
 /**
  * Per-owner revocation tracking of one erasure request. Persisted as `jsonb`
  * (never queried per-owner): `{ asked: string[]; confirmed: string[] }`.
+ * The domain API speaks `ErasureOwner`; strings live only at the jsonb edge.
  * `record()` is idempotent; completion requires `allConfirmed()`.
  */
 export class RevocationConfirmations {
@@ -12,15 +15,15 @@ export class RevocationConfirmations {
     this.confirmedOwners = [...confirmed];
   }
 
-  askOwners(owners: string[]): void {
-    for (const o of owners) if (!this.askedOwners.includes(o)) this.askedOwners.push(o);
+  askOwners(owners: ErasureOwner[]): void {
+    for (const o of owners) if (!this.askedOwners.includes(o.value)) this.askedOwners.push(o.value);
   }
 
-  isAsked(owner: string): boolean { return this.askedOwners.includes(owner); }
+  isAsked(owner: ErasureOwner): boolean { return this.askedOwners.includes(owner.value); }
 
-  record(owner: string): boolean {
-    if (!this.confirmedOwners.includes(owner)) {
-      this.confirmedOwners.push(owner);
+  record(owner: ErasureOwner): boolean {
+    if (!this.confirmedOwners.includes(owner.value)) {
+      this.confirmedOwners.push(owner.value);
       return true;
     }
     return false;

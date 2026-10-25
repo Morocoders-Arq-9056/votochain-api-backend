@@ -4,7 +4,8 @@ import { ConsentContextFacadeImpl } from "./application/acl/consent-context-faca
 import { ConsentCommandServiceImpl } from "./application/internal/commandservices/consent-command.service.impl.js";
 import { ErasureCommandServiceImpl } from "./application/internal/commandservices/erasure-command.service.impl.js";
 import { RetentionCommandServiceImpl } from "./application/internal/commandservices/retention-command.service.impl.js";
-import { ErasureConfirmedEventHandler, RevocationConfirmedEventHandler } from "./application/internal/eventhandlers/erasure.event-handlers.js";
+import { ErasureConfirmedEventHandler } from "./application/internal/eventhandlers/erasure-confirmed.event-handler.js";
+import { RevocationConfirmedEventHandler } from "./application/internal/eventhandlers/revocation-confirmed.event-handler.js";
 import { ExternalBiometricService } from "./application/internal/outboundservices/acl/external-biometric.service.js";
 import { ExternalIamService } from "./application/internal/outboundservices/acl/external-iam.service.js";
 import { ExternalMembershipService } from "./application/internal/outboundservices/acl/external-membership.service.js";
@@ -28,7 +29,9 @@ import { RetentionPolicyController } from "./interfaces/rest/controllers/retenti
  * erasure coordinated — never executed here). Publishes
  * CONSENT_CONTEXT_FACADE (`mayProcessNow/mayContactNow/getErasureStanding`,
  * primitives-only, R12 Partnership). Imports no owner module (cycle-free:
- * owners consume this facade one-directionally).
+ * owners consume this facade one-directionally; the outbound `External*`
+ * adapters resolve owner facades lazily via `ModuleRef` so the module graph
+ * stays acyclic).
  *
  * @author morocoders-team
  * @since 2026-10-15

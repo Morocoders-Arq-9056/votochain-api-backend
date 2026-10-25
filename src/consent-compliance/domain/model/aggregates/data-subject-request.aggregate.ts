@@ -2,6 +2,7 @@
 import type { PersonId } from "../../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { DataSubjectRequestId } from "../valueobjects/data-subject-request-id.value-object.js";
 import { ErasureStanding } from "../valueobjects/consent-standings.value-object.js";
+import { ErasureOwner } from "../valueobjects/erasure-owner.value-object.js";
 import type { RevocationConfirmations } from "../valueobjects/revocation-confirmations.value-object.js";
 import { ErasureIncompleteError } from "../../exceptions/erasure-incomplete.error.js";
 import { ErasureNotConfirmedError } from "../../exceptions/erasure-not-confirmed.error.js";
@@ -16,8 +17,8 @@ import {
 
 export interface RequestLifecycle {
   confirm(): void;
-  coordinateRevocation(owners: string[]): void;
-  recordConfirmation(owner: string): void;
+  coordinateRevocation(owners: ErasureOwner[]): void;
+  recordConfirmation(owner: ErasureOwner): void;
   complete(): void;
 }
 
@@ -55,7 +56,7 @@ export class DataSubjectRequest extends AggregateRoot implements RequestLifecycl
     this.registerEvent(new ErasureConfirmedEvent(this._id, this._personId));
   }
 
-  coordinateRevocation(owners: string[]): void {
+  coordinateRevocation(owners: ErasureOwner[]): void {
     this.requireStanding(ErasureStanding.CONFIRMED);
     this._confirmations.askOwners(owners);
     this.moveTo(ErasureStanding.COORDINATED);
@@ -63,8 +64,8 @@ export class DataSubjectRequest extends AggregateRoot implements RequestLifecycl
     this.moveTo(ErasureStanding.AWAITING_CONFIRMATIONS);
   }
 
-  recordConfirmation(owner: string): void {
-    if (!this._confirmations.isAsked(owner)) throw new UnknownOwnerConfirmationError(`owner never coordinated: ${owner}`);
+  recordConfirmation(owner: ErasureOwner): void {
+    if (!this._confirmations.isAsked(owner)) throw new UnknownOwnerConfirmationError(`owner never coordinated: ${owner.value}`);
     if (this._confirmations.record(owner)) this.registerEvent(new RevocationConfirmedEvent(this._id, this._personId, owner));
   }
 

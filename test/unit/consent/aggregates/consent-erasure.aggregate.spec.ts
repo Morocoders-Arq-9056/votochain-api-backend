@@ -4,6 +4,8 @@ import { DataSubjectRequest } from '../../../../src/consent-compliance/domain/mo
 import { RetentionPolicy } from '../../../../src/consent-compliance/domain/model/aggregates/retention-policy.aggregate.js';
 import { ConsentRecordId } from '../../../../src/consent-compliance/domain/model/valueobjects/consent-record-id.value-object.js';
 import { ERASURE_OWNERS } from '../../../../src/consent-compliance/domain/model/valueobjects/consent-standings.value-object.js';
+import { ErasureOwner } from '../../../../src/consent-compliance/domain/model/valueobjects/erasure-owner.value-object.js';
+import { PolicySupersedes } from '../../../../src/consent-compliance/domain/model/valueobjects/policy-supersedes.value-object.js';
 import { ConsentScope } from '../../../../src/consent-compliance/domain/model/valueobjects/consent-scope.value-object.js';
 import { DataCategory } from '../../../../src/consent-compliance/domain/model/valueobjects/data-category.value-object.js';
 import { DataSubjectRequestId } from '../../../../src/consent-compliance/domain/model/valueobjects/data-subject-request-id.value-object.js';
@@ -48,10 +50,10 @@ describe('DataSubjectRequest aggregate', () => {
   it('flows submit → confirm → coordinate → 4 confirmations → complete', () => {
     const r = submit();
     r.confirm();
-    r.coordinateRevocation([...ERASURE_OWNERS]);
+    r.coordinateRevocation(ERASURE_OWNERS.map((o) => ErasureOwner.of(o)));
     expect(r.answerStanding().standing).toBe('AWAITING_CONFIRMATIONS');
     expect(r.answerStanding().pending).toHaveLength(4);
-    for (const owner of ERASURE_OWNERS) r.recordConfirmation(owner);
+    for (const owner of ERASURE_OWNERS) r.recordConfirmation(ErasureOwner.of(owner));
     r.complete();
     expect(r.answerStanding().standing).toBe('COMPLETED');
   });
@@ -59,16 +61,17 @@ describe('DataSubjectRequest aggregate', () => {
   it('refuses completion while owners remain (no partial completion)', () => {
     const r = submit();
     r.confirm();
-    r.coordinateRevocation([...ERASURE_OWNERS]);
-    r.recordConfirmation('biometric');
+    r.coordinateRevocation(ERASURE_OWNERS.map((o) => ErasureOwner.of(o)));
+    r.recordConfirmation(ErasureOwner.of('biometric'));
     expect(() => r.complete()).toThrow(ErasureIncompleteError);
   });
 
   it('rejects confirmations from never-coordinated owners', () => {
     const r = submit();
     r.confirm();
-    r.coordinateRevocation([...ERASURE_OWNERS]);
-    expect(() => r.recordConfirmation('unknown-owner')).toThrow(UnknownOwnerConfirmationError);
+    r.coordinateRevocation(ERASURE_OWNERS.map((o) => ErasureOwner.of(o)));
+    expect(() => r.recordConfirmation({ value: 'unknown-owner' } as ErasureOwner)).toThrow(UnknownOwnerConfirmationError);
+    expect(() => ErasureOwner.of('unknown-owner')).toThrow('invalid erasure owner');
   });
 
   it('re-grant is a new record (revoked records never reopen)', () => {
@@ -92,9 +95,9 @@ describe('RetentionPolicy aggregate', () => {
       id: RetentionPolicyId.generate(),
       category: DataCategory.of('biometric-reference'),
       terms: RetentionTerms.of({ months: 6 }),
-      supersedes: first.id.value,
+      supersedes: PolicySupersedes.of(first.id.value),
     });
-    expect(second.supersedes).toBe(first.id.value);
+    expect(second.supersedes?.value).toBe(first.id.value);
     expect(second.answerTerms().category).toBe('biometric-reference');
   });
 });

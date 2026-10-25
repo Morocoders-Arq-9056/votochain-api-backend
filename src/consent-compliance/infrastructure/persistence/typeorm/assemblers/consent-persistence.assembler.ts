@@ -11,6 +11,7 @@ import { DataSubjectRequestId } from "../../../../domain/model/valueobjects/data
 import { PolicyVersion } from "../../../../domain/model/valueobjects/policy-version.value-object.js";
 import { RetentionPolicyId } from "../../../../domain/model/valueobjects/retention-policy-id.value-object.js";
 import { RetentionTerms } from "../../../../domain/model/valueobjects/retention-terms.value-object.js";
+import { PolicySupersedes } from "../../../../domain/model/valueobjects/policy-supersedes.value-object.js";
 import { RevocationConfirmations } from "../../../../domain/model/valueobjects/revocation-confirmations.value-object.js";
 import { ConsentOrmEntity, ErasureRequestOrmEntity, RetentionPolicyOrmEntity } from "../entities/consent.orm-entities.js";
 
@@ -71,7 +72,7 @@ export class RetentionPersistenceAssembler {
       id: RetentionPolicyId.of(orm.id),
       category: DataCategory.of(orm.category),
       terms: RetentionTerms.of(orm.terms ?? {}),
-      supersedes: orm.supersedes,
+      supersedes: orm.supersedes ? PolicySupersedes.of(orm.supersedes) : null,
     });
   }
 
@@ -80,7 +81,7 @@ export class RetentionPersistenceAssembler {
     orm.id = domain.id.value;
     orm.category = domain.category.value;
     orm.terms = domain.answerTerms().terms.value;
-    orm.supersedes = domain.supersedes;
+    orm.supersedes = domain.supersedes?.value ?? null;
     return orm;
   }
 }

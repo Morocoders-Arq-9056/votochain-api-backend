@@ -16,6 +16,8 @@ import {
 import { ConsentScope } from "../../../domain/model/valueobjects/consent-scope.value-object.js";
 import { DataCategory } from "../../../domain/model/valueobjects/data-category.value-object.js";
 import { DataSubjectRequestId } from "../../../domain/model/valueobjects/data-subject-request-id.value-object.js";
+import { ErasureOwner } from "../../../domain/model/valueobjects/erasure-owner.value-object.js";
+import { PolicySupersedes } from "../../../domain/model/valueobjects/policy-supersedes.value-object.js";
 import { PolicyVersion } from "../../../domain/model/valueobjects/policy-version.value-object.js";
 import { RetentionTerms } from "../../../domain/model/valueobjects/retention-terms.value-object.js";
 import type {
@@ -44,14 +46,14 @@ export class ConsentCommandFromResourceAssembler {
   }
 
   static toRecordConfirmationCommand(id: string, r: RecordRevocationConfirmationResource): RecordRevocationConfirmationCommand {
-    return new RecordRevocationConfirmationCommand(DataSubjectRequestId.of(id), r.owner);
+    return new RecordRevocationConfirmationCommand(DataSubjectRequestId.of(id), ErasureOwner.of(r.owner));
   }
 
   static toDefinePolicyCommand(r: DefineRetentionPolicyResource): DefineRetentionPolicyCommand {
     return new DefineRetentionPolicyCommand(
       DataCategory.of(r.category),
       RetentionTerms.of(r.terms ?? {}),
-      r.supersedes ?? null,
+      r.supersedes ? PolicySupersedes.of(r.supersedes) : null,
     );
   }
 }

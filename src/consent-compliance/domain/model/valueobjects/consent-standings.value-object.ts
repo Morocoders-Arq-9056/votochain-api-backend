@@ -21,8 +21,9 @@ export function parseErasureStanding(v: string): ErasureStanding {
 }
 
 /**
- * Owner contexts coordinated per erasure (R12 Partnership). Adding an owner
+ * Owner contexts coordinated per erasure (R12 Partnership). Values match
+ * `ErasureOwner` (`./erasure-owner.value-object.js`); the class is the
+ * boundary/domain type, this const is the coordination list. Adding an owner
  * means adding an `ExternalXService` — never touching the domain.
  */
 export const ERASURE_OWNERS = ['biometric', 'wallet', 'membership', 'notifications'] as const;
-export type ErasureOwner = (typeof ERASURE_OWNERS)[number];
