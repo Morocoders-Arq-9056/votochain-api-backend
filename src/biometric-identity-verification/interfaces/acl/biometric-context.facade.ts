@@ -14,4 +14,11 @@ export interface BiometricContextFacade {
    * @param nowIso Current instant, ISO-8601.
    */
   answerVerifiedNow(personId: string, nowIso: string): Promise<{ verifiedNow: boolean; reason: string | null }>;
+
+  /**
+   * Erasure execution (R12): revokes the person's live reference. Idempotent.
+   * @param personId Person id (`per-` prefixed string).
+   * @returns 1 when a live reference was revoked, 0 when there was none.
+   */
+  eraseBiometricReferenceByPerson(personId: string): Promise<number>;
 }

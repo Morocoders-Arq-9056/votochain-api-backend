@@ -10,6 +10,7 @@ import { EnrollBiometricCommand } from "../../../domain/model/commands/enroll-bi
 import { RecordVerdictCommand } from "../../../domain/model/commands/record-verdict.command.js";
 import { RequestComparisonCommand } from "../../../domain/model/commands/request-comparison.command.js";
 import { RevokeBiometricProfileCommand } from "../../../domain/model/commands/revoke-biometric-profile.command.js";
+import { EraseBiometricReferenceByPersonCommand } from "../../../domain/model/commands/erase-biometric-reference-by-person.command.js";
 import { StartLivenessChallengeCommand } from "../../../domain/model/commands/start-liveness-challenge.command.js";
 import { BiometricProfileId } from "../../../domain/model/valueobjects/biometric-profile-id.value-object.js";
 import { FailureReason } from "../../../domain/model/valueobjects/failure-reason.value-object.js";
@@ -136,6 +137,29 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     });
     this.publish(profile);
     for (const a of expired) this.publish(a);
+  }
+
+  /**
+   * Erasure execution: revokes the live reference by person (same unit of
+   * work as `revokeBiometricProfile`: revoke + expire open attempts).
+   * Idempotent: no live reference erases zero.
+   * @inheritdoc
+   */
+  async eraseBiometricReferenceByPerson(command: EraseBiometricReferenceByPersonCommand): Promise<number> {
+    const erased = await this.uow.run(async () => {
+      const p = await this.profiles.findLiveByPerson(command.personId);
+      if (!p) return null;
+      p.revoke();
+      const open = await this.attempts.findOpenByProfile(p.id);
+      for (const a of open) a.expire(FailureReason.REFERENCE_ENDED);
+      await this.profiles.save(p);
+      for (const a of open) await this.attempts.save(a);
+      return { profile: p, expired: open };
+    });
+    if (!erased) return 0;
+    this.publish(erased.profile);
+    for (const a of erased.expired) this.publish(a);
+    return 1;
   }
 
   private async requireAttempt(id: VerificationAttemptId): Promise<VerificationAttempt> {

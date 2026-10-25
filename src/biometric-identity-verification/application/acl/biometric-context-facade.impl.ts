@@ -1,6 +1,9 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { BIOMETRIC_COMMAND_SERVICE } from "../../domain/services/biometric-command.service.js";
+import type { BiometricCommandService } from "../../domain/services/biometric-command.service.js";
 import { BIOMETRIC_QUERY_SERVICE } from "../../domain/services/biometric-query.service.js";
 import type { BiometricQueryService } from "../../domain/services/biometric-query.service.js";
+import { EraseBiometricReferenceByPersonCommand } from "../../domain/model/commands/erase-biometric-reference-by-person.command.js";
 import { GetVerificationStandingByPersonQuery } from "../../domain/model/queries/get-verification-standing-by-person.query.js";
 import { PersonId } from "../../domain/model/valueobjects/person-id.value-object.js";
 import type { BiometricContextFacade } from "../../interfaces/acl/biometric-context.facade.js";
@@ -15,7 +18,10 @@ import type { BiometricContextFacade } from "../../interfaces/acl/biometric-cont
  */
 @Injectable()
 export class BiometricContextFacadeImpl implements BiometricContextFacade {
-  constructor(@Inject(BIOMETRIC_QUERY_SERVICE) private readonly queries: BiometricQueryService) {}
+  constructor(
+    @Inject(BIOMETRIC_COMMAND_SERVICE) private readonly commands: BiometricCommandService,
+    @Inject(BIOMETRIC_QUERY_SERVICE) private readonly queries: BiometricQueryService,
+  ) {}
 
   async answerVerifiedNow(
     personId: string,
@@ -31,5 +37,15 @@ export class BiometricContextFacadeImpl implements BiometricContextFacade {
     } catch {
       return { verifiedNow: false, reason: 'UNKNOWN_PERSON' };
     }
+  }
+
+  /**
+   * Erasure execution: revokes the live reference by person.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async eraseBiometricReferenceByPerson(personId: string): Promise<number> {
+    return this.commands.eraseBiometricReferenceByPerson(
+      new EraseBiometricReferenceByPersonCommand(PersonId.of(personId)),
+    );
   }
 }

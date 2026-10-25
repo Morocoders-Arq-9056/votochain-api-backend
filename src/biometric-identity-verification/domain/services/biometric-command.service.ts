@@ -5,6 +5,7 @@ import { CompleteLivenessCommand } from "../model/commands/complete-liveness.com
 import { RequestComparisonCommand } from "../model/commands/request-comparison.command.js";
 import { RecordVerdictCommand } from "../model/commands/record-verdict.command.js";
 import { RevokeBiometricProfileCommand } from "../model/commands/revoke-biometric-profile.command.js";
+import { EraseBiometricReferenceByPersonCommand } from "../model/commands/erase-biometric-reference-by-person.command.js";
 import { VerificationAttemptId } from "../model/valueobjects/verification-attempt-id.value-object.js";
 
 /**
@@ -18,5 +19,10 @@ export interface BiometricCommandService {
   requestComparison(command: RequestComparisonCommand): Promise<void>;
   recordVerdict(command: RecordVerdictCommand): Promise<void>;
   revokeBiometricProfile(command: RevokeBiometricProfileCommand): Promise<void>;
+  /**
+   * Erasure execution (R12): revokes the person's live reference, idempotent.
+   * @returns 1 when a live reference was revoked, 0 when there was none.
+   */
+  eraseBiometricReferenceByPerson(command: EraseBiometricReferenceByPersonCommand): Promise<number>;
 }
 export const BIOMETRIC_COMMAND_SERVICE = Symbol('BIOMETRIC_COMMAND_SERVICE');
