@@ -42,8 +42,8 @@ export class VotesController {
     // Presence validation lives here: the idempotency key is read straight
     // from the header and a missing key is rejected before the use case.
     if (!key?.trim()) throw new BadRequestException('Idempotency-Key required');
-    const { voteId } = await this.commands.castVoteIdempotent(
-      CastVoteCommandFromResourceAssembler.toCommandFromResource(resource), key);
+    const { voteId } = await this.commands.castVoteIdempotently(
+      CastVoteCommandFromResourceAssembler.toIdempotentCommandFromResource(resource, key));
     const proof = await this.queries.getVerifiableProofByVote(new GetVerifiableProofByVoteQuery(voteId));
     if (!proof) throw new NotFoundException();
     const receipt = VotingResourceFromEntityAssembler.toReceiptResourceFromProof(proof);

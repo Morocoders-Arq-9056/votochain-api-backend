@@ -6,6 +6,7 @@ import { EIP712Signature } from "../valueobjects/eip712-signature.value-object.j
 import { ProposalId } from "../valueobjects/proposal-id.value-object.js";
 import { TransactionReference } from "../valueobjects/transaction-reference.value-object.js";
 import { VoteId } from "../valueobjects/vote-id.value-object.js";
+import { VoteFailureReason } from "../valueobjects/vote-failure-reason.value-object.js";
 import { VoteNonce } from "../valueobjects/vote-nonce.value-object.js";
 import { VoterAddress } from "../valueobjects/voter-address.value-object.js";
 import { VoteStatus } from "../valueobjects/vote-status.value-object.js";
@@ -23,7 +24,7 @@ export interface VoteTrackable {
   markQueued(): void;
   markSent(ref: TransactionReference): void;
   markConfirmed(ref: TransactionReference, blockNo: number): void;
-  markFailed(reason: string, retryable: boolean): void;
+  markFailed(reason: VoteFailureReason, retryable: boolean): void;
 }
 
 /**
@@ -81,7 +82,7 @@ export class Vote extends AggregateRoot implements VoteTrackable {
     this.registerEvent(new VoteConfirmedOnChainEvent(this._id, ref, blockNo));
   }
 
-  markFailed(reason: string, retryable: boolean): void {
+  markFailed(reason: VoteFailureReason, retryable: boolean): void {
     if (this._status === VoteStatus.CONFIRMED) throw new IllegalProposalTransitionError('CONFIRMED is terminal');
     this._status = VoteStatus.FAILED;
     this.registerEvent(new TransactionFailedEvent(this._id, reason, retryable));

@@ -5,13 +5,12 @@ import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of
 import { Vote, type VoteTrackable } from "../../../domain/model/aggregates/vote.aggregate.js";
 import type { Authorizable } from "../../../domain/model/aggregates/vote-authorization.aggregate.js";
 import { CastVoteCommand } from "../../../domain/model/commands/cast-vote.command.js";
+import { CastVoteIdempotentlyCommand } from "../../../domain/model/commands/cast-vote-idempotently.command.js";
 import { MarkVoteConfirmedCommand } from "../../../domain/model/commands/mark-vote-confirmed.command.js";
 import { MarkVoteFailedCommand } from "../../../domain/model/commands/mark-vote-failed.command.js";
 import { MarkVoteQueuedCommand } from "../../../domain/model/commands/mark-vote-queued.command.js";
 import { MarkVoteSentCommand } from "../../../domain/model/commands/mark-vote-sent.command.js";
 import { EIP712Signature } from "../../../domain/model/valueobjects/eip712-signature.value-object.js";
-import { LateVoteRejectedEvent } from "../../../domain/model/events/late-vote-rejected.event.js";
-import { ReplayRejectedEvent } from "../../../domain/model/events/replay-rejected.event.js";
 import { VoteId } from "../../../domain/model/valueobjects/vote-id.value-object.js";
 import { VoteNonce } from "../../../domain/model/valueobjects/vote-nonce.value-object.js";
 import { VoterAddress } from "../../../domain/model/valueobjects/voter-address.value-object.js";
@@ -66,10 +65,11 @@ export class VoteCommandServiceImpl implements VoteCommandService {
    * Casts once per idempotency key, recording key→voteId for replays.
    * @inheritdoc
    */
-  async castVoteIdempotent(command: CastVoteCommand, key: string): Promise<{ voteId: VoteId; replayed: boolean }> {
+  async castVoteIdempotently(command: CastVoteIdempotentlyCommand): Promise<{ voteId: VoteId; replayed: boolean }> {
+    const key = command.idempotencyKey;
     const existing = await this.idempotency.findVoteIdByKey(key);
     if (existing) return { voteId: VoteId.of(existing), replayed: true };
-    const voteId = await this.castVote(command);
+    const voteId = await this.castVote(command.toCastVoteCommand());
     try {
       await this.idempotency.saveVoteId(key, voteId.value);
     } catch (error) {
@@ -84,19 +84,16 @@ export class VoteCommandServiceImpl implements VoteCommandService {
   async castVote(command: CastVoteCommand): Promise<VoteId> {
     const auth = await this.auths.findById(command.authorizationId);
     if (!auth) throw new AuthorizationNotFoundError('authorization not found');
+    // Replay/late guard BEFORE any signature is produced: the wallet is never
+    // reached a second time. Rejection is surfaced via typed error → 409/422
+    // through VotingExceptionFilter (no pre-commit emit: events only leave an
+    // aggregate via pullDomainEvents() after uow.run() commits).
     if (auth.isConsumedOrExpired()) {
-      // Replay/late guard BEFORE any signature is produced: the wallet is never
-      // reached a second time. The rejection fact is published so affected
-      // parties observe the refused replay (use-case §3 / §guards).
-      this.events.emit(ReplayRejectedEvent.eventName,
-        new ReplayRejectedEvent(auth.proposalId, auth.voterAddress, 'authorization consumed or expired'));
       throw new ReplayRejectedError('ReplayRejected');
     }
     const proposal = await this.proposals.findById(auth.proposalId);
     if (!proposal) throw new ProposalNotFoundError('proposal not found');
     if (!proposal.isOpen()) {
-      this.events.emit(LateVoteRejectedEvent.eventName,
-        new LateVoteRejectedEvent(auth.proposalId, auth.voterAddress, 'proposal not open'));
       throw new ProposalNotOpenError('ProposalNotOpen');
     }
     proposal.assertChoice(command.choice);
@@ -104,23 +101,29 @@ export class VoteCommandServiceImpl implements VoteCommandService {
     const contentRef = Vote.buildMessage(proposal.id, auth.voterAddress, command.choice, nonce);
     const sigRaw = await this.wallet.sign(auth.personId.value, contentRef);
     const recovered = VoterAddress.of(await this.signatures.recoverSigner(contentRef, sigRaw));
-    const vote = await this.uow.run(async () => {
-      const fresh = await this.auths.findById(command.authorizationId);
-      if (!fresh) throw new AuthorizationNotFoundError('authorization not found');
-      const freshProposal = await this.proposals.findById(fresh.proposalId);
-      if (!freshProposal) throw new ProposalNotFoundError('proposal not found');
-      freshProposal.assertOpen();
-      freshProposal.assertChoice(command.choice);
-      const voteId = VoteId.generate();
-      fresh.consume(voteId);
-      const v = Vote.cast(voteId, fresh.proposalId, fresh.voterAddress, command.choice, nonce,
-        EIP712Signature.from(sigRaw), recovered);
-      await this.auths.save(fresh);
-      await this.votes.save(v);
-      return { auth: fresh, vote: v };
-    });
-    this.publishAuth(vote.auth);
-    this.publishVote(vote.vote);
+    // Atomic consume+cast in ONE uow; publication runs via afterCommit so no
+    // event can leave before the commit succeeds (F6 seam toward outbox).
+    const vote = await this.uow.runWithAfterCommit(
+      async () => {
+        const fresh = await this.auths.findById(command.authorizationId);
+        if (!fresh) throw new AuthorizationNotFoundError('authorization not found');
+        const freshProposal = await this.proposals.findById(fresh.proposalId);
+        if (!freshProposal) throw new ProposalNotFoundError('proposal not found');
+        freshProposal.assertOpen();
+        freshProposal.assertChoice(command.choice);
+        const voteId = VoteId.generate();
+        fresh.consume(voteId);
+        const v = Vote.cast(voteId, fresh.proposalId, fresh.voterAddress, command.choice, nonce,
+          EIP712Signature.from(sigRaw), recovered);
+        await this.auths.save(fresh);
+        await this.votes.save(v);
+        return { auth: fresh, vote: v };
+      },
+      (v) => {
+        this.publishAuth(v.auth);
+        this.publishVote(v.vote);
+      },
+    );
     await this.notifications.voteCast(auth.voterAddress.value, vote.vote.id.value);
     return vote.vote.id;
   }
