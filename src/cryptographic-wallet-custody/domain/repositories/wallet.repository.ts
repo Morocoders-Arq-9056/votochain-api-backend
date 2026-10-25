@@ -13,6 +13,12 @@ import type { DomainEvent } from "../../../shared/domain/model/domain-event.js";
 export interface WalletRepository {
   findById(id: UserWalletId): Promise<UserWallet | null>;
   findLiveByPerson(personId: PersonId): Promise<UserWallet | null>;
+  /**
+   * Finds every non-retired wallet of one person (erasure scan: PROVISIONED,
+   * SIGNING_OPEN, ROTATED successors and SUSPENDED all still hold the
+   * person reference).
+   */
+  findNonRetiredByPerson(personId: PersonId): Promise<UserWallet[]>;
   existsPosition(position: DerivationPosition): Promise<boolean>;
   nextPosition(): Promise<number>;
   save(wallet: UserWallet): Promise<void>;

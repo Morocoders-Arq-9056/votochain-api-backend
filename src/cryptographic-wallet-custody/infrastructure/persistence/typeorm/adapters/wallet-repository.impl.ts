@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { Not, Repository } from "typeorm";
 import { TransactionContext } from "../../../../../shared/infrastructure/persistence/typeorm/repositories/transaction-context.js";
 import type { DomainEvent } from "../../../../../shared/domain/model/domain-event.js";
 import { UserWallet } from "../../../../domain/model/aggregates/user-wallet.aggregate.js";
@@ -48,6 +48,13 @@ export class WalletRepositoryImpl implements WalletRepository {
       where: { personId: personId.value, standing: WalletStanding.PROVISIONED },
     });
     return found ? this.assembler.toDomainFromOrm(found) : null;
+  }
+
+  async findNonRetiredByPerson(personId: PersonId): Promise<UserWallet[]> {
+    const found = await this.repository.find({
+      where: { personId: personId.value, standing: Not(WalletStanding.RETIRED) },
+    });
+    return found.map((orm) => this.assembler.toDomainFromOrm(orm));
   }
 
   async existsPosition(position: DerivationPosition): Promise<boolean> {

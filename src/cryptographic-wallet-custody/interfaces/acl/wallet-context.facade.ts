@@ -21,4 +21,12 @@ export interface WalletContextFacade {
    * @param personId Person id (`per-` prefixed string).
    */
   answerCapability(personId: string): Promise<{ maySign: boolean; walletId: string | null; position: number | null }>;
+
+  /**
+   * Erasure execution (R12): retires every non-retired capability of one
+   * person. Idempotent.
+   * @param personId Person id (`per-` prefixed string).
+   * @returns How many capabilities were retired.
+   */
+  retireWalletByPerson(personId: string): Promise<number>;
 }

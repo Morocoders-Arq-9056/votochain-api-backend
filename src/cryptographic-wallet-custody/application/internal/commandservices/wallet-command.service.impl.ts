@@ -5,6 +5,7 @@ import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of
 import { UserWallet } from "../../../domain/model/aggregates/user-wallet.aggregate.js";
 import { ProvisionWalletCommand } from "../../../domain/model/commands/provision-wallet.command.js";
 import { RetireWalletCommand } from "../../../domain/model/commands/retire-wallet.command.js";
+import { RetireWalletByPersonCommand } from "../../../domain/model/commands/retire-wallet-by-person.command.js";
 import { RotateWalletCommand } from "../../../domain/model/commands/rotate-wallet.command.js";
 import { SignVoteContentCommand } from "../../../domain/model/commands/sign-vote-content.command.js";
 import { SuspendWalletCommand } from "../../../domain/model/commands/suspend-wallet.command.js";
@@ -119,6 +120,24 @@ export class WalletCommandServiceImpl implements WalletCommandService {
       return w;
     });
     this.publish(wallet);
+  }
+
+  /**
+   * Erasure execution: retires every non-retired capability of one person.
+   * Idempotent: no non-retired capability retires zero.
+   * @inheritdoc
+   */
+  async retireWalletByPerson(command: RetireWalletByPersonCommand): Promise<number> {
+    const wallets = await this.uow.run(async () => {
+      const found = await this.wallets.findNonRetiredByPerson(command.personId);
+      for (const w of found) {
+        w.retire();
+        await this.wallets.save(w);
+      }
+      return found;
+    });
+    for (const w of wallets) this.publish(w);
+    return wallets.length;
   }
 
   private async require(id: UserWalletId): Promise<UserWallet> {

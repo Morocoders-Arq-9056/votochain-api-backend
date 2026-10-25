@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { SignedContentRef } from "../../../shared/domain/model/valueobjects/signed-content-ref.value-object.js";
 import { SignVoteContentCommand } from "../../domain/model/commands/sign-vote-content.command.js";
+import { RetireWalletByPersonCommand } from "../../domain/model/commands/retire-wallet-by-person.command.js";
 import { GetSigningCapabilityByPersonQuery } from "../../domain/model/queries/get-signing-capability-by-person.query.js";
 import { PersonId } from "../../domain/model/valueobjects/person-id.value-object.js";
 import { UserWalletId } from "../../domain/model/valueobjects/user-wallet-id.value-object.js";
@@ -42,6 +43,16 @@ export class WalletContextFacadeImpl implements WalletContextFacade {
   ): Promise<{ maySign: boolean; walletId: string | null; position: number | null }> {
     return this.queries.getSigningCapabilityByPerson(
       new GetSigningCapabilityByPersonQuery(PersonId.of(personId)),
+    );
+  }
+
+  /**
+   * Erasure execution: retires every non-retired capability by person.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async retireWalletByPerson(personId: string): Promise<number> {
+    return this.commands.retireWalletByPerson(
+      new RetireWalletByPersonCommand(PersonId.of(personId)),
     );
   }
 }
