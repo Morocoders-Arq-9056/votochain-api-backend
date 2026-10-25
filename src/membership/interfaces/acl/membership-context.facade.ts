@@ -46,4 +46,12 @@ export interface MembershipContextFacade {
    * @param personId Person id (`per-` prefixed string).
    */
   belongsToAnyCommunity(personId: string): Promise<boolean>;
+
+  /**
+   * Erasure execution (R12): terminates every live membership of one person.
+   * Idempotent: zero live memberships erases zero.
+   * @param personId Person id (`per-` prefixed string).
+   * @returns How many memberships were terminated.
+   */
+  eraseMembershipsByPerson(personId: string): Promise<number>;
 }

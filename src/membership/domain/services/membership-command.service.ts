@@ -8,6 +8,7 @@ import { RegisterMembershipCommand } from "../model/commands/register-membership
 import { ReinstateMembershipCommand } from "../model/commands/reinstate-membership.command.js";
 import { SuspendMembershipCommand } from "../model/commands/suspend-membership.command.js";
 import { TerminateMembershipCommand } from "../model/commands/terminate-membership.command.js";
+import { EraseMembershipsByPersonCommand } from "../model/commands/erase-memberships-by-person.command.js";
 import { EligibilitySnapshot } from "../model/valueobjects/eligibility-snapshot.value-object.js";
 import { MembershipId } from "../model/valueobjects/membership-id.value-object.js";
 
@@ -40,6 +41,12 @@ export interface MembershipCommandService {
   reinstateMembership(command: ReinstateMembershipCommand): Promise<void>;
   /** Terminates the membership. Terminal. */
   terminateMembership(command: TerminateMembershipCommand): Promise<void>;
+  /**
+   * Terminates every live membership held by one person (erasure execution,
+   * R12: the owner deletes its own data). Idempotent.
+   * @returns How many memberships were terminated.
+   */
+  eraseMembershipsByPerson(command: EraseMembershipsByPersonCommand): Promise<number>;
   /** Judges eligibility now, freezing a snapshot (ghost when absent). */
   judgeEligibility(command: JudgeEligibilityCommand): Promise<EligibilitySnapshot>;
 }

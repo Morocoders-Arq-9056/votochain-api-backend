@@ -4,6 +4,7 @@ import type { MembershipCommandService } from "../../domain/services/membership-
 import { MEMBERSHIP_QUERY_SERVICE } from "../../domain/services/membership-query.service.js";
 import type { MembershipQueryService } from "../../domain/services/membership-query.service.js";
 import { JudgeEligibilityCommand } from "../../domain/model/commands/judge-eligibility.command.js";
+import { EraseMembershipsByPersonCommand } from "../../domain/model/commands/erase-memberships-by-person.command.js";
 import { GetMembershipByPersonAndCommunityQuery } from "../../domain/model/queries/get-membership-by-person-and-community.query.js";
 import { GetMembershipsByPersonQuery } from "../../domain/model/queries/get-memberships-by-person.query.js";
 import { GetRosterByCommunityQuery } from "../../domain/model/queries/get-roster-by-community.query.js";
@@ -68,6 +69,16 @@ export class MembershipContextFacadeImpl implements MembershipContextFacade {
     const person = this.toPersonId(personId);
     const live = await this.queries.getMembershipsByPerson(new GetMembershipsByPersonQuery(person));
     return live.length > 0;
+  }
+
+  /**
+   * Erasure execution: terminates every live membership of one person.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async eraseMembershipsByPerson(personId: string): Promise<number> {
+    return this.commands.eraseMembershipsByPerson(
+      new EraseMembershipsByPersonCommand(this.toPersonId(personId)),
+    );
   }
 
   /**

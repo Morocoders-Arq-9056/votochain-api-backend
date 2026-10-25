@@ -19,6 +19,7 @@ import { RegisterMembershipCommand } from "../../../domain/model/commands/regist
 import { ReinstateMembershipCommand } from "../../../domain/model/commands/reinstate-membership.command.js";
 import { SuspendMembershipCommand } from "../../../domain/model/commands/suspend-membership.command.js";
 import { TerminateMembershipCommand } from "../../../domain/model/commands/terminate-membership.command.js";
+import { EraseMembershipsByPersonCommand } from "../../../domain/model/commands/erase-memberships-by-person.command.js";
 import { Membership } from "../../../domain/model/aggregates/membership.aggregate.js";
 import { EligibilitySnapshot } from "../../../domain/model/valueobjects/eligibility-snapshot.value-object.js";
 import { MembershipId } from "../../../domain/model/valueobjects/membership-id.value-object.js";
@@ -187,6 +188,25 @@ export class MembershipCommandServiceImpl implements MembershipCommandService {
       return m;
     });
     this.publishDomainEvents(membership);
+  }
+
+  /**
+   * Erasure execution: terminates every live membership of one person with
+   * the audit reason `ERASURE_REQUEST`. One UoW, events published after
+   * commit; zero live memberships is success with count 0 (idempotent).
+   * @inheritdoc
+   */
+  async eraseMembershipsByPerson(command: EraseMembershipsByPersonCommand): Promise<number> {
+    const erased = await this.unitOfWork.run(async () => {
+      const live = await this.memberships.findLiveByPerson(command.personId);
+      for (const m of live) {
+        m.terminate('ERASURE_REQUEST');
+        await this.memberships.save(m);
+      }
+      return live;
+    });
+    for (const m of erased) this.publishDomainEvents(m);
+    return erased.length;
   }
 
   /**
