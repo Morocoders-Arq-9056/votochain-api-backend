@@ -13,6 +13,7 @@ import { ProposalCommandServiceImpl } from "./application/internal/commandservic
 import { VoteCommandServiceImpl } from "./application/internal/commandservices/vote-command.service.impl.js";
 import { ProposalClosedEventHandler } from "./application/internal/eventhandlers/proposal-closed.event-handler.js";
 import { VoteCastEventHandler } from "./application/internal/eventhandlers/vote-cast.event-handler.js";
+import { AuthorizationExpireSweepService } from "./application/internal/sweep/authorization-expire-sweep.service.js";
 import { ExternalBiometricService } from "./application/internal/outboundservices/acl/external-biometric.service.js";
 import { ExternalCommunityService } from "./application/internal/outboundservices/acl/external-community.service.js";
 import { ExternalMembershipService } from "./application/internal/outboundservices/acl/external-membership.service.js";
@@ -82,6 +83,7 @@ import { VOTE_REPOSITORY } from "./domain/repositories/vote.repository.js";
     RequestLogIdempotencyAdapter,
     VoteCastEventHandler,
     ProposalClosedEventHandler,
+    AuthorizationExpireSweepService,
     ExternalBiometricService,
     ExternalWalletService,
     ExternalRelayService,

@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
-import { Repository } from "typeorm";
+import { LessThanOrEqual, Repository } from "typeorm";
 import { TransactionContext } from "../../../../../shared/infrastructure/persistence/typeorm/repositories/transaction-context.js";
 import { VoteAuthorization } from "../../../../domain/model/aggregates/vote-authorization.aggregate.js";
 import { AuthorizationId } from "../../../../domain/model/valueobjects/authorization-id.value-object.js";
@@ -37,6 +37,19 @@ export class AuthorizationRepositoryImpl implements VoteAuthorizationRepository 
       where: { proposalId: proposalId.value, voterAddress: voter.value, status: AuthorizationStatus.PENDING },
     });
     return found ? this.assembler.toDomainFromOrm(found) : null;
+  }
+
+  /**
+   * Expiry-sweep input: PENDING rows past their window, oldest first.
+   * @inheritdoc
+   */
+  async findExpiredPending(now: Date, limit: number): Promise<VoteAuthorization[]> {
+    const found = await this.repository.find({
+      where: { status: AuthorizationStatus.PENDING, expiresAt: LessThanOrEqual(now) },
+      order: { expiresAt: 'ASC' },
+      take: Math.max(1, limit),
+    });
+    return found.map((orm) => this.assembler.toDomainFromOrm(orm));
   }
 
   async save(auth: VoteAuthorization): Promise<void> {
