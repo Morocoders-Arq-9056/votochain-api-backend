@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, UseFi
 import { ApiTags } from '@nestjs/swagger';
 import { ERASURE_QUERY_SERVICE, RETENTION_COMMAND_SERVICE } from '../../../domain/services/consent.services.js';
 import type { ErasureQueryService, RetentionCommandService } from '../../../domain/services/consent.services.js';
-import { ConsentExceptionFilter } from '../../filters/consent-exception.filter.js';
+import { ConsentExceptionFilter } from '../filters/consent-exception.filter.js';
 import { DefineRetentionPolicyResource } from '../resources/consent.resource.js';
 import { ConsentCommandFromResourceAssembler, ConsentParamsAssembler } from '../transform/consent-command-from-resource.assembler.js';
 

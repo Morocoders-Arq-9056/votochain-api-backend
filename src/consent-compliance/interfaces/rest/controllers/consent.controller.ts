@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Query
 import { ApiTags } from '@nestjs/swagger';
 import { CONSENT_COMMAND_SERVICE, CONSENT_QUERY_SERVICE } from '../../../domain/services/consent.services.js';
 import type { ConsentCommandService, ConsentQueryService } from '../../../domain/services/consent.services.js';
-import { ConsentExceptionFilter } from '../../filters/consent-exception.filter.js';
+import { ConsentExceptionFilter } from '../filters/consent-exception.filter.js';
 import { ConsentStateResource, GrantConsentResource, RevokeConsentResource } from '../resources/consent.resource.js';
 import { ConsentCommandFromResourceAssembler, ConsentParamsAssembler } from '../transform/consent-command-from-resource.assembler.js';
 

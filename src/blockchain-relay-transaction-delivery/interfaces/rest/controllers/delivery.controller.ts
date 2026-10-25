@@ -6,7 +6,7 @@ import { DELIVERY_COMMAND_SERVICE } from '../../../domain/services/delivery-comm
 import type { DeliveryCommandService } from '../../../domain/services/delivery-command.service.js';
 import { DELIVERY_QUERY_SERVICE } from '../../../domain/services/delivery-query.service.js';
 import type { DeliveryQueryService } from '../../../domain/services/delivery-query.service.js';
-import { RelayExceptionFilter } from '../../filters/relay-exception.filter.js';
+import { RelayExceptionFilter } from '../filters/relay-exception.filter.js';
 import { AcceptDeliveryResource, DeliveryAttemptResource, DeliveryStandingResource } from '../resources/delivery.resource.js';
 import { AcceptDeliveryCommandFromResourceAssembler, DeliveryParamsAssembler } from '../transform/delivery-command-from-resource.assembler.js';
 
