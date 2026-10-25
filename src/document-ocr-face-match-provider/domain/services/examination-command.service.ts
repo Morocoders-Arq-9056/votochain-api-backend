@@ -1,4 +1,5 @@
 import { ExaminationId } from "../model/valueobjects/examination-id.value-object.js";
+import { ConsumeExaminationMatchCommand } from "../model/commands/consume-examination-match.command.js";
 import { RequestDocumentExaminationCommand } from "../model/commands/request-document-examination.command.js";
 import { RequestDocumentReexaminationCommand } from "../model/commands/request-document-reexamination.command.js";
 import { ExamineDocumentExaminationCommand } from "../model/commands/examine-document-examination.command.js";
@@ -14,5 +15,6 @@ export interface ExaminationCommandService {
   requestDocumentReexamination(command: RequestDocumentReexaminationCommand): Promise<ExaminationId>;
   examineDocumentExamination(command: ExamineDocumentExaminationCommand): Promise<void>;
   expireDocumentExamination(command: ExpireDocumentExaminationCommand): Promise<void>;
+  consumeExaminationMatch(command: ConsumeExaminationMatchCommand): Promise<boolean>;
 }
 export const EXAMINATION_COMMAND_SERVICE = Symbol('EXAMINATION_COMMAND_SERVICE');

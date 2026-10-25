@@ -4,6 +4,7 @@ import { EventEmitter2 } from "@nestjs/event-emitter";
 import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-work.js";
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
 import { DocumentExamination } from "../../../domain/model/aggregates/document-examination.aggregate.js";
+import { ConsumeExaminationMatchCommand } from "../../../domain/model/commands/consume-examination-match.command.js";
 import { ExamineDocumentExaminationCommand } from "../../../domain/model/commands/examine-document-examination.command.js";
 import { ExpireDocumentExaminationCommand } from "../../../domain/model/commands/expire-document-examination.command.js";
 import { RequestDocumentExaminationCommand } from "../../../domain/model/commands/request-document-examination.command.js";
@@ -11,6 +12,9 @@ import { RequestDocumentReexaminationCommand } from "../../../domain/model/comma
 import { ExaminationId } from "../../../domain/model/valueobjects/examination-id.value-object.js";
 import { ValidityWindow } from "../../../domain/model/valueobjects/validity-window.value-object.js";
 import { Verdict } from "../../../domain/model/valueobjects/verdict.value-object.js";
+import { ExaminationStanding } from "../../../domain/model/valueobjects/examination-standing.value-object.js";
+import type { DocumentRef } from "../../../domain/model/valueobjects/document-ref.value-object.js";
+import type { PersonId } from "../../../domain/model/valueobjects/person-id.value-object.js";
 import { parseUnreadableReason } from "../../../domain/model/valueobjects/unreadable-reason.value-object.js";
 import { ExaminationAlreadyOpenError } from "../../../domain/exceptions/examination-already-open.error.js";
 import { NoOpenExaminationError } from "../../../domain/exceptions/no-open-examination.error.js";
@@ -122,10 +126,41 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     this.publish(expired);
   }
 
+  async consumeExaminationMatch(command: ConsumeExaminationMatchCommand): Promise<boolean> {
+    const found = command.documentRef
+      ? await this.findUsable(command.personId, command.documentRef)
+      : await this.findAnyUsable(command.personId);
+    if (!found) return false;
+    const consumed = await this.uow.run(async () => {
+      const fresh = await this.exams.findById(found.id);
+      if (!fresh || !fresh.answerStanding().usableMatch) return null;
+      fresh.markConsumed();
+      await this.exams.save(fresh);
+      return fresh;
+    });
+    if (!consumed) return false;
+    this.publish(consumed);
+    return true;
+  }
+
   private async require(id: ExaminationId): Promise<DocumentExamination> {
     const e = await this.exams.findById(id);
     if (!e) throw new NoOpenExaminationError('examination not found');
     return e;
+  }
+
+  private async findUsable(personId: PersonId, documentRef: DocumentRef): Promise<DocumentExamination | null> {
+    const all = await this.exams.findAllByPersonAndDocument(personId, documentRef);
+    return all.find(
+      (e) => e.standing === ExaminationStanding.CONCLUDED && e.verdict === Verdict.MATCH && !e.consumed,
+    ) ?? null;
+  }
+
+  private async findAnyUsable(personId: PersonId): Promise<DocumentExamination | null> {
+    const all = await this.exams.findAllByPerson(personId);
+    return all.find(
+      (e) => e.standing === ExaminationStanding.CONCLUDED && e.verdict === Verdict.MATCH && !e.consumed,
+    ) ?? null;
   }
 
   private publish(e: DocumentExamination): void {
