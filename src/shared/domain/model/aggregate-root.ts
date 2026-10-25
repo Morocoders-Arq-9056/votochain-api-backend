@@ -1,10 +1,12 @@
 import type { DomainEvent } from './domain-event.js';
+import { getDomainEventSink } from './domain-event-sink.js';
 
 export abstract class AggregateRoot {
   protected readonly _domainEvents: DomainEvent[] = [];
 
   protected registerEvent(event: DomainEvent): void {
     this._domainEvents.push(event);
+    getDomainEventSink()?.collect(this, event);
   }
 
   pullDomainEvents(): DomainEvent[] {

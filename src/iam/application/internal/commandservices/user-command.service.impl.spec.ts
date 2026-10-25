@@ -24,7 +24,14 @@ function setup(existing: User | null) {
       saved = u;
     },
   } as unknown as UserRepository;
-  const unitOfWork = { run: <T>(fn: () => Promise<T>) => fn() } as IUnitOfWork;
+  const unitOfWork = {
+    run: <T>(fn: () => Promise<T>) => fn(),
+    runWithAfterCommit: async <T>(fn: () => Promise<T>, afterCommit: (r: T) => Promise<void> | void) => {
+      const result = await fn();
+      await afterCommit(result);
+      return result;
+    },
+  } as IUnitOfWork;
   const proofs = { holds: async () => true } as ProofVerificationService;
   const eventEmitter = {
     emit: (...args: unknown[]) => {
