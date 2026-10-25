@@ -41,4 +41,12 @@ export interface NotificationContextFacade {
    * @param dispatchId Dispatch id (`dsp-` prefixed string).
    */
   getHistory(dispatchId: string): Promise<{ attempts: { at: string; outcome: string }[] }>;
+
+  /**
+   * Erasure execution (R12): redacts the person's reference from every
+   * dispatch that carries it in render values. Idempotent.
+   * @param personId Person reference (`per-` prefixed string).
+   * @returns How many dispatches were scrubbed.
+   */
+  scrubDispatchesByPerson(personId: string): Promise<number>;
 }

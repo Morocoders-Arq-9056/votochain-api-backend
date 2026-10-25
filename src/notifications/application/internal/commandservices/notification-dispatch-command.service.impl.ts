@@ -8,6 +8,7 @@ import { ConfirmNotificationDeliveryCommand } from "../../../domain/model/comman
 import { RecordNotificationDeliveryFailureCommand } from "../../../domain/model/commands/record-notification-delivery-failure.command.js";
 import { RequestNotificationDeliveryCommand } from "../../../domain/model/commands/request-notification-delivery.command.js";
 import { RetryNotificationDeliveryCommand } from "../../../domain/model/commands/retry-notification-delivery.command.js";
+import { ScrubDispatchesByPersonCommand } from "../../../domain/model/commands/scrub-dispatches-by-person.command.js";
 import { DispatchId } from "../../../domain/model/valueobjects/dispatch-id.value-object.js";
 import { NOTIFICATION_DISPATCH_REPOSITORY } from "../../../domain/repositories/notification-dispatch.repository.js";
 import type { NotificationDispatchRepository } from "../../../domain/repositories/notification-dispatch.repository.js";
@@ -138,6 +139,28 @@ export class NotificationDispatchCommandServiceImpl implements NotificationDispa
       return d;
     });
     this.publishDomainEvents(dispatch);
+  }
+
+  /**
+   * Erasure execution: redacts the person's reference everywhere it traveled
+   * in render values. One UoW, events published after commit; zero matches is
+   * success with count 0 (idempotent).
+   * @inheritdoc
+   */
+  async scrubDispatchesByPerson(command: ScrubDispatchesByPersonCommand): Promise<number> {
+    const scrubbed = await this.unitOfWork.run(async () => {
+      const found = await this.dispatches.findReferencingPerson(command.person);
+      const touched: NotificationDispatch[] = [];
+      for (const d of found) {
+        if (d.redactPersonReference(command.person).length > 0) {
+          await this.dispatches.save(d);
+          touched.push(d);
+        }
+      }
+      return touched;
+    });
+    for (const d of scrubbed) this.publishDomainEvents(d);
+    return scrubbed.length;
   }
 
   /**

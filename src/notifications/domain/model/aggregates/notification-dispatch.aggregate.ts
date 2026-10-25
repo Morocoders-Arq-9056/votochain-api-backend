@@ -9,6 +9,7 @@ import { DeliveryFailedEvent } from "../events/delivery-failed.event.js";
 import { DeliveryRequestedEvent } from "../events/delivery-requested.event.js";
 import { DeliveryRefusedEvent } from "../events/delivery-refused.event.js";
 import { DeliveryRetriedEvent } from "../events/delivery-retried.event.js";
+import { PersonDataScrubbedEvent } from "../events/person-data-scrubbed.event.js";
 import { DeliveryAddress } from "../valueobjects/delivery-address.value-object.js";
 import type { DeliveryAttempt } from "../valueobjects/delivery-attempt.value-object.js";
 import { DispatchId } from "../valueobjects/dispatch-id.value-object.js";
@@ -17,6 +18,7 @@ import { FailureReason } from "../valueobjects/failure-reason.value-object.js";
 import { IdempotencyKey } from "../valueobjects/idempotency-key.value-object.js";
 import { RefusalReason } from "../valueobjects/refusal-reason.value-object.js";
 import { ResolvedTemplate } from "../valueobjects/resolved-template.value-object.js";
+import type { PersonReference } from "../valueobjects/person-reference.value-object.js";
 
 /**
  * Behavioral contract of a dispatchable delivery: outcomes observed back
@@ -150,6 +152,26 @@ export class NotificationDispatch extends AggregateRoot implements Dispatchable 
     this._standing = DispatchStanding.REQUESTED;
     this.appendOutcome('REQUESTED');
     this.registerEvent(new DeliveryRetriedEvent(this._id, this._key, this._history.length));
+  }
+
+  /**
+   * Erasure execution: redacts every render value that carries the person's
+   * reference (`[redacted]`), leaving delivery audit (standing, history)
+   * intact. Standing/history never hold person data by design. Idempotent:
+   * a dispatch without the reference reports no change.
+   * @param person Local person reference to scrub.
+   * @returns The redacted template keys (empty when nothing referenced).
+   */
+  redactPersonReference(person: PersonReference): string[] {
+    const redacted: string[] = [];
+    for (const [key, value] of Object.entries(this._template.values)) {
+      if (value === person.value) {
+        this._template.values[key] = '[redacted]';
+        redacted.push(key);
+      }
+    }
+    if (redacted.length > 0) this.registerEvent(new PersonDataScrubbedEvent(this._id, person, redacted));
+    return redacted;
   }
 
   /**

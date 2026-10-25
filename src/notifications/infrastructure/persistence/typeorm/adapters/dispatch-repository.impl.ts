@@ -6,6 +6,7 @@ import { NotificationDispatch } from "../../../../domain/model/aggregates/notifi
 import { DispatchId } from "../../../../domain/model/valueobjects/dispatch-id.value-object.js";
 import { IdempotencyKey } from "../../../../domain/model/valueobjects/idempotency-key.value-object.js";
 import { NotificationDispatchRepository } from "../../../../domain/repositories/notification-dispatch.repository.js";
+import { PersonReference } from "../../../../domain/model/valueobjects/person-reference.value-object.js";
 import { DispatchPersistenceAssembler } from "../assemblers/dispatch-persistence.assembler.js";
 import { DispatchOrmEntity } from "../entities/dispatch.orm-entity.js";
 
@@ -59,6 +60,21 @@ export class DispatchRepositoryImpl implements NotificationDispatchRepository {
   async findById(id: DispatchId): Promise<NotificationDispatch | null> {
     const found = await this.repository.findOne({ where: { id: id.value } });
     return found ? this.assembler.toDomainFromOrm(found) : null;
+  }
+
+  /**
+   * Erasure scan over the `templateValues` jsonb. Matches the exact person
+   * reference serialized in the JSON text (no LIKE wildcards from the value:
+   * the value is embedded literally between JSON quotes).
+   * @inheritdoc
+   */
+  async findReferencingPerson(person: PersonReference): Promise<NotificationDispatch[]> {
+    const needle = `"${person.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+    const found = await this.repository
+      .createQueryBuilder('d')
+      .where(`d.templateValues ::text LIKE :needle ESCAPE '\\'`, { needle: `%${needle}%` })
+      .getMany();
+    return found.map((orm) => this.assembler.toDomainFromOrm(orm));
   }
 
   /**

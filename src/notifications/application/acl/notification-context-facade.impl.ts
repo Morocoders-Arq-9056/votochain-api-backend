@@ -4,6 +4,8 @@ import type { NotificationDispatchCommandService } from "../../domain/services/n
 import { NOTIFICATION_DISPATCH_QUERY_SERVICE } from "../../domain/services/notification-dispatch-query.service.js";
 import type { NotificationDispatchQueryService } from "../../domain/services/notification-dispatch-query.service.js";
 import { RequestNotificationDeliveryCommand } from "../../domain/model/commands/request-notification-delivery.command.js";
+import { ScrubDispatchesByPersonCommand } from "../../domain/model/commands/scrub-dispatches-by-person.command.js";
+import { PersonReference } from "../../domain/model/valueobjects/person-reference.value-object.js";
 import { DeliveryAddress } from "../../domain/model/valueobjects/delivery-address.value-object.js";
 import { DispatchNotFoundError } from "../../domain/exceptions/dispatch-not-found.error.js";
 import { DispatchId } from "../../domain/model/valueobjects/dispatch-id.value-object.js";
@@ -73,5 +75,15 @@ export class NotificationContextFacadeImpl implements NotificationContextFacade 
   async getHistory(dispatchId: string): Promise<{ attempts: { at: string; outcome: string }[] }> {
     const answer = await this.queries.getDeliveryHistoryByDispatch(new GetDeliveryHistoryByDispatchQuery(DispatchId.of(dispatchId)));
     return { attempts: answer.attempts.map((a) => ({ at: a.at.toISOString(), outcome: a.outcome })) };
+  }
+
+  /**
+   * Erasure execution: scrubs the person's reference from render values.
+   * @param personId Person reference (`per-` prefixed string).
+   */
+  async scrubDispatchesByPerson(personId: string): Promise<number> {
+    return this.commands.scrubDispatchesByPerson(
+      new ScrubDispatchesByPersonCommand(PersonReference.of(personId)),
+    );
   }
 }

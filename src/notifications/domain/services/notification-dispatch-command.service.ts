@@ -2,6 +2,7 @@ import { ConfirmNotificationDeliveryCommand } from "../model/commands/confirm-no
 import { RecordNotificationDeliveryFailureCommand } from "../model/commands/record-notification-delivery-failure.command.js";
 import { RequestNotificationDeliveryCommand } from "../model/commands/request-notification-delivery.command.js";
 import { RetryNotificationDeliveryCommand } from "../model/commands/retry-notification-delivery.command.js";
+import { ScrubDispatchesByPersonCommand } from "../model/commands/scrub-dispatches-by-person.command.js";
 import { DispatchId } from "../model/valueobjects/dispatch-id.value-object.js";
 
 /**
@@ -41,6 +42,14 @@ export interface NotificationDispatchCommandService {
    * @param command Carries the dispatch id.
    */
   retryNotificationDelivery(command: RetryNotificationDeliveryCommand): Promise<void>;
+
+  /**
+   * Erasure execution (R12): redacts the person's reference from every
+   * dispatch that carries it. Idempotent.
+   * @param command Carries the local person reference.
+   * @returns How many dispatches were scrubbed.
+   */
+  scrubDispatchesByPerson(command: ScrubDispatchesByPersonCommand): Promise<number>;
 }
 /**
  * Injection token for the {@link NotificationDispatchCommandService} port.

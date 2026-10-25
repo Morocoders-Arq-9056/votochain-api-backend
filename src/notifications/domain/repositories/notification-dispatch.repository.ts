@@ -1,6 +1,7 @@
 import { NotificationDispatch } from "../model/aggregates/notification-dispatch.aggregate.js";
 import { DispatchId } from "../model/valueobjects/dispatch-id.value-object.js";
 import { IdempotencyKey } from "../model/valueobjects/idempotency-key.value-object.js";
+import { PersonReference } from "../model/valueobjects/person-reference.value-object.js";
 
 /**
  * Repository port for the NotificationDispatch aggregate.
@@ -25,6 +26,13 @@ export interface NotificationDispatchRepository {
    * @returns A promise resolving to the dispatch, or null when unknown.
    */
   findById(id: DispatchId): Promise<NotificationDispatch | null>;
+
+  /**
+   * Finds every dispatch whose render values carry the person's reference
+   * (erasure scan; matched in storage on the `templateValues` jsonb).
+   * @param person Local person reference to look for.
+   */
+  findReferencingPerson(person: PersonReference): Promise<NotificationDispatch[]>;
 
   /**
    * Persists the whole aggregate state in one row.
