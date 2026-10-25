@@ -1,9 +1,11 @@
-﻿import { Inject, Injectable } from "@nestjs/common";
+﻿import { Inject, Injectable, Logger } from "@nestjs/common";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-work.js";
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
 import { DeliveryOrder } from "../../../domain/model/aggregates/delivery-order.aggregate.js";
-import { AcceptDeliveryOrderCommand, DeliverOrderCommand, RecordDeliveryOrderLedgerOutcomeCommand } from "../../../domain/model/commands/delivery.commands.js";
+import { AcceptDeliveryOrderCommand } from "../../../domain/model/commands/accept-delivery-order.command.js";
+import { DeliverOrderCommand } from "../../../domain/model/commands/deliver-order.command.js";
+import { RecordDeliveryOrderLedgerOutcomeCommand } from "../../../domain/model/commands/record-delivery-order-ledger-outcome.command.js";
 import { DeliveryOrderId } from "../../../domain/model/valueobjects/delivery-order-id.value-object.js";
 import { FailureReason } from "../../../domain/model/valueobjects/failure-reason.value-object.js";
 import { OrderNotFoundError } from "../../../domain/exceptions/order-not-found.error.js";
@@ -24,6 +26,7 @@ import type { LedgerGatewayService } from "../outboundservices/ledger/ledger-gat
  */
 @Injectable()
 export class DeliveryCommandServiceImpl implements DeliveryCommandService {
+  private readonly logger = new Logger(DeliveryCommandServiceImpl.name);
   constructor(
     @Inject(DELIVERY_ORDER_REPOSITORY) private readonly orders: DeliveryOrderRepository,
     @Inject(LEDGER_GATEWAY) private readonly ledger: LedgerGatewayService,
@@ -66,7 +69,10 @@ export class DeliveryCommandServiceImpl implements DeliveryCommandService {
         return o;
       });
       this.publish(sent);
-    } catch { return; }
+    } catch (e) {
+      this.logger.error(`recordSending failed for order ${orderId.value}: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
     if (sent.standing !== 'SENT') return;
     let outcome;
     try {
@@ -87,8 +93,9 @@ export class DeliveryCommandServiceImpl implements DeliveryCommandService {
         await this.orders.save(o);
         return o;
       });
-    } catch {
-      return;
+    } catch (e) {
+      this.logger.error(`observeOutcome failed for order ${cmd.orderId.value}: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
     }
     if (closed) this.publish(closed);
   }
