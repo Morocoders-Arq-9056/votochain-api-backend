@@ -1,14 +1,7 @@
-import type { DeliveryOrderId } from "../valueobjects/delivery-order-id.value-object.js";
-import type { PayerRef } from "../valueobjects/payer-ref.value-object.js";
-
-export class GetDeliveryOrderStandingByIdQuery {
-  constructor(public readonly orderId: DeliveryOrderId) { if (!orderId) throw new Error('orderId required'); }
-}
-
-export class GetDeliverySendingOrderByPayerQuery {
-  constructor(public readonly payerRef: PayerRef) { if (!payerRef) throw new Error('payerRef required'); }
-}
-
-export class GetDeliveryAttemptHistoryByOrderQuery {
-  constructor(public readonly orderId: DeliveryOrderId) { if (!orderId) throw new Error('orderId required'); }
-}
+/**
+ * @deprecated Import from the single-class files instead.
+ * Kept as a barrel for backward compatibility.
+ */
+export { GetDeliveryOrderStandingByIdQuery } from "./get-delivery-order-standing-by-id.query.js";
+export { GetDeliverySendingOrderByPayerQuery } from "./get-delivery-sending-order-by-payer.query.js";
+export { GetDeliveryAttemptHistoryByOrderQuery } from "./get-delivery-attempt-history-by-order.query.js";
