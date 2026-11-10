@@ -13,7 +13,7 @@ export class VoteAuthorizationOrmEntity extends AuditableOrmEntity {
   @Column() voterAddress: string;
   @Column() personId: string;
   @Column() status: string;
-  @Column({ nullable: true }) denialReason: string | null;
+  @Column({ type: 'text', nullable: true }) denialReason: string | null;
   @Column() expiresAt: Date;
   @Column({ type: 'jsonb', nullable: true }) eligibilitySnapshot: unknown | null;
 }

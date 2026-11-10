@@ -28,9 +28,9 @@ export class MembershipOrmEntity extends AuditableOrmEntity {
   /** Role kind: PRESIDENT | BOARD_MEMBER | OWNER. */
   @Column() role: string;
   /** Dwelling code, when a unit is assigned. */
-  @Column({ nullable: true }) unitCode: string | null;
+  @Column({ type: 'varchar', length: 32, nullable: true }) unitCode: string | null;
   /** Last verdict: ELIGIBLE | NOT_ELIGIBLE, when ever judged. */
-  @Column({ nullable: true }) lastVerdict: string | null;
+  @Column({ type: 'varchar', length: 16, nullable: true }) lastVerdict: string | null;
   /** Last frozen snapshot reference, when ever judged. */
-  @Column({ nullable: true }) lastSnapshotRef: string | null;
+  @Column({ type: 'varchar', length: 64, nullable: true }) lastSnapshotRef: string | null;
 }

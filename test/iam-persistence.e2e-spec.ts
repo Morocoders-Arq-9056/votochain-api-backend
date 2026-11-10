@@ -1,13 +1,11 @@
 import { DataSource, type Repository } from 'typeorm';
-import { PostgreSQLContainer, type StartedPostgreSQLContainer } from 'testcontainers';
-import { UserOrmEntity } from '../src/iam/infrastructure/persistence/typeorm/entities/user.orm-entity.js';
-import { UserPersistenceAssembler } from '../src/iam/infrastructure/persistence/typeorm/assemblers/user-persistence.assembler.js';
+import { UserOrmEntity } from '../src/iam/infrastructure/persistence/typeorm/entities/user.orm-entity.js';import { UserPersistenceAssembler } from '../src/iam/infrastructure/persistence/typeorm/assemblers/user-persistence.assembler.js';
 import { User } from '../src/iam/domain/model/aggregates/user.aggregate.js';
+import { SnakeNamingStrategy } from '../src/shared/infrastructure/persistence/typeorm/configuration/strategy/snake-naming.strategy.js';
 import { ContactAddress } from '../src/iam/domain/model/valueobjects/contact-address.value-object.js';
 import { SystemRole } from '../src/iam/domain/model/valueobjects/system-role.value-object.js';
 
-describe('IAM persistence (Testcontainers)', () => {
-  let container: StartedPostgreSQLContainer | undefined;
+describe('IAM persistence (compose postgres)', () => {
   let ds: DataSource | undefined;
   let repo: Repository<UserOrmEntity> | undefined;
   const assembler = new UserPersistenceAssembler();
@@ -15,15 +13,15 @@ describe('IAM persistence (Testcontainers)', () => {
   const mail = (tag: string) => `${tag}-${Date.now()}@votachain.dev`;
 
   beforeAll(async () => {
-    container = await new PostgreSQLContainer('postgres:16-alpine').start();
     ds = new DataSource({
       type: 'postgres',
-      host: container.getHost(),
-      port: container.getPort(),
-      username: container.getUsername(),
-      password: container.getPassword(),
-      database: container.getDatabase(),
+      host: process.env.DB_HOST ?? 'localhost',
+      port: Number(process.env.DB_PORT ?? 5432),
+      username: process.env.DB_USERNAME ?? 'postgres',
+      password: process.env.DB_PASSWORD ?? 'matias2oo6',
+      database: process.env.DB_NAME ?? 'votachain',
       entities: [UserOrmEntity],
+      namingStrategy: new SnakeNamingStrategy(),
       synchronize: true,
     });
     await ds.initialize();
@@ -32,7 +30,6 @@ describe('IAM persistence (Testcontainers)', () => {
 
   afterAll(async () => {
     await ds?.destroy();
-    await container?.stop();
   });
 
   it('round-trips a user with roles, preserving the granted set', async () => {
@@ -46,6 +43,7 @@ describe('IAM persistence (Testcontainers)', () => {
     const rehydrated = assembler.toDomainFromOrm(found);
     expect(rehydrated.roles).toEqual([SystemRole.USER]);
     expect(rehydrated.contact.email).toBe(user.contact.email);
+    expect(rehydrated.personId.value).toBe(user.personId.value);
   });
 
   it('parseAccessStanding throws on a corrupt row instead of casting', async () => {

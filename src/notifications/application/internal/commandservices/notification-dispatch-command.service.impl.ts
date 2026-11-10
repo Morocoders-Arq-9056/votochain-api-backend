@@ -14,7 +14,7 @@ import { NOTIFICATION_DISPATCH_REPOSITORY } from "../../../domain/repositories/n
 import type { NotificationDispatchRepository } from "../../../domain/repositories/notification-dispatch.repository.js";
 import { NotificationDispatchCommandService } from "../../../domain/services/notification-dispatch-command.service.js";
 import { DispatchNotFoundError } from "../../../domain/exceptions/dispatch-not-found.error.js";
-import { type ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
+import { ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
 import { TEMPLATE_RESOLVER } from "../outboundservices/template/template-resolver.service.js";
 import type { TemplateResolverService } from "../outboundservices/template/template-resolver.service.js";
 

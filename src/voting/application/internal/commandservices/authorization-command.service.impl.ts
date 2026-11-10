@@ -19,8 +19,10 @@ import type { VoteAuthorizationRepository } from "../../../domain/repositories/a
 import { PROPOSAL_REPOSITORY } from "../../../domain/repositories/proposal.repository.js";
 import type { ProposalRepository } from "../../../domain/repositories/proposal.repository.js";
 import { VoteAuthorizationCommandService } from "../../../domain/services/authorization-command.service.js";
-import { type ExternalBiometricService } from "../outboundservices/acl/external-biometric.service.js";
-import { type ExternalMembershipService } from "../outboundservices/acl/external-membership.service.js";
+import { ExternalBiometricService } from "../outboundservices/acl/external-biometric.service.js";
+import { ExternalMembershipService } from "../outboundservices/acl/external-membership.service.js";
+import { ExternalWalletService } from "../outboundservices/acl/external-wallet.service.js";
+import { VoterAddress } from "../../../domain/model/valueobjects/voter-address.value-object.js";
 
 /**
  * Application orchestration for UC3: request → freeze eligibility (R2) →
@@ -37,6 +39,7 @@ export class AuthorizationCommandServiceImpl implements VoteAuthorizationCommand
     @Inject(AUTHORIZATION_REPOSITORY) private readonly auths: VoteAuthorizationRepository,
     private readonly membership: ExternalMembershipService,
     private readonly biometric: ExternalBiometricService,
+    private readonly wallet: ExternalWalletService,
     @Inject(UNIT_OF_WORK) private readonly uow: IUnitOfWork,
     private readonly config: ConfigService,
     private readonly events: EventEmitter2,
@@ -45,11 +48,15 @@ export class AuthorizationCommandServiceImpl implements VoteAuthorizationCommand
   async requestVoteAuthorization(command: RequestVoteAuthorizationCommand): Promise<AuthorizationId> {
     const proposal = await this.proposals.findById(command.proposalId);
     if (!proposal) throw new ProposalNotFoundError('proposal not found');
-    if (await this.auths.findPendingByProposalAndVoter(command.proposalId, command.voterAddress))
+    // The declared address is only a format-checked marker: custody owns the
+    // key, so the frozen voter is the address custody derives for the person.
+    // The later ecrecover check compares against this same key.
+    const voterAddress = VoterAddress.of(await this.wallet.addressFor(command.personId.value));
+    if (await this.auths.findPendingByProposalAndVoter(command.proposalId, voterAddress))
       throw new DuplicatePendingAuthorizationError('duplicate pending authorization');
     const ttl = this.config.get<number>('VOTING_AUTH_TTL_MINUTES', 15);
     const auth = await this.uow.run(async () => {
-      const a = VoteAuthorization.request(AuthorizationId.generate(), command.proposalId, command.voterAddress, command.personId, ttl);
+      const a = VoteAuthorization.request(AuthorizationId.generate(), command.proposalId, voterAddress, command.personId, ttl);
       await this.auths.save(a);
       return a;
     });

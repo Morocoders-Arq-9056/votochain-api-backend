@@ -7,8 +7,14 @@ import type { VerificationCommandService } from '../../../domain/services/verifi
 import { VERIFICATION_QUERY_SERVICE } from '../../../domain/services/verification-query.service.js';
 import type { VerificationQueryService } from '../../../domain/services/verification-query.service.js';
 import { GetChallengeByIdQuery } from '../../../domain/model/queries/get-challenge-by-id.query.js';
+import { ChallengeStanding } from '../../../domain/model/valueobjects/challenge-standing.value-object.js';
+import { Purpose } from '../../../domain/model/valueobjects/purpose.value-object.js';
+import { NoUsableChallengeError } from '../../../domain/exceptions/no-usable-challenge.error.js';
 import { GetChallengeHistoryByPersonAndPurposeQuery } from '../../../domain/model/queries/get-challenge-history-by-person-and-purpose.query.js';
 import { RequestChallengeResource } from '../resources/request-challenge.resource.js';
+import { RequestChallengeByEmailResource } from '../resources/request-challenge-by-email.resource.js';
+import { ResetSecretResource } from '../resources/reset-secret.resource.js';
+import { ExternalIamService } from '../../../application/internal/outboundservices/acl/external-iam.service.js';
 import { ChallengeResource } from '../resources/challenge.resource.js';
 import { RequestVerificationChallengeCommandFromResourceAssembler } from '../transform/request-verification-challenge-command-from-resource.assembler.js';
 import { VerificationParamsAssembler } from '../transform/verification-params.assembler.js';
@@ -38,6 +44,7 @@ export class ChallengesController {
     @Inject(VERIFICATION_COMMAND_SERVICE) private readonly commands: VerificationCommandService,
     @Inject(VERIFICATION_QUERY_SERVICE) private readonly queries: VerificationQueryService,
     private readonly config: ConfigService,
+    private readonly iam: ExternalIamService,
   ) {}
 
   /**
@@ -60,6 +67,56 @@ export class ChallengesController {
   }
 
   /**
+   * Opens a challenge addressed by contact email for pre-login flows
+   * (recovery). Unknown addresses 404 without revealing which part failed.
+   */
+  @Post('by-email')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiCreatedResponse({ type: ChallengeResource })
+  @ApiNotFoundResponse({ description: 'Address held by nobody' })
+  @ApiUnprocessableEntityResponse({ description: 'Unknown purpose or contact not allowed' })
+  async requestChallengeByEmail(
+    @Body() resource: RequestChallengeByEmailResource,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<ChallengeResource> {
+    const personId = await this.iam.personIdForEmail(resource.email);
+    if (!personId) throw new NotFoundException('address held by nobody');
+    const command = RequestVerificationChallengeCommandFromResourceAssembler.toCommandFromResource({
+      personId,
+      purpose: resource.purpose,
+    });
+    const challengeId = await this.commands.requestVerificationChallenge(command);
+    response.location(`/${this.config.get<string>('app.prefix', 'api/v1')}/challenges/${challengeId.value}`);
+    const challenge = await this.queries.getChallengeById(new GetChallengeByIdQuery(challengeId));
+    if (!challenge) throw new NotFoundException();
+    return ChallengeResourceFromEntityAssembler.toResourceFromEntity(challenge);
+  }
+
+  /**
+   * Rotates the local secret after a confirmed password-reset challenge.
+   * The confirmed code is the only proof: no session, no prior secret.
+   */
+  @Post(':id/secret')
+  @HttpCode(HttpStatus.OK)
+  @ApiOkResponse({ description: 'Secret rotated' })
+  @ApiNotFoundResponse({ description: 'No usable challenge for reset' })
+  async resetSecret(
+    @Param('id') id: string,
+    @Body() resource: ResetSecretResource,
+  ): Promise<void> {
+    const challenge = await this.queries.getChallengeById(
+      new GetChallengeByIdQuery(VerificationParamsAssembler.toChallengeId(id)),
+    );
+    if (
+      !challenge ||
+      challenge.standing !== ChallengeStanding.CONFIRMED ||
+      challenge.purpose !== Purpose.PASSWORD_RESET
+    )
+      throw new NoUsableChallengeError('challenge not usable for reset');
+    await this.iam.resetSecret(challenge.personId.value, resource.newSecret);
+  }
+
+  /**
    * Returns the challenge with its standing and remaining attempts.
    */
   @Get(':id')
@@ -76,19 +133,26 @@ export class ChallengesController {
 
   /**
    * Returns every persisted challenge for the pair, ordered by request time.
+   * Accepts a person id or, for pre-login flows, a contact email.
    */
   @Get()
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: [ChallengeResource] })
   async getChallenges(
     @Query('personId') personId: string,
+    @Query('email') email: string,
     @Query('purpose') purpose: string,
   ): Promise<ChallengeResource[]> {
-    if (!personId?.trim() || !purpose?.trim())
-      throw new BadRequestException('personId and purpose are required');
+    if (!purpose?.trim() || (!personId?.trim() && !email?.trim()))
+      throw new BadRequestException('personId or email plus purpose are required');
+    let resolved = personId?.trim() ? personId : null;
+    if (!resolved) {
+      resolved = await this.iam.personIdForEmail(email);
+      if (!resolved) throw new NotFoundException('address held by nobody');
+    }
     const challenges = await this.queries.getChallengeHistoryByPersonAndPurpose(
       new GetChallengeHistoryByPersonAndPurposeQuery(
-        VerificationParamsAssembler.toPersonId(personId),
+        VerificationParamsAssembler.toPersonId(resolved),
         VerificationParamsAssembler.toPurpose(purpose),
       ),
     );

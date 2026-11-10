@@ -43,4 +43,19 @@ export interface IamContextFacade {
    * @param personId Person id (`per-` prefixed string).
    */
   markVerified(personId: string): Promise<void>;
+
+  /**
+   * Resolves a contact address into its person id, or null when nobody
+   * holds it. Lets pre-login flows (recovery) address challenges by email.
+   * @param email Raw contact address.
+   */
+  personIdForEmail(email: string): Promise<string | null>;
+
+  /**
+   * Rotates the local secret of the person's identity (recovery reset).
+   * Ends any open session; acting again requires the new proof.
+   * @param personId Person id (`per-` prefixed string).
+   * @param newSecret New secret reference (never logged, never returned).
+   */
+  resetSecret(personId: string, newSecret: string): Promise<void>;
 }

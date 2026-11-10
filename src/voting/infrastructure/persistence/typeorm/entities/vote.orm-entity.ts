@@ -14,7 +14,7 @@ export class VoteOrmEntity extends AuditableOrmEntity {
   @Column() choice: string;
   @Column() nonce: string;
   @Column({ type: 'jsonb' }) signature: { v: number; r: string; s: string };
-  @Column({ nullable: true }) txHash: string | null;
-  @Column({ nullable: true }) blockNumber: number | null;
+  @Column({ type: 'text', nullable: true }) txHash: string | null;
+  @Column({ type: 'int', nullable: true }) blockNumber: number | null;
   @Column() status: string;
 }

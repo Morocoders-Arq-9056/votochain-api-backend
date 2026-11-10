@@ -7,8 +7,8 @@ import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-wor
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
 import { ELIGIBILITY_POLICY } from "../outboundservices/eligibility/eligibility-policy.service.js";
 import type { EligibilityPolicyService } from "../outboundservices/eligibility/eligibility-policy.service.js";
-import { type ExternalCommunityService } from "../outboundservices/acl/external-community.service.js";
-import { type ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
+import { ExternalCommunityService } from "../outboundservices/acl/external-community.service.js";
+import { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
 import { ActivateMembershipCommand } from "../../../domain/model/commands/activate-membership.command.js";
 import { AssignCommunityRoleCommand } from "../../../domain/model/commands/assign-community-role.command.js";
 import { AssignUnitCommand } from "../../../domain/model/commands/assign-unit.command.js";

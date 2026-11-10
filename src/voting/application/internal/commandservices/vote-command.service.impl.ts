@@ -26,8 +26,8 @@ import type { ProposalRepository } from "../../../domain/repositories/proposal.r
 import { VOTE_REPOSITORY } from "../../../domain/repositories/vote.repository.js";
 import type { VoteRepository } from "../../../domain/repositories/vote.repository.js";
 import { VoteCommandService } from "../../../domain/services/vote-command.service.js";
-import { type ExternalNotificationsService } from "../outboundservices/acl/external-notifications.service.js";
-import { type ExternalWalletService } from "../outboundservices/acl/external-wallet.service.js";
+import { ExternalNotificationsService } from "../outboundservices/acl/external-notifications.service.js";
+import { ExternalWalletService } from "../outboundservices/acl/external-wallet.service.js";
 import { IDEMPOTENCY_KEY_STORE } from "../outboundservices/idempotency/idempotency-key-store.service.js";
 import type { IdempotencyKeyStore } from "../outboundservices/idempotency/idempotency-key-store.service.js";
 import { SIGNATURE_POLICY } from "../outboundservices/signing/signature-policy.service.js";

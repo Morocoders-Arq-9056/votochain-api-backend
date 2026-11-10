@@ -4,6 +4,9 @@ export class UserResource {
   @ApiProperty({ example: 'usr-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
   readonly userId: string;
 
+  @ApiProperty({ example: 'per-3fa85f64-5717-4562-b3fc-2c963f66afa6' })
+  readonly personId: string;
+
   @ApiProperty({ example: 'ada@votachain.dev' })
   readonly email: string;
 
@@ -24,6 +27,7 @@ export class UserResource {
 
   constructor(
     userId: string,
+    personId: string,
     email: string,
     emailVerified: boolean,
     standing: string,
@@ -32,6 +36,7 @@ export class UserResource {
     outsideProver: string | null,
   ) {
     this.userId = userId;
+    this.personId = personId;
     this.email = email;
     this.emailVerified = emailVerified;
     this.standing = standing;

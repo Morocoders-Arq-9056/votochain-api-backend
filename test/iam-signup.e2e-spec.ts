@@ -34,6 +34,7 @@ describe('IAM identity lifecycle (e2e)', () => {
     const res = await server().post('/api/v1/users').send({ email: address }).expect(HttpStatus.CREATED);
 
     expect(res.body.userId).toMatch(/^usr-/);
+    expect(res.body.personId).toMatch(/^per-/);
     expect(res.body.token).toBeUndefined();
     expect(res.headers.location).toContain(res.body.userId);
     return { id: res.body.userId as string, email: address };

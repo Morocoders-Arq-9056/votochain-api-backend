@@ -36,4 +36,21 @@ export class ExternalIamService {
   async markVerified(personId: string): Promise<void> {
     await this.iam.markVerified(personId);
   }
+
+  /**
+   * Resolves a contact address into its person id for pre-login flows.
+   * @param email Raw contact address.
+   */
+  async personIdForEmail(email: string): Promise<string | null> {
+    return this.iam.personIdForEmail(email);
+  }
+
+  /**
+   * Rotates the local secret of the person's identity (recovery reset).
+   * @param personId Person id (`per-` prefixed string).
+   * @param newSecret New secret reference (never logged, never returned).
+   */
+  async resetSecret(personId: string, newSecret: string): Promise<void> {
+    await this.iam.resetSecret(personId, newSecret);
+  }
 }

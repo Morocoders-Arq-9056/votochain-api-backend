@@ -20,4 +20,13 @@ export class ExternalWalletService {
   async sign(personId: string, contentRef: string): Promise<string> {
     return this.facade.sign(personId, contentRef);
   }
+
+  /**
+   * Answers the person's custody address so authorizations freeze the key
+   * the later ecrecover check compares against.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async addressFor(personId: string): Promise<string> {
+    return this.facade.addressFor(personId);
+  }
 }

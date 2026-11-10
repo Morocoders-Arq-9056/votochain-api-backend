@@ -40,5 +40,5 @@ export class DispatchOrmEntity extends AuditableOrmEntity {
   @Column({ type: 'jsonb', default: [] })
   history: { at: string; outcome: string; detail?: string }[];
   /** Refusal cause when REFUSED, null otherwise. */
-  @Column({ nullable: true }) refusal: string | null;
+  @Column({ type: 'varchar', nullable: true }) refusal: string | null;
 }

@@ -6,7 +6,9 @@ import type { UserCommandService } from "../../domain/services/user-command.serv
 import { PersonId } from "../../../shared/domain/model/valueobjects/person-id.value-object.js";
 import { GetAccessStandingByPersonQuery } from "../../domain/model/queries/get-access-standing-by-person.query.js";
 import { GetSystemRolesByPersonQuery } from "../../domain/model/queries/get-system-roles-by-person.query.js";
+import { GetUserByEmailQuery } from "../../domain/model/queries/get-user-by-email.query.js";
 import { GetUserByPersonIdQuery } from "../../domain/model/queries/get-user-by-person-id.query.js";
+import { ChangeSecretCommand } from "../../domain/model/commands/change-secret.command.js";
 import { VerifyEmailCommand } from "../../domain/model/commands/verify-email.command.js";
 import type { AccessStandingAnswerDto, IamContextFacade } from "../../interfaces/acl/iam-context.facade.js";
 
@@ -60,5 +62,20 @@ export class IamContextFacadeImpl implements IamContextFacade {
     const user = await this.queries.getUserByPersonId(new GetUserByPersonIdQuery(PersonId.of(personId)));
     if (!user) return;
     await this.commands.verifyEmail(new VerifyEmailCommand(user.id));
+  }
+
+  /**
+   * Resolves a contact address into its person id for pre-login flows.
+   * @param email Raw contact address.
+   */
+  async personIdForEmail(email: string): Promise<string | null> {
+    const user = await this.queries.getUserByEmail(new GetUserByEmailQuery(email));
+    return user ? user.personId.value : null;
+  }
+
+  async resetSecret(personId: string, newSecret: string): Promise<void> {
+    const user = await this.queries.getUserByPersonId(new GetUserByPersonIdQuery(PersonId.of(personId)));
+    if (!user) return;
+    await this.commands.changeSecret(new ChangeSecretCommand(user.id, newSecret));
   }
 }

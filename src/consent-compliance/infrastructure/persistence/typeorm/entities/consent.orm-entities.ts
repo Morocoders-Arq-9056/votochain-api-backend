@@ -48,6 +48,6 @@ export class RetentionPolicyOrmEntity extends AuditableOrmEntity {
   @Column('jsonb')
   terms!: Record<string, unknown>;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', nullable: true })
   supersedes!: string | null;
 }

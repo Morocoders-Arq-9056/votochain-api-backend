@@ -1,7 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { EligibilityJudgedEvent } from "../../../domain/model/events/eligibility-judged.event.js";
-import { type ExternalVotingService } from "../outboundservices/acl/external-voting.service.js";
+import { ExternalVotingService } from "../outboundservices/acl/external-voting.service.js";
 
 /**
  * In-module reaction to a frozen eligibility judgment (UC10 anchor): forwards

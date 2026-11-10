@@ -8,8 +8,8 @@ import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-wor
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
 import { CODE_COMPARE_SERVICE } from "../outboundservices/codecompare/code-compare.service.js";
 import type { CodeCompareService } from "../outboundservices/codecompare/code-compare.service.js";
-import type { ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
-import type { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
+import { ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
+import { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
 import { NOTIFICATION_DELIVERY_SERVICE } from "../outboundservices/acl/external-notifications.service.js";
 import type { NotificationDeliveryService } from "../outboundservices/acl/external-notifications.service.js";
 import { VerificationChallenge } from "../../../domain/model/aggregates/verification-challenge.aggregate.js";

@@ -5,6 +5,7 @@ export class UserResourceFromEntityAssembler {
   static toResourceFromEntity(user: User): UserResource {
     return new UserResource(
       user.id.value,
+      user.personId.value,
       user.contact.email,
       user.contact.verified,
       user.standing,

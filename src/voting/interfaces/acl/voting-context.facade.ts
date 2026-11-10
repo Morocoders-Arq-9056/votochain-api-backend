@@ -21,4 +21,5 @@ export interface ProofAnswerDto {
 export interface VotingContextFacade {
   getTally(proposalId: string): Promise<TallyAnswerDto | null>;
   getProof(voteId: string): Promise<ProofAnswerDto | null>;
+  confirmVoteByEnvelope(input: { envelopeWire: string; txHash: string; blockNumber: number }): Promise<void>;
 }

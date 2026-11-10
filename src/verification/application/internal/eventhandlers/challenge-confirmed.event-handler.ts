@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { OnEvent } from "@nestjs/event-emitter";
 import { ChallengeConfirmedEvent } from "../../../domain/model/events/challenge-confirmed.event.js";
 import { Purpose } from "../../../domain/model/valueobjects/purpose.value-object.js";
-import type { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
+import { ExternalIamService } from "../outboundservices/acl/external-iam.service.js";
 
 /**
  * In-module reaction to confirmed challenges (R9 reception point).

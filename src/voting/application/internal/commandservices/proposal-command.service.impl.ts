@@ -14,7 +14,7 @@ import type { ProposalRepository } from "../../../domain/repositories/proposal.r
 import { VOTE_REPOSITORY } from "../../../domain/repositories/vote.repository.js";
 import type { VoteRepository } from "../../../domain/repositories/vote.repository.js";
 import { ProposalCommandService } from "../../../domain/services/proposal-command.service.js";
-import { type ExternalCommunityService } from "../outboundservices/acl/external-community.service.js";
+import { ExternalCommunityService } from "../outboundservices/acl/external-community.service.js";
 
 /**
  * Application orchestration for proposal writes: UC1 draft, UC2 open

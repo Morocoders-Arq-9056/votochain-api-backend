@@ -11,16 +11,20 @@ import { ProposalNotOpenError } from '../../../domain/exceptions/proposal-not-op
 import { ReplayRejectedError } from '../../../domain/exceptions/replay-rejected.error.js';
 import { SignerMismatchError } from '../../../domain/exceptions/signer-mismatch.error.js';
 import { VoteNotFoundError } from '../../../domain/exceptions/vote-not-found.error.js';
+import { CapabilityNotFoundError } from '../../../../cryptographic-wallet-custody/domain/exceptions/capability-not-found.error.js';
 
 /**
  * Maps Voting domain rejections to HTTP statuses. Late votes (proposal not
  * open) → 422 `LateVoteRejected`; signer/choice → 422; replay/consumed →
  * 409; expired → 410; unknown ids → 404; illegal transitions → 409.
+ * A missing signing capability (custody) also maps to 404: the person
+ * cannot vote until a wallet is provisioned.
  */
 @Catch(
   AuthorizationAlreadyConsumedError,
   AuthorizationExpiredError,
   AuthorizationNotFoundError,
+  CapabilityNotFoundError,
   DuplicatePendingAuthorizationError,
   IllegalProposalTransitionError,
   InvalidChoiceError,
@@ -41,7 +45,8 @@ export class VotingExceptionFilter implements ExceptionFilter {
     else if (exception instanceof AuthorizationExpiredError) status = 410;
     else if (exception instanceof AuthorizationNotFoundError
       || exception instanceof ProposalNotFoundError
-      || exception instanceof VoteNotFoundError) status = 404;
+      || exception instanceof VoteNotFoundError
+      || exception instanceof CapabilityNotFoundError) status = 404;
     response.status(status).json({ message: exception.message, statusCode: status });
   }
 }
