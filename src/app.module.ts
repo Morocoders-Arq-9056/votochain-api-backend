@@ -27,6 +27,7 @@ import ocrConfig from './shared/infrastructure/ocr/configuration/ocr.config.js';
 import biometricConfig from './shared/infrastructure/biometric/configuration/biometric.config.js';
 import walletConfig from './shared/infrastructure/wallet/configuration/wallet.config.js';
 import relayConfig from './shared/infrastructure/relay/configuration/relay.config.js';
+import iamConfig from './shared/infrastructure/iam/configuration/iam.config.js';
 import { validationSchema } from './shared/infrastructure/persistence/configuration/validation.schema.js';
 import { buildTypeOrmOptions } from './shared/infrastructure/persistence/typeorm/configuration/typeorm.config.js';
 
@@ -35,7 +36,7 @@ import { buildTypeOrmOptions } from './shared/infrastructure/persistence/typeorm
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
-      load: [appConfig, awsConfig, azureConfig, databaseConfig, swaggerConfig, idempotencyConfig, verificationConfig, ocrConfig, biometricConfig, walletConfig, relayConfig],
+      load: [appConfig, awsConfig, azureConfig, databaseConfig, swaggerConfig, idempotencyConfig, verificationConfig, ocrConfig, biometricConfig, walletConfig, relayConfig, iamConfig],
       validationSchema,
     }),
     TypeOrmModule.forRootAsync({

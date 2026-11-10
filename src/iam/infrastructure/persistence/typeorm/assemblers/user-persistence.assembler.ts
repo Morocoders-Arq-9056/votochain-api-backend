@@ -35,6 +35,7 @@ export class UserPersistenceAssembler {
       outsideProver: entity.outsideProver
         ? OutsideProverRef.of(entity.outsideProver, entity.outsideSubject ?? '')
         : null,
+      secretHash: entity.secretHash ?? null,
     });
   }
 
@@ -54,6 +55,7 @@ export class UserPersistenceAssembler {
     ormEntity.roles = [...user.roles];
     ormEntity.outsideProver = user.outsideProver ? user.outsideProver.provider : null;
     ormEntity.outsideSubject = user.outsideProver ? user.outsideProver.externalId : null;
+    ormEntity.secretHash = user.secretHash;
     return ormEntity;
   }
 }

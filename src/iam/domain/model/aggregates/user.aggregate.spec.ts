@@ -16,7 +16,7 @@ import { LastAdminRefusedError } from '../../exceptions/last-admin-refused.error
 import { SuspendedRefusedError } from '../../exceptions/suspended-refused.error.js';
 
 function activeUser(): User {
-  const user = User.signUp({ contact: ContactAddress.create('ada@votachain.dev') });
+  const user = User.signUp({ contact: ContactAddress.create('ada@votachain.dev'), secretHash: 'scrypt$test-hash' });
   user.pullDomainEvents();
   user.verifyEmail();
   user.pullDomainEvents();
@@ -25,7 +25,7 @@ function activeUser(): User {
 
 describe('User aggregate (signup slice)', () => {
   it('signs up REGISTERED with a closed session and the USER role', () => {
-    const user = User.signUp({ contact: ContactAddress.create('ada@votachain.dev') });
+    const user = User.signUp({ contact: ContactAddress.create('ada@votachain.dev'), secretHash: 'scrypt$test-hash' });
 
     expect(user.standing).toBe(AccessStanding.REGISTERED);
     expect(user.session).toBe(SessionStanding.CLOSED);

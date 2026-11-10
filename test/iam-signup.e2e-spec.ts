@@ -28,10 +28,11 @@ describe('IAM identity lifecycle (e2e)', () => {
 
   const server = () => request(app.getHttpServer());
   const email = (tag: string) => `lifecycle-${tag}-${Date.now()}@votachain.dev`;
+  const password = 'S3gura-2026';
 
   async function signUp(tag: string): Promise<{ id: string; email: string }> {
     const address = email(tag);
-    const res = await server().post('/api/v1/users').send({ email: address }).expect(HttpStatus.CREATED);
+    const res = await server().post('/api/v1/users').send({ email: address, password }).expect(HttpStatus.CREATED);
 
     expect(res.body.userId).toMatch(/^usr-/);
     expect(res.body.personId).toMatch(/^per-/);
@@ -56,14 +57,15 @@ describe('IAM identity lifecycle (e2e)', () => {
 
   it('POST the same email twice → 201 then 409', async () => {
     const dup = email('dup');
-    await server().post('/api/v1/users').send({ email: dup }).expect(HttpStatus.CREATED);
-    const res = await server().post('/api/v1/users').send({ email: dup }).expect(HttpStatus.CONFLICT);
+    await server().post('/api/v1/users').send({ email: dup, password }).expect(HttpStatus.CREATED);
+    const res = await server().post('/api/v1/users').send({ email: dup, password }).expect(HttpStatus.CONFLICT);
 
     expect(res.body.statusCode).toBe(HttpStatus.CONFLICT);
   });
 
-  it('POST a malformed email → 400', async () => {
-    await server().post('/api/v1/users').send({ email: 'not-an-email' }).expect(HttpStatus.BAD_REQUEST);
+  it('POST a malformed email → 400; POST a weak password → 400', async () => {
+    await server().post('/api/v1/users').send({ email: 'not-an-email', password }).expect(HttpStatus.BAD_REQUEST);
+    await server().post('/api/v1/users').send({ email: email('weak'), password: 'corta' }).expect(HttpStatus.BAD_REQUEST);
   });
 
   it('sign-in → sign-out moves the session open then closed', async () => {
@@ -71,20 +73,22 @@ describe('IAM identity lifecycle (e2e)', () => {
 
     const opened = await server()
       .post('/api/v1/auth/sign-in')
-      .send({ email: address, proofKind: 'LOCAL' })
+      .send({ email: address, password })
       .expect(HttpStatus.OK);
     expect(opened.body.session).toBe('SESSION_OPEN');
+
+    await server().post('/api/v1/auth/sign-in').send({ email: address, password: 'Otra-Clave-0000' }).expect(HttpStatus.UNAUTHORIZED);
 
     await server().post('/api/v1/auth/sign-out').send({ email: address }).expect(HttpStatus.NO_CONTENT);
     const closed = await server().get(`/api/v1/users/${id}`).expect(HttpStatus.OK);
     expect(closed.body.session).toBe('SESSION_CLOSED');
   });
 
-  it('sign-in unknown address → 404; sign-out unknown address → 404', async () => {
+  it('sign-in unknown address → 401; sign-out unknown address → 404', async () => {
     await server()
       .post('/api/v1/auth/sign-in')
-      .send({ email: 'ghost@votachain.dev', proofKind: 'LOCAL' })
-      .expect(HttpStatus.NOT_FOUND);
+      .send({ email: 'ghost@votachain.dev', password })
+      .expect(HttpStatus.UNAUTHORIZED);
     await server()
       .post('/api/v1/auth/sign-out')
       .send({ email: 'ghost@votachain.dev' })
@@ -123,7 +127,7 @@ describe('IAM identity lifecycle (e2e)', () => {
   it('change secret → 200; change email → 200 unverified; verify → 201 ACTIVE', async () => {
     const { id } = await signUp('contact');
 
-    await server().patch(`/api/v1/users/${id}/secret`).send({ newSecret: 'ref-2' }).expect(HttpStatus.OK);
+    await server().patch(`/api/v1/users/${id}/secret`).send({ newSecret: 'S3gura-Rot26' }).expect(HttpStatus.OK);
 
     const changed = email('changed');
     const emailChanged = await server()

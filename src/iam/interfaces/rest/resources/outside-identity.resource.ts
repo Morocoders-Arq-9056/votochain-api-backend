@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsNotEmpty, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 /**
  * Request rotating the local secret (ends the open session).
@@ -10,8 +10,13 @@ import { IsIn, IsNotEmpty, IsString } from 'class-validator';
  */
 export class ChangeSecretResource {
   /** New secret reference (never logged, never returned). */
-  @ApiProperty({ example: 'new-secret-ref' })
-  @IsString() @IsNotEmpty() newSecret: string;
+  @ApiProperty({ example: 'S3gura-2026', writeOnly: true })
+  @IsString() @IsNotEmpty()
+  @MinLength(10) @MaxLength(16)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
+    message: 'secret must mix lower, upper and digit',
+  })
+  newSecret: string;
 }
 
 /**

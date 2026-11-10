@@ -31,4 +31,6 @@ export class UserOrmEntity extends AuditableOrmEntity {
   @Column({ type: 'varchar', length: 64, nullable: true }) outsideProver: string | null;
   /** Provider-side subject reference (`sub`) linked with the outside prover, or null. */
   @Column({ type: 'varchar', length: 255, nullable: true }) outsideSubject: string | null;
+  /** Local secret hash (scrypt) for classic email+password login, null until set. */
+  @Column({ type: 'varchar', length: 255, nullable: true }) secretHash: string | null;
 }

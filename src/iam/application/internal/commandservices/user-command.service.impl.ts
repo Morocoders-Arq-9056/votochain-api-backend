@@ -7,6 +7,11 @@ import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-wor
 import type { IUnitOfWork } from "../../../../shared/domain/repositories/unit-of-work.js";
 import { PROOF_VERIFICATION_SERVICE } from "../outboundservices/proof/proof-verification.service.js";
 import type { ProofVerificationService } from "../outboundservices/proof/proof-verification.service.js";
+import { PASSWORD_HASHER_SERVICE } from "../outboundservices/hashing/password-hasher.service.js";
+import type { PasswordHasherService } from "../outboundservices/hashing/password-hasher.service.js";
+import { LocalSecret } from "../../../domain/model/valueobjects/local-secret.value-object.js";
+import { InvalidCredentialsError } from "../../../domain/exceptions/invalid-credentials.error.js";
+import { IllegalUserStateError } from "../../../domain/exceptions/illegal-user-state.error.js";
 import { UserId } from "../../../domain/model/valueobjects/user-id.value-object.js";
 import { SignUpCommand } from "../../../domain/model/commands/sign-up.command.js";
 import { SignInCommand } from "../../../domain/model/commands/sign-in.command.js";
@@ -23,8 +28,15 @@ import { RestoreAccessCommand } from "../../../domain/model/commands/restore-acc
 import { User } from "../../../domain/model/aggregates/user.aggregate.js";
 import { AddressAlreadyHeldError } from "../../../domain/exceptions/address-already-held.error.js";
 import { OutsideProverRef } from "../../../domain/model/valueobjects/outside-prover-ref.value-object.js";
-import { ProofNotHeldError } from "../../../domain/exceptions/proof-not-held.error.js";
+import { ProofKind } from "../../../domain/model/valueobjects/proof-kind.value-object.js";
 import { UserNotFoundError } from "../../../domain/exceptions/user-not-found.error.js";
+
+/**
+ * Constant-time dummy hash compared when the address is unknown or the row
+ * predates secret_hash, so sign-in timing never reveals existence.
+ */
+const DUMMY_SECRET_HASH =
+  'scrypt$16384$8$1$00000000000000000000000000000000$00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
 
 /**
  * Application orchestration for the 12 User write use cases.
@@ -50,18 +62,26 @@ export class UserCommandServiceImpl implements UserCommandService {
     @Inject(USER_REPOSITORY) private readonly userRepository: UserRepository,
     @Inject(UNIT_OF_WORK) private readonly unitOfWork: IUnitOfWork,
     @Inject(PROOF_VERIFICATION_SERVICE) private readonly proofs: ProofVerificationService,
+    @Inject(PASSWORD_HASHER_SERVICE) private readonly hasher: PasswordHasherService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
-   * Registers a fresh identity; refuses addresses held by another identity.
+   * Registers a fresh identity with a classic-login secret; refuses
+   * addresses held by another identity.
    * @inheritdoc
    */
   async signUp(command: SignUpCommand): Promise<UserId> {
+    try {
+      LocalSecret.parse(command.plainSecret);
+    } catch (e) {
+      throw new IllegalUserStateError((e as Error).message);
+    }
+    const secretHash = await this.hasher.hash(command.plainSecret);
     const user = await this.unitOfWork.run(async () => {
       if (await this.userRepository.findByEmail(command.contactAddress.email))
         throw new AddressAlreadyHeldError('address already held');
-      const u = User.signUp({ contact: command.contactAddress });
+      const u = User.signUp({ contact: command.contactAddress, secretHash });
       await this.userRepository.save(u);
       return u;
     });
@@ -70,15 +90,41 @@ export class UserCommandServiceImpl implements UserCommandService {
   }
 
   /**
-   * Proves the user in, superseding any open session atomically.
+   * Proves the user in, superseding any open session atomically. LOCAL
+   * judges the hashed secret; OUTSIDE judges the linked outside proof.
+   * Every LOCAL rejection collapses to invalid credentials (401) so the
+   * endpoint never reveals whether the address exists.
    * @inheritdoc
    */
   async signIn(command: SignInCommand): Promise<void> {
-    const holds = await this.proofs.holds(command.userId.value);
-    if (!holds) throw new ProofNotHeldError('proof does not hold');
+    if (command.proofKind === ProofKind.OUTSIDE) {
+      const user = await this.unitOfWork.run(async () => {
+        const u = await this.userRepository.findByEmail(command.email);
+        if (!u) throw new InvalidCredentialsError();
+        const holds = await this.proofs.holds(u.id.value);
+        if (!holds) throw new InvalidCredentialsError();
+        try {
+          u.signIn(ProofKind.OUTSIDE);
+        } catch {
+          throw new InvalidCredentialsError();
+        }
+        await this.userRepository.save(u);
+        return u;
+      });
+      this.publishDomainEvents(user);
+      return;
+    }
+    if (!command.plainSecret?.trim()) throw new InvalidCredentialsError();
     const user = await this.unitOfWork.run(async () => {
-      const u = await this.require(command.userId);
-      u.signIn(command.proofKind);
+      const u = await this.userRepository.findByEmail(command.email);
+      const stored = u?.secretHash ?? DUMMY_SECRET_HASH;
+      const holds = await this.hasher.matches(command.plainSecret as string, stored);
+      if (!u || !u.secretHash || !holds) throw new InvalidCredentialsError();
+      try {
+        u.signIn(ProofKind.LOCAL);
+      } catch {
+        throw new InvalidCredentialsError();
+      }
       await this.userRepository.save(u);
       return u;
     });
@@ -100,15 +146,19 @@ export class UserCommandServiceImpl implements UserCommandService {
   }
 
   /**
-   * Changes the secret after observing the current proof; ends the session.
+   * Changes the secret after judging the acceptance policy; ends the session.
    * @inheritdoc
    */
   async changeSecret(command: ChangeSecretCommand): Promise<void> {
-    const holds = await this.proofs.holds(command.userId.value);
-    if (!holds) throw new ProofNotHeldError('proof does not hold');
-    await this.proofs.applySecret(command.userId.value, command.newSecret);
+    try {
+      LocalSecret.parse(command.newSecret);
+    } catch (e) {
+      throw new IllegalUserStateError((e as Error).message);
+    }
+    const secretHash = await this.hasher.hash(command.newSecret);
     const user = await this.unitOfWork.run(async () => {
       const u = await this.require(command.userId);
+      u.setSecretHash(secretHash);
       u.changeSecret();
       await this.userRepository.save(u);
       return u;

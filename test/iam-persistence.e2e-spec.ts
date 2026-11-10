@@ -34,7 +34,7 @@ describe('IAM persistence (compose postgres)', () => {
 
   it('round-trips a user with roles, preserving the granted set', async () => {
     if (!repo) throw new Error('repository missing');
-    const user = User.signUp({ contact: ContactAddress.create(mail('roundtrip')) });
+    const user = User.signUp({ contact: ContactAddress.create(mail('roundtrip')), secretHash: 'scrypt$test' });
 
     await repo.save(assembler.toOrmFromDomain(user));
     const found = await repo.findOne({ where: { id: user.id.value } });
@@ -44,11 +44,12 @@ describe('IAM persistence (compose postgres)', () => {
     expect(rehydrated.roles).toEqual([SystemRole.USER]);
     expect(rehydrated.contact.email).toBe(user.contact.email);
     expect(rehydrated.personId.value).toBe(user.personId.value);
+    expect(rehydrated.secretHash).toBe('scrypt$test');
   });
 
   it('parseAccessStanding throws on a corrupt row instead of casting', async () => {
     if (!repo || !ds) throw new Error('database missing');
-    const user = User.signUp({ contact: ContactAddress.create(mail('corrupt')) });
+    const user = User.signUp({ contact: ContactAddress.create(mail('corrupt')), secretHash: 'scrypt$test' });
     await repo.save(assembler.toOrmFromDomain(user));
 
     await ds.query(`update iam.users set standing = 'BOGUS' where id = $1`, [user.id.value]);
@@ -62,9 +63,9 @@ describe('IAM persistence (compose postgres)', () => {
     if (!repo) throw new Error('repository missing');
     const address = mail('dupe');
 
-    await repo.save(assembler.toOrmFromDomain(User.signUp({ contact: ContactAddress.create(address) })));
+    await repo.save(assembler.toOrmFromDomain(User.signUp({ contact: ContactAddress.create(address), secretHash: 'scrypt$test' })));
     await expect(
-      repo.save(assembler.toOrmFromDomain(User.signUp({ contact: ContactAddress.create(address) }))),
+      repo.save(assembler.toOrmFromDomain(User.signUp({ contact: ContactAddress.create(address), secretHash: 'scrypt$test' }))),
     ).rejects.toThrow();
   });
 });

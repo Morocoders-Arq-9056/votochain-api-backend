@@ -1,6 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Inject, NotFoundException, Post, Res, UseFilters } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiTags, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { USER_COMMAND_SERVICE } from '../../../domain/services/user-command.service.js';
 import type { UserCommandService } from '../../../domain/services/user-command.service.js';
@@ -15,8 +15,7 @@ import { SignInResource } from '../resources/sign-in.resource.js';
 import { SignOutResource } from '../resources/sign-out.resource.js';
 import { UserResourceFromEntityAssembler } from '../transform/user-resource-from-entity.assembler.js';
 import { SignUpCommandFromResourceAssembler } from '../transform/sign-up-command-from-resource.assembler.js';
-import { IamParamsAssembler } from '../transform/iam-params.assembler.js';
-import { SignInCommand } from '../../../domain/model/commands/sign-in.command.js';
+import { SignInCommandFromResourceAssembler } from '../transform/sign-in-command-from-resource.assembler.js';
 import { SignOutCommand } from '../../../domain/model/commands/sign-out.command.js';
 import { UserNotFoundError } from '../../../domain/exceptions/user-not-found.error.js';
 import { IamExceptionFilter } from '../filters/iam-exception.filter.js';
@@ -68,16 +67,19 @@ export class AuthenticationController {
   }
 
   /**
-   * Opens the single session, superseding any prior one.
+   * Opens the single session with classic email+password, superseding any
+   * prior one. Every rejection is 401 invalid credentials (never 404), so
+   * the endpoint does not reveal whether the address exists.
    */
   @Post('sign-in')
   @HttpCode(HttpStatus.OK)
   @ApiOkResponse({ type: UserResource })
-  @ApiNotFoundResponse({ description: 'Address held by nobody' })
-  @ApiConflictResponse({ description: 'Suspended or proof not held' })
+  @ApiBadRequestResponse({ description: 'Malformed email or password' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   async signIn(@Body() resource: SignInResource): Promise<UserResource> {
-    const user = await this.requireByEmail(resource.email);
-    await this.commands.signIn(new SignInCommand(user.id, IamParamsAssembler.toProofKind(resource.proofKind)));
+    await this.commands.signIn(SignInCommandFromResourceAssembler.toCommandFromResource(resource));
+    const user = await this.queries.getUserByEmail(new GetUserByEmailQuery(resource.email));
+    if (!user) throw new NotFoundException();
     const current = await this.queries.getUserById(new GetUserByIdQuery(user.id));
     if (!current) throw new NotFoundException();
     return UserResourceFromEntityAssembler.toResourceFromEntity(current);

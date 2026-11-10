@@ -61,16 +61,18 @@ export class User extends AggregateRoot implements AccessStandable {
     private _contact: ContactAddress,
     private _roles: SystemRole[],
     private _outsideProver: OutsideProverRef | null,
+    private _secretHash: string | null,
   ) { super(); }
 
   /**
    * Creates a brand-new REGISTERED identity with a closed session.
    * Mints UserId + PersonId and raises UserSignedUpEvent.
-   * @param input Carries the initial unverified contact address.
+   * @param input Carries the initial unverified contact address plus the hashed secret.
    */
-  static signUp(input: { contact: ContactAddress }): User {
+  static signUp(input: { contact: ContactAddress; secretHash: string }): User {
+    if (!input.secretHash?.trim()) throw new Error('secretHash required');
     const user = new User(UserId.generate(), PersonId.generate(), AccessStanding.REGISTERED, SessionStanding.CLOSED,
-      input.contact, [SystemRole.USER], null);
+      input.contact, [SystemRole.USER], null, input.secretHash);
     user.registerEvent(new UserSignedUpEvent(user._id, user._personId, user._contact));
     return user;
   }
@@ -80,9 +82,9 @@ export class User extends AggregateRoot implements AccessStandable {
    */
   static rehydrate(input: { id: UserId; personId: PersonId; standing: AccessStanding;
     session: SessionStanding; contact: ContactAddress; roles: SystemRole[];
-    outsideProver: OutsideProverRef | null }): User {
+    outsideProver: OutsideProverRef | null; secretHash: string | null }): User {
     return new User(input.id, input.personId, input.standing,
-      input.session, input.contact, [...input.roles], input.outsideProver);
+      input.session, input.contact, [...input.roles], input.outsideProver, input.secretHash);
   }
 
   /**
@@ -141,6 +143,15 @@ export class User extends AggregateRoot implements AccessStandable {
     if (this._standing === AccessStanding.SUSPENDED) throw new SuspendedRefusedError('suspended');
     this.tearDownSession(SignOutReason.PROOF_CHANGED);
     this.registerEvent(new SecretChangedEvent(this._id, this._personId));
+  }
+
+  /**
+   * Installs a new secret hash (hashing happens outside the aggregate).
+   * @param secretHash Already-hashed secret reference.
+   */
+  setSecretHash(secretHash: string): void {
+    if (!secretHash?.trim()) throw new Error('secretHash required');
+    this._secretHash = secretHash;
   }
 
   /**
@@ -238,6 +249,8 @@ export class User extends AggregateRoot implements AccessStandable {
   get contact(): ContactAddress { return this._contact; }
   /** Linked outside prover reference, or null when only the local secret proves. */
   get outsideProver(): OutsideProverRef | null { return this._outsideProver; }
+  /** Hashed local secret, or null for legacy Sprint-01 rows pending reset. */
+  get secretHash(): string | null { return this._secretHash; }
 
   /**
    * Suspends access with a recorded reason and ends the open session.

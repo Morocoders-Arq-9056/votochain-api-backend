@@ -4,6 +4,6 @@ import { SignUpResource } from '../resources/sign-up.resource.js';
 
 export class SignUpCommandFromResourceAssembler {
   static toCommandFromResource(resource: SignUpResource): SignUpCommand {
-    return new SignUpCommand(ContactAddress.create(resource.email));
+    return new SignUpCommand(ContactAddress.create(resource.email), resource.password);
   }
 }

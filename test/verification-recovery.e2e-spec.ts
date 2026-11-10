@@ -43,7 +43,7 @@ describe('Verification recovery by email (e2e)', () => {
 
   it('flujo: sign-up → by-email 201 → GET por email lista → secret en OPEN da 404', async () => {
     const address = email('loop');
-    await server().post('/api/v1/users').send({ email: address }).expect(HttpStatus.CREATED);
+    await server().post('/api/v1/users').send({ email: address, password: 'S3gura-2026' }).expect(HttpStatus.CREATED);
 
     const created = await server()
       .post('/api/v1/challenges/by-email')

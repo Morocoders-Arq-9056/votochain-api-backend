@@ -11,17 +11,20 @@ import { ProofNotHeldError } from '../../../domain/exceptions/proof-not-held.err
 import { RoleAlreadyHeldError } from '../../../domain/exceptions/role-already-held.error.js';
 import { RoleNotHeldError } from '../../../domain/exceptions/role-not-held.error.js';
 import { SuspendedRefusedError } from '../../../domain/exceptions/suspended-refused.error.js';
+import { InvalidCredentialsError } from '../../../domain/exceptions/invalid-credentials.error.js';
 import { UserNotFoundError } from '../../../domain/exceptions/user-not-found.error.js';
 
 /**
  * Maps IAM domain rejections to HTTP statuses.
- * UserNotFound → 404; illegal state transitions → 422; every other
- * guard refusal → 409. Anything else falls through to the global filter.
+ * InvalidCredentials → 401 with a single message (address existence is
+ * never revealed); UserNotFound → 404; illegal state transitions → 422;
+ * every other guard refusal → 409. Anything else falls through.
  */
 @Catch(
   AddressAlreadyHeldError,
   AlreadyRegisteredError,
   IllegalUserStateError,
+  InvalidCredentialsError,
   LastAdminRefusedError,
   LastProofRefusedError,
   NoOpenSessionError,
@@ -37,7 +40,8 @@ export class IamExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     let status = 409;
-    if (exception instanceof UserNotFoundError) status = 404;
+    if (exception instanceof InvalidCredentialsError) status = 401;
+    else if (exception instanceof UserNotFoundError) status = 404;
     else if (exception instanceof IllegalUserStateError) status = 422;
     response.status(status).json({
       message: exception.message,

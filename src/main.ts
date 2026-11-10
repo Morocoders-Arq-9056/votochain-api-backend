@@ -12,6 +12,7 @@ async function bootstrap() {
   app.setGlobalPrefix(cfg.get<string>('app.prefix', 'api/v1')!);
   app.enableCors({
     origin: cfg.get<string[]>('app.corsOrigins', []) as string[],
+    credentials: true,
   });
   app.useGlobalFilters(new GlobalExceptionFilter());
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
