@@ -17,6 +17,8 @@ import { CryptographicWalletCustodyModule } from './cryptographic-wallet-custody
 import { BlockchainRelayTransactionDeliveryModule } from './blockchain-relay-transaction-delivery/blockchain-relay-transaction-delivery.module.js';
 import { ConsentComplianceModule } from './consent-compliance/consent-compliance.module.js';
 import appConfig from './shared/infrastructure/application/configuration/app.config.js';
+import awsConfig from './shared/infrastructure/aws/configuration/aws.config.js';
+import azureConfig from './shared/infrastructure/azure/configuration/azure.config.js';
 import databaseConfig from './shared/infrastructure/persistence/configuration/database.config.js';
 import idempotencyConfig from './shared/infrastructure/idempotency/configuration/idempotency.config.js';
 import swaggerConfig from './shared/infrastructure/documentation/openapi/configuration/openapi.config.js';
@@ -33,7 +35,7 @@ import { buildTypeOrmOptions } from './shared/infrastructure/persistence/typeorm
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
-      load: [appConfig, databaseConfig, swaggerConfig, idempotencyConfig, verificationConfig, ocrConfig, biometricConfig, walletConfig, relayConfig],
+      load: [appConfig, awsConfig, azureConfig, databaseConfig, swaggerConfig, idempotencyConfig, verificationConfig, ocrConfig, biometricConfig, walletConfig, relayConfig],
       validationSchema,
     }),
     TypeOrmModule.forRootAsync({

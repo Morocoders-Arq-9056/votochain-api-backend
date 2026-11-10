@@ -7,5 +7,5 @@ import { registerAs } from '@nestjs/config';
  */
 export default registerAs('ocr', () => ({
   ttlMinutes: parseInt(process.env['OCR_TTL_MINUTES'] ?? '30', 10),
-  executor: process.env['OCR_EXECUTOR'] ?? 'rekognition',
+  executor: process.env['OCR_EXECUTOR'] ?? 'azure-document-intelligence',
 }));
