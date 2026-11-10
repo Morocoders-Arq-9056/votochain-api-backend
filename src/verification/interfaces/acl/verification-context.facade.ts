@@ -42,6 +42,16 @@ export interface VerificationContextFacade {
   requestChallenge(personId: string, purpose: string): Promise<string>;
 
   /**
+   * Opens the initial email-verification challenge for a freshly registered
+   * person (signup onboarding). Convenience over requestChallenge with the
+   * closed purpose set — keeps IAM free of Verification's purpose language.
+   * Idempotent: supersedes any prior OPEN challenge atomically.
+   * @param personId Person id (`per-` prefixed string).
+   * @returns The new challenge id string.
+   */
+  requestEmailVerification(personId: string): Promise<string>;
+
+  /**
    * Judges one presented code against the open challenge.
    * @param challengeId Challenge id (`ch-` prefixed string).
    * @param code Presented plain code.

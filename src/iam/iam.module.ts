@@ -1,4 +1,5 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { UserCommandServiceImpl } from "./application/internal/commandservices/user-command.service.impl.js";
 import { UserQueryServiceImpl } from "./application/internal/queryservices/user-query.service.impl.js";
@@ -18,8 +19,13 @@ import { UserRepositoryImpl } from "./infrastructure/persistence/typeorm/adapter
 import { UserPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/user-persistence.assembler.js";
 import { UserOrmEntity } from "./infrastructure/persistence/typeorm/entities/user.orm-entity.js";
 import { FakeProofVerificationService } from "./infrastructure/auth0/fake-proof-verification.service.js";
+import { PASSWORD_HASHER_SERVICE } from "./application/internal/outboundservices/hashing/password-hasher.service.js";
+import { ScryptPasswordHasherService } from "./infrastructure/hashing/scrypt/scrypt-password-hasher.service.js";
+import { FakePasswordHasherService } from "./infrastructure/hashing/fake/fake-password-hasher.service.js";
 import { NoopSessionArtifactService } from "./infrastructure/session/noop-session-artifact.service.js";
 import { NotificationsModule } from "../notifications/notifications.module.js";
+import { VerificationModule } from "../verification/verification.module.js";
+import { ExternalVerificationService } from "./application/internal/outboundservices/acl/external-verification.service.js";
 
 /**
  * IAM bounded context module (supporting subdomain).
@@ -35,16 +41,26 @@ import { NotificationsModule } from "../notifications/notifications.module.js";
  * @since 2026-09-17
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([UserOrmEntity]), NotificationsModule],
+  imports: [TypeOrmModule.forFeature([UserOrmEntity]), NotificationsModule, forwardRef(() => VerificationModule)],
   controllers: [UsersController, AuthenticationController, AuthorizationController],
   providers: [
     UserPersistenceAssembler,
     UserEventLogger,
     ExternalNotificationsService,
+    ExternalVerificationService,
     { provide: USER_REPOSITORY, useClass: UserRepositoryImpl },
     { provide: USER_COMMAND_SERVICE, useClass: UserCommandServiceImpl },
     { provide: USER_QUERY_SERVICE, useClass: UserQueryServiceImpl },
     { provide: PROOF_VERIFICATION_SERVICE, useClass: FakeProofVerificationService },
+    {
+      provide: PASSWORD_HASHER_SERVICE,
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => {
+        if (cfg.get<string>('iam.passwordHasher', 'scrypt') === 'fake')
+          return new FakePasswordHasherService();
+        return new ScryptPasswordHasherService();
+      },
+    },
     { provide: SESSION_ARTIFACT_SERVICE, useClass: NoopSessionArtifactService },
     { provide: IAM_CONTEXT_FACADE, useClass: IamContextFacadeImpl },
   ],

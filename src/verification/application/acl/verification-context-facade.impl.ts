@@ -48,6 +48,17 @@ export class VerificationContextFacadeImpl implements VerificationContextFacade 
   }
 
   /**
+   * Opens the initial email-verification challenge for onboarding.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async requestEmailVerification(personId: string): Promise<string> {
+    const id = await this.commands.requestVerificationChallenge(
+      new RequestVerificationChallengeCommand(this.toPersonId(personId), this.toPurpose('email-verification')),
+    );
+    return id.value;
+  }
+
+  /**
    * Judges one presented code and answers the resulting standing.
    * @param challengeId Challenge id (`ch-` prefixed string).
    * @param code Presented plain code.

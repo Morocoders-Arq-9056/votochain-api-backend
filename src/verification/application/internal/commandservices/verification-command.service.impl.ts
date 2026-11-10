@@ -95,7 +95,7 @@ export class VerificationCommandServiceImpl implements VerificationCommandServic
     });
     this.publishDomainEvents(created);
     try {
-      await this.notifications.sendCode(created.personId.value, plain, created.purpose);
+      await this.notifications.sendCode(created.personId.value, plain, created.purpose, created.id.value);
     } catch (err) {
       this.logger.warn(`delivery failed for ${created.id.value}: ${String(err)}`);
     }

@@ -73,6 +73,11 @@ export class IamContextFacadeImpl implements IamContextFacade {
     return user ? user.personId.value : null;
   }
 
+  async getEmailByPersonId(personId: string): Promise<string | null> {
+    const user = await this.queries.getUserByPersonId(new GetUserByPersonIdQuery(PersonId.of(personId)));
+    return user ? user.contact.email : null;
+  }
+
   async resetSecret(personId: string, newSecret: string): Promise<void> {
     const user = await this.queries.getUserByPersonId(new GetUserByPersonIdQuery(PersonId.of(personId)));
     if (!user) return;

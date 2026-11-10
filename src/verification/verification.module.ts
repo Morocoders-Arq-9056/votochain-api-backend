@@ -1,7 +1,8 @@
-import { Module } from "@nestjs/common";
+import { Module, forwardRef } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { IamModule } from "../iam/iam.module.js";
+import { NotificationsModule } from "../notifications/notifications.module.js";
 import { VerificationCommandServiceImpl } from "./application/internal/commandservices/verification-command.service.impl.js";
 import { VerificationQueryServiceImpl } from "./application/internal/queryservices/verification-query.service.impl.js";
 import { ChallengeConfirmedEventHandler } from "./application/internal/eventhandlers/challenge-confirmed.event-handler.js";
@@ -15,7 +16,7 @@ import { VERIFICATION_CHALLENGE_REPOSITORY } from "./domain/repositories/verific
 import { CODE_COMPARE_SERVICE } from "./application/internal/outboundservices/codecompare/code-compare.service.js";
 import { ExternalConsentService } from "./application/internal/outboundservices/acl/external-consent.service.js";
 import { ExternalIamService } from "./application/internal/outboundservices/acl/external-iam.service.js";
-import { LogOnlyNotificationDeliveryAdapter, NOTIFICATION_DELIVERY_SERVICE } from "./application/internal/outboundservices/acl/external-notifications.service.js";
+import { FacadeNotificationDeliveryAdapter, NOTIFICATION_DELIVERY_SERVICE } from "./application/internal/outboundservices/acl/external-notifications.service.js";
 import { ChallengeRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/challenge-repository.impl.js";
 import { ChallengePersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/challenge-persistence.assembler.js";
 import { ChallengeOrmEntity } from "./infrastructure/persistence/typeorm/entities/challenge.orm-entity.js";
@@ -40,7 +41,7 @@ import { ConsentComplianceModule } from "../consent-compliance/consent-complianc
  * @since 2026-09-23
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([ChallengeOrmEntity]), IamModule, ConsentComplianceModule],
+  imports: [TypeOrmModule.forFeature([ChallengeOrmEntity]), forwardRef(() => IamModule), ConsentComplianceModule, NotificationsModule],
   controllers: [ChallengesController, AnswersController],
   providers: [
     ChallengePersistenceAssembler,
@@ -51,7 +52,7 @@ import { ConsentComplianceModule } from "../consent-compliance/consent-complianc
     { provide: VERIFICATION_COMMAND_SERVICE, useClass: VerificationCommandServiceImpl },
     { provide: VERIFICATION_QUERY_SERVICE, useClass: VerificationQueryServiceImpl },
     { provide: VERIFICATION_CONTEXT_FACADE, useClass: VerificationContextFacadeImpl },
-    { provide: NOTIFICATION_DELIVERY_SERVICE, useClass: LogOnlyNotificationDeliveryAdapter },
+    { provide: NOTIFICATION_DELIVERY_SERVICE, useClass: FacadeNotificationDeliveryAdapter },
     {
       provide: CODE_COMPARE_SERVICE,
       inject: [ConfigService],

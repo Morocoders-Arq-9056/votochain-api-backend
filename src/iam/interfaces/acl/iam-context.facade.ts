@@ -52,6 +52,13 @@ export interface IamContextFacade {
   personIdForEmail(email: string): Promise<string | null>;
 
   /**
+   * Resolves the recorded contact address for a person, or null when unknown.
+   * Lets Verification address the OTP delivery without importing IAM's model.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  getEmailByPersonId(personId: string): Promise<string | null>;
+
+  /**
    * Rotates the local secret of the person's identity (recovery reset).
    * Ends any open session; acting again requires the new proof.
    * @param personId Person id (`per-` prefixed string).

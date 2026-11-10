@@ -1,4 +1,6 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { NOTIFICATION_CONTEXT_FACADE, type NotificationContextFacade } from "../../../../../notifications/interfaces/acl/notification-context.facade.js";
+import { ExternalIamService } from "./external-iam.service.js";
 
 /**
  * Outbound port through which Verification instructs delivery of the plain
@@ -24,8 +26,9 @@ export interface NotificationDeliveryService {
    * @param personId Person id (`per-` prefixed string).
    * @param plainCode Plain code; secret, never logged or persisted by the app.
    * @param purpose Proof purpose.
+   * @param challengeId Challenge id for idempotent dispatch keys.
    */
-  sendCode(personId: string, plainCode: string, purpose: string): Promise<void>;
+  sendCode(personId: string, plainCode: string, purpose: string, challengeId?: string): Promise<void>;
 }
 
 /**
@@ -40,7 +43,40 @@ export class LogOnlyNotificationDeliveryAdapter implements NotificationDeliveryS
    * Logs the issuance fact only; the plain code never reaches the logger.
    * @inheritdoc
    */
-  async sendCode(personId: string, _plainCode: string, purpose: string): Promise<void> {
+  async sendCode(personId: string, _plainCode: string, purpose: string, _challengeId?: string): Promise<void> {
     this.logger.log(`code issued to ${personId} for ${purpose} (delivery not wired)`);
+  }
+}
+
+/**
+ * Facade-backed adapter: resolves the recorded address via the IAM ACL and
+ * requests a `challenge-code` dispatch via the Notifications facade.
+ * Failures are logged, never thrown — the challenge row already committed.
+ */
+@Injectable()
+export class FacadeNotificationDeliveryAdapter implements NotificationDeliveryService {
+  private readonly logger = new Logger(FacadeNotificationDeliveryAdapter.name);
+
+  constructor(
+    private readonly iam: ExternalIamService,
+    @Optional() @Inject(NOTIFICATION_CONTEXT_FACADE) private readonly notifications?: NotificationContextFacade,
+  ) {}
+
+  async sendCode(personId: string, plainCode: string, purpose: string, challengeId?: string): Promise<void> {
+    if (!this.notifications) {
+      this.logger.log(`code issued to ${personId} for ${purpose} (delivery not wired)`);
+      return;
+    }
+    try {
+      const email = await this.iam.getEmailByPersonId(personId);
+      if (!email) {
+        this.logger.warn(`challenge ${challengeId ?? ''} has no recorded address for ${personId}`);
+        return;
+      }
+      const key = `challenge:${challengeId ?? `${personId}:${purpose}:${Date.now()}`}`;
+      await this.notifications.requestDelivery(key, email, 'challenge-code', { code: plainCode }, `challenge ${purpose}`);
+    } catch (err) {
+      this.logger.warn(`challenge-code dispatch failed for ${personId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }

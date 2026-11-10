@@ -46,6 +46,14 @@ export class ExternalIamService {
   }
 
   /**
+   * Resolves the recorded contact address for OTP delivery.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  async getEmailByPersonId(personId: string): Promise<string | null> {
+    return this.iam.getEmailByPersonId(personId);
+  }
+
+  /**
    * Rotates the local secret of the person's identity (recovery reset).
    * @param personId Person id (`per-` prefixed string).
    * @param newSecret New secret reference (never logged, never returned).

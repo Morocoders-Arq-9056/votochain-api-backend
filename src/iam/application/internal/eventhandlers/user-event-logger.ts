@@ -10,6 +10,7 @@ import { UserSignedUpEvent } from "../../../domain/model/events/user-signed-up.e
 import { ExternalNotificationsService } from "../outboundservices/acl/external-notifications.service.js";
 import { SESSION_ARTIFACT_SERVICE } from "../outboundservices/session/session-artifact.service.js";
 import type { SessionArtifactService } from "../outboundservices/session/session-artifact.service.js";
+import { ExternalVerificationService } from "../outboundservices/acl/external-verification.service.js";
 
 /**
  * In-module fan-out for IAM domain events (Observer, never cross-BC).
@@ -32,14 +33,19 @@ export class UserEventLogger {
   constructor(
     @Optional() private readonly notifications?: ExternalNotificationsService,
     @Optional() @Inject(SESSION_ARTIFACT_SERVICE) private readonly sessions?: SessionArtifactService,
+    @Optional() private readonly verification?: ExternalVerificationService,
   ) {}
 
   /**
-   * Reacts to sign-up by sending the welcome notice; failures never roll back.
+   * Reacts to sign-up by sending the welcome notice and opening the initial
+   * email-verification challenge (onboarding EDA). Both are fire-and-forget:
+   * failures never roll back the committed signup; the front can re-request
+   * the challenge by-email.
    */
   @OnEvent(UserSignedUpEvent.eventName, { async: true })
   async onSignedUp(event: UserSignedUpEvent): Promise<void> {
     await this.notifications?.welcome(event.contact.email).catch(() => undefined);
+    await this.verification?.requestEmailVerification(event.personId.value).catch(() => undefined);
   }
 
   /**
