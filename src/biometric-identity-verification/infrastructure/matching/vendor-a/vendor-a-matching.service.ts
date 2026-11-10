@@ -1,9 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import type { FaceMatchingService } from "../../../application/internal/outboundservices/matching/face-matching.service.js";
+import type { FaceCapture, FaceMatchingService } from "../../../application/internal/outboundservices/matching/face-matching.service.js";
 
 /**
- * Vendor-A face matcher. Reports a similarity score; the BC judges it
+ * Vendor-A face matcher. Reports a fixed similarity score; the BC judges it
  * against its own `FACE_MATCH_THRESHOLD` — the bar never leaves this
  * context. Selected via `FACE_MATCHER=vendor-a`.
  */
@@ -11,17 +10,13 @@ import type { FaceMatchingService } from "../../../application/internal/outbound
 export class VendorAMatchingService implements FaceMatchingService {
   private readonly logger = new Logger(VendorAMatchingService.name);
 
-  constructor(private readonly config: ConfigService) {}
-
-  async judgesMatch(attemptId: string): Promise<boolean> {
-    const score = this.observeScore(attemptId);
-    const threshold = this.config.get<number>('biometric.matchThreshold', 0.82);
-    const match = score >= threshold;
-    this.logger.debug(`vendor-a score=${score} threshold=${threshold} match=${match} for ${attemptId}`);
-    return match;
+  async observeSimilarity(capture: FaceCapture): Promise<{ score: number }> {
+    const score = 0.95;
+    this.logger.debug(`vendor-a score=${score} for ${capture.attemptId}`);
+    return { score };
   }
 
-  private observeScore(_attemptId: string): number {
-    return 0.95;
+  async forget(_reference: string): Promise<void> {
+    // No vendor state to delete.
   }
 }

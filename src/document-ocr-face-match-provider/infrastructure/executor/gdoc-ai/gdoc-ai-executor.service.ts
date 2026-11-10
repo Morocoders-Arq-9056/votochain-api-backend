@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import type { DocumentExecutorService } from "../../../application/internal/outboundservices/executor/document-executor.service.js";
+import type { DocumentExecutorService, EvidenceInput } from "../../../application/internal/outboundservices/executor/document-executor.service.js";
 
 /**
  * Google Document AI executor adapter (OCR) with a deterministic face
@@ -9,13 +9,13 @@ import type { DocumentExecutorService } from "../../../application/internal/outb
 export class GdocAiExecutorService implements DocumentExecutorService {
   private readonly logger = new Logger(GdocAiExecutorService.name);
 
-  async observeExtraction(examinationId: string): Promise<{ readable: boolean; reason: string | null }> {
-    this.logger.debug(`gdoc-ai extraction for ${examinationId}`);
+  async observeExtraction(evidence: EvidenceInput): Promise<{ readable: boolean; reason: string | null }> {
+    this.logger.debug(`gdoc-ai extraction for ${typeof evidence === 'string' ? evidence : 'buffer'}`);
     return { readable: true, reason: null };
   }
 
-  async observeComparison(examinationId: string): Promise<{ holds: boolean }> {
-    this.logger.debug(`gdoc-ai comparison for ${examinationId}`);
+  async observeComparison(evidence: EvidenceInput): Promise<{ holds: boolean }> {
+    this.logger.debug(`gdoc-ai comparison for ${typeof evidence === 'string' ? evidence : 'buffer'}`);
     return { holds: true };
   }
 }

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { EventEmitter2 } from "@nestjs/event-emitter";
 import { UNIT_OF_WORK } from "../../../../shared/domain/repositories/unit-of-work.js";
@@ -25,8 +25,9 @@ import type { ExaminationRepository } from "../../../domain/repositories/examina
 import type { ExaminationCommandService } from "../../../domain/services/examination-command.service.js";
 import { ExternalConsentService } from "../outboundservices/acl/external-consent.service.js";
 import { ExternalMembershipService } from "../outboundservices/acl/external-membership.service.js";
+import { EVIDENCE_STORE, type EvidenceStore } from "../outboundservices/evidence/evidence-store.service.js";
 import { EXECUTOR_PORT } from "../outboundservices/executor/document-executor.service.js";
-import type { DocumentExecutorService } from "../outboundservices/executor/document-executor.service.js";
+import type { DocumentExecutorService, EvidenceInput } from "../outboundservices/executor/document-executor.service.js";
 
 /**
  * Application orchestration for the 4 examination writes.
@@ -49,6 +50,7 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
     private readonly membership: ExternalMembershipService,
     private readonly consent: ExternalConsentService,
     @Inject(EXECUTOR_PORT) private readonly executor: DocumentExecutorService,
+    @Optional() @Inject(EVIDENCE_STORE) private readonly evidenceStore?: EvidenceStore,
   ) {}
 
   async requestDocumentExamination(command: RequestDocumentExaminationCommand): Promise<ExaminationId> {
@@ -84,8 +86,13 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
 
   async examineDocumentExamination(command: ExamineDocumentExaminationCommand): Promise<void> {
     const id = command.examinationId;
-    const extraction = await this.executor.observeExtraction(id.value);
-    const comparison = extraction.readable ? await this.executor.observeComparison(id.value) : null;
+    let evidenceInput: EvidenceInput = id.value;
+    if (this.evidenceStore) {
+      const stored = await this.evidenceStore.take(id.value).catch(() => null);
+      if (stored) evidenceInput = stored;
+    }
+    const extraction = await this.executor.observeExtraction(evidenceInput);
+    const comparison = extraction.readable ? await this.executor.observeComparison(evidenceInput) : null;
     const concluded = await this.uow.run(async () => {
       const e = await this.require(id);
       e.recordExtraction(extraction.readable, extraction.reason ? parseUnreadableReason(extraction.reason) : null);

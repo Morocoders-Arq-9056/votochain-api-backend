@@ -8,6 +8,9 @@ import { ExaminationEventLogger } from "./application/internal/eventhandlers/exa
 import { ExternalConsentService } from "./application/internal/outboundservices/acl/external-consent.service.js";
 import { ExternalMembershipService } from "./application/internal/outboundservices/acl/external-membership.service.js";
 import { EXECUTOR_PORT, type DocumentExecutorService } from "./application/internal/outboundservices/executor/document-executor.service.js";
+import { EVIDENCE_STORE } from "./application/internal/outboundservices/evidence/evidence-store.service.js";
+import { InMemoryEvidenceStore } from "./infrastructure/evidence/in-memory/in-memory-evidence.store.js";
+import { AzureDocumentIntelligenceExecutorService } from "./infrastructure/executor/azure-document-intelligence/azure-document-intelligence.executor.service.js";
 import { ExaminationQueryServiceImpl } from "./application/internal/queryservices/examination-query.service.impl.js";
 import { EXAMINATION_COMMAND_SERVICE } from "./domain/services/examination-command.service.js";
 import { EXAMINATION_QUERY_SERVICE } from "./domain/services/examination-query.service.js";
@@ -46,18 +49,26 @@ import { ConsentComplianceModule } from "../consent-compliance/consent-complianc
     ExternalConsentService,
     RekognitionExecutorService,
     GdocAiExecutorService,
+    AzureDocumentIntelligenceExecutorService,
+    InMemoryEvidenceStore,
+    { provide: EVIDENCE_STORE, useExisting: InMemoryEvidenceStore },
     { provide: EXAMINATION_REPOSITORY, useClass: ExaminationRepositoryImpl },
     { provide: EXAMINATION_COMMAND_SERVICE, useClass: ExaminationCommandServiceImpl },
     { provide: EXAMINATION_QUERY_SERVICE, useClass: ExaminationQueryServiceImpl },
     {
       provide: EXECUTOR_PORT,
-      inject: [ConfigService, RekognitionExecutorService, GdocAiExecutorService],
+      inject: [ConfigService, AzureDocumentIntelligenceExecutorService, RekognitionExecutorService, GdocAiExecutorService],
       useFactory: (
         config: ConfigService,
+        azure: AzureDocumentIntelligenceExecutorService,
         rekognition: RekognitionExecutorService,
         gdocAi: GdocAiExecutorService,
-      ): DocumentExecutorService =>
-        config.get<string>('ocr.executor', 'rekognition') === 'gdoc-ai' ? gdocAi : rekognition,
+      ): DocumentExecutorService => {
+        const executor = config.get<string>('ocr.executor', 'azure-document-intelligence');
+        if (executor === 'gdoc-ai') return gdocAi;
+        if (executor === 'rekognition') return rekognition;
+        return azure;
+      },
     },
     { provide: OCR_CONTEXT_FACADE, useClass: OcrContextFacadeImpl },
   ],

@@ -25,10 +25,11 @@ src/document-ocr-face-match-provider/
 ├── application/internal/queryservices/examination-query.service.impl.ts
 ├── application/internal/eventhandlers/examination-event.logger.ts
 ├── application/internal/outboundservices/executor/document-executor.service.ts (puerto)
+├── application/internal/outboundservices/evidence/evidence-store.service.ts (puerto) + document-evidence.ts
 ├── application/internal/outboundservices/acl/external-membership.service.ts
 ├── application/internal/outboundservices/acl/external-consent.service.ts
 ├── domain/model/aggregates/document-examination.aggregate.ts
-├── domain/model/valueobjects/ (examination-id, person-id, document-ref, standing, verdict, unreadable-reason, validity-window)
+├── domain/model/valueobjects/ (examination-id, person-id, document-ref, standing, verdict, unreadable-reason, validity-window, reference-ref)
 ├── domain/model/commands/ (request-document-examination, request-document-reexamination, examine-document-examination, expire-document-examination)
 ├── domain/model/queries/ (get-standing, get-history)
 ├── domain/model/events/ (7: requested, refused, extracted, compared, concluded, expired, reexamination-requested)
@@ -36,7 +37,8 @@ src/document-ocr-face-match-provider/
 ├── infrastructure/persistence/typeorm/entities/examination.orm-entity.ts
 ├── infrastructure/persistence/typeorm/assemblers/examination-persistence.assembler.ts
 ├── infrastructure/persistence/typeorm/adapters/examination-repository.impl.ts
-├── infrastructure/executor/rekognition/ + infrastructure/executor/gdoc-ai/
+├── infrastructure/executor/azure-document-intelligence/ + rekognition/ + gdoc-ai/
+├── infrastructure/evidence/redis/ + infrastructure/evidence/memory/
 └── document-ocr-face-match-provider.module.ts
 ```
 
@@ -57,7 +59,7 @@ Contrato `Examinable`: pipeline lineal sin esqueleto en dominio — `recordExtra
 ```typescript
 export interface Examinable {
   recordExtraction(readable: boolean, reason: UnreadableReason | null): void;
-  recordComparison(holds: boolean): void;
+  recordComparison(holds: boolean, reference: ReferenceRef | null): void;
   recordVerdict(v: Verdict): void;
   noteRefused(reason: string): void; // scrutiny sin transición: el rechazo queda en el historial del abierto
   expire(now: Date): void;
@@ -79,19 +81,20 @@ export class DocumentExamination extends AggregateRoot {
   private constructor(private readonly _id: ExaminationId, private readonly _personId: PersonId,
     private readonly _documentRef: DocumentRef, private _standing: ExaminationStanding,
     private readonly _window: ValidityWindow, private _verdict: Verdict | null = null,
-    private _consumed = false, private _extracted = false, private _compared = false) { super(); }
+    private _consumed = false, private _extracted = false, private _compared = false,
+    private readonly _reference: ReferenceRef | null = null) { super(); }
   static request(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; window: ValidityWindow }): DocumentExamination {
     const e = new DocumentExamination(i.id, i.personId, i.documentRef, ExaminationStanding.OPEN, i.window);
     e.registerEvent(new ExaminationRequestedEvent(e._id, e._personId, e._documentRef)); return e;
   }
-  static rehydrate(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; standing: ExaminationStanding; window: ValidityWindow; verdict: Verdict | null; consumed: boolean; extracted: boolean; compared: boolean }): DocumentExamination {
-    return new DocumentExamination(i.id, i.personId, i.documentRef, i.standing, i.window, i.verdict, i.consumed, i.extracted, i.compared);
+  static rehydrate(i: { id: ExaminationId; personId: PersonId; documentRef: DocumentRef; standing: ExaminationStanding; window: ValidityWindow; verdict: Verdict | null; consumed: boolean; extracted: boolean; compared: boolean; reference?: ReferenceRef | null }): DocumentExamination {
+    return new DocumentExamination(i.id, i.personId, i.documentRef, i.standing, i.window, i.verdict, i.consumed, i.extracted, i.compared, i.reference ?? null);
   }
   recordExtraction(readable: boolean, reason: UnreadableReason | null): void {
     this.assertOpen(); this._extracted = true;
     this.registerEvent(new DocumentExtractedEvent(this._id, readable, reason));
   }
-  recordComparison(holds: boolean): void {
+  recordComparison(holds: boolean, reference: ReferenceRef | null): void {
     this.assertOpen();
     if (!this._extracted) throw new NoOpenExaminationError('comparison without clean read');
     this._compared = true; this.registerEvent(new FacesComparedEvent(this._id, holds));
@@ -153,7 +156,7 @@ export class ValidityWindow {
 ### 2.3 Commands / 2.4 Queries / 2.5 Excepciones
 
 ```typescript
-export class RequestDocumentExaminationCommand { constructor(public readonly personId: PersonId, public readonly documentRef: DocumentRef) { if (!personId || !documentRef) throw new Error('person+document required'); } }
+export class RequestDocumentExaminationCommand { constructor(public readonly examinationId: ExaminationId, public readonly personId: PersonId, public readonly documentRef: DocumentRef) { if (!examinationId || !personId || !documentRef) throw new Error('id+person+document required'); } }
 export class RequestDocumentReexaminationCommand { constructor(public readonly priorExaminationId: ExaminationId) {} }
 export class ExamineDocumentExaminationCommand { constructor(public readonly examinationId: ExaminationId) { if (!examinationId) throw new Error('examination required'); } }
 export class ExpireDocumentExaminationCommand { constructor(public readonly examinationId: ExaminationId, public readonly now: Date) {} }
@@ -224,20 +227,24 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
       throw new ExaminationAlreadyOpenError('already OPEN');
     }
     const e = await this.uow.run(async () => {
-      const x = DocumentExamination.request({ id: ExaminationId.generate(), personId: cmd.personId, documentRef: cmd.documentRef, window: ValidityWindow.now(30) });
+      const x = DocumentExamination.request({ id: cmd.examinationId, personId: cmd.personId, documentRef: cmd.documentRef, window: ValidityWindow.now(30) });
       await this.exams.save(x); return x;
     });
     this.publish(e); return e.id;
   }
   async examineDocumentExamination(cmd: ExamineDocumentExaminationCommand): Promise<void> { // UC2 anchor
     const id = cmd.examinationId;
-    const ext = await this.executor.observeExtraction(id.value); // vendors ANTES del run: red fuera del tx
-    const cmp = ext.readable ? await this.executor.observeComparison(id.value) : null;
+    // La evidencia vive en el store transitorio, no en el agregado: el take es destructivo
+    // (consume una vez) y ocurre ANTES de llamar al vendor. Red fuera de la tx.
+    const evidence = await this.evidence.take(id.value);
+    if (!evidence) throw new NoOpenExaminationError('evidence expired or already consumed');
+    const ext = await this.executor.observeExtraction(evidence);
+    const cmp = ext.readable ? await this.executor.observeComparison(evidence) : null;
     const e = await this.uow.run(async () => {
       const x = await this.exams.findByIdOrThrow(id);
       x.recordExtraction(ext.readable, ext.reason ? UnreadableReason.of(ext.reason) : null);
       if (!ext.readable) x.recordVerdict(Verdict.UNREADABLE);
-      else { x.recordComparison(cmp!.holds); x.recordVerdict(cmp!.holds ? Verdict.MATCH : Verdict.NO_MATCH); }
+      else {       x.recordComparison(cmp!.holds, cmp!.reference); x.recordVerdict(cmp!.holds ? Verdict.MATCH : Verdict.NO_MATCH); }
       await this.exams.save(x); return x;
     });
     this.publish(e);
@@ -271,8 +278,13 @@ export class ExaminationCommandServiceImpl implements ExaminationCommandService 
 ```typescript
 export const EXECUTOR_PORT = Symbol('EXECUTOR_PORT');
 export interface DocumentExecutorService {
-  observeExtraction(examinationId: string): Promise<{ readable: boolean; reason: string | null }>;
-  observeComparison(examinationId: string): Promise<{ holds: boolean }>;
+  observeExtraction(evidence: DocumentEvidence): Promise<{ readable: boolean; reason: string | null }>;
+  observeComparison(evidence: DocumentEvidence): Promise<{ holds: boolean; reference: ReferenceRef | null }>;
+}
+export const EVIDENCE_STORE = Symbol('EVIDENCE_STORE');
+export interface EvidenceStore {
+  put(examinationId: string, evidence: DocumentEvidence): Promise<void>;
+  take(examinationId: string): Promise<DocumentEvidence | null>(); // consumo único
 }
 export const MEMBERSHIP_PORT = Symbol('MEMBERSHIP_PORT');
 export interface ExternalMembershipService { belongsToAnyCommunity(personId: string): Promise<boolean>; }
@@ -308,7 +320,7 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
 
 ### 4.2 Adaptadores ejecutor + 4.3 Módulo
 
-`infrastructure/executor/rekognition/` y `.../gdoc-ai/` implementan `DocumentExecutorService` como Strategy infra-side; selección por `OCR_EXECUTOR` (default `rekognition`). Cambio = una línea en `providers`.
+`infrastructure/executor/azure-document-intelligence/` (OCR real: Azure AI Document Intelligence), `.../rekognition/` (comparación facial de enrollment) y `.../gdoc-ai/` implementan `DocumentExecutorService` como Strategy infra-side; selección por `OCR_EXECUTOR` (default `azure-document-intelligence`). Cambio = una línea en `providers`.
 
 ```typescript
 @Module({ imports: [TypeOrmModule.forFeature([ExaminationOrmEntity])], controllers: [ExaminationController],
@@ -316,7 +328,8 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
     { provide: EXAMINATION_REPOSITORY, useClass: ExaminationRepositoryImpl },
     { provide: EXAMINATION_COMMAND_SERVICE, useClass: ExaminationCommandServiceImpl },
     { provide: EXAMINATION_QUERY_SERVICE, useClass: ExaminationQueryServiceImpl },
-    { provide: EXECUTOR_PORT, useClass: RekognitionExecutorService },
+    { provide: EXECUTOR_PORT, useFactory: (config: ConfigService, azure: AzureDocumentIntelligenceExecutorService, rek: RekognitionExecutorService, gdoc: GdocAiExecutorService) =>
+        config.get<string>('ocr.executor', 'azure-document-intelligence') === 'gdoc-ai' ? gdoc : config.get<string>('ocr.executor', 'azure-document-intelligence') === 'rekognition' ? rek : azure },
     { provide: OCR_CONTEXT_FACADE, useClass: OcrContextFacadeImpl },
     ExternalMembershipService, ExternalConsentService, // ACL → MEMBERSHIP_CONTEXT_FACADE / CONSENT_CONTEXT_FACADE (módulos importados)
     { provide: UNIT_OF_WORK, useClass: TypeOrmUnitOfWork }],
@@ -348,7 +361,8 @@ Delgado: Resource → assembler → comando (token) → relectura query → Reso
 export const OCR_CONTEXT_FACADE = Symbol('OCR_CONTEXT_FACADE');
 export interface OcrContextFacade {
   answerUsableMatch(personId: string, documentRef: string): Promise<{ usableMatch: boolean }>;
-  consumeMatch(personId: string, documentRef: string): Promise<boolean>; // single-use
+  // single-use: devuelve además el handle opaco de la referencia viva (R7, ver actualización v0.2.0)
+  consumeMatch(personId: string, documentRef: string): Promise<{ consumed: boolean; reference: ReferenceRef | null }>;
 }
 ```
 
@@ -371,6 +385,7 @@ Esquema `ocr`, tabla `examinations`. Sin blobs: la evidencia muere con el examen
 | `consumed` | `BOOLEAN` DEFAULT FALSE | Single-use MATCH |
 | `requested_at` / `ttl_minutes` | `TIMESTAMPTZ` / `INT` | Ventana de validez |
 | `unreadable_reason` | `VARCHAR(32)` NULL | Razón cerrada (5) |
+| `reference_ref` | `VARCHAR(256)` NULL | Handle opaco de la referencia viva (ver actualización v0.2.0) |
 | `created_at/updated_at` | `TIMESTAMPTZ` | Auditoría |
 
 ```sql
@@ -378,7 +393,7 @@ CREATE SCHEMA IF NOT EXISTS ocr;
 CREATE TABLE ocr.examinations (id VARCHAR(64) PRIMARY KEY, person_id VARCHAR(64) NOT NULL,
   document_ref VARCHAR(128) NOT NULL, standing VARCHAR(16) NOT NULL, verdict VARCHAR(16),
   consumed BOOLEAN NOT NULL DEFAULT FALSE, requested_at TIMESTAMPTZ NOT NULL, ttl_minutes INT NOT NULL,
-  unreadable_reason VARCHAR(32), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+  unreadable_reason VARCHAR(32), reference_ref VARCHAR(256), created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) WHERE standing = 'OPEN';
 ```
 
@@ -400,7 +415,7 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 
 | Dirección | Relación | Mecanismo |
 |:--|:--|:--|
-| OCR → Biometric (R7 Customer/Supplier) | `ExaminationConcludedEvent(MATCH)` (wire `'ExaminationConcluded'`) + `consumeMatch` | ACL single-use; nada image-like cruza |
+| OCR → Biometric (R7 Customer/Supplier) | `ExaminationConcludedEvent(MATCH)` (wire `'ExaminationConcluded'`) + `consumeMatch` | ACL single-use; nada image-like cruza. **Refinamiento v0.2.0**: cruza además el *handle opaco* de la referencia viva (`reference_ref`), nunca bytes ni retratos |
 | Membership → OCR (R8 Conformist) | `belongsToAnyCommunity` | Precondición UC1/UC4; `NoEligibleMembership` |
 | Consent → OCR | `mayProcessNow` | Gate UC1/UC4; `ContactNotAllowed` |
 | IAM → OCR | Existencia persona | Referencia por identidad |
@@ -414,7 +429,9 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 
 | Dependencia | Puerto | Adaptador |
 |:--|:--|:--|
-| Ejecutor OCR/face | `DocumentExecutorService` | `Rekognition...` / `GdocAi...` (intercambiables) |
+| Ejecutor OCR/face | `DocumentExecutorService` | `AzureDocumentIntelligence...` (OCR) / `Rekognition...` (face de enrollment) / `GdocAi...` (intercambiables) |
+| Evidencia transitoria | `EvidenceStore` | `RedisEvidenceStore` (TTL, `GETDEL`) / `InMemoryEvidenceStore` |
+| Referencia viva | `ReferenceRef` (VO opaco) | Índice de rostros del proveedor |
 | Membership R8 | `ExternalMembershipService` | Facade Membership (conformist) |
 | Consent | `ExternalConsentService` | Facade Consent |
 | Bus | `EventEmitter2` | `EventEmitterModule.forRoot()` solo en `AppModule` |
@@ -444,7 +461,13 @@ CREATE UNIQUE INDEX uq_open_exam ON ocr.examinations (person_id, document_ref) W
 
 ```properties
 ocr.window.ttl-minutes=${OCR_TTL_MINUTES:30}
-ocr.executor=${OCR_EXECUTOR:rekognition}
+ocr.executor=${OCR_EXECUTOR:azure-document-intelligence}
+ocr.evidence.store=${EVIDENCE_STORE_DRIVER:memory}
+azure.document-intelligence.endpoint=${AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT:}
+azure.document-intelligence.key=${AZURE_DOCUMENT_INTELLIGENCE_KEY:}
+azure.document-intelligence.model=${AZURE_DOCUMENT_INTELLIGENCE_MODEL:prebuilt-read}
+aws.region=${AWS_REGION:us-east-1}
+aws.rekognition.collection-id=${AWS_REKOGNITION_COLLECTION_ID:votachain-biometric}
 ```
 
 ## Testing (skill §Testing each layer)
@@ -453,3 +476,83 @@ ocr.executor=${OCR_EXECUTOR:rekognition}
 - **application**: mocks de repo + `DocumentExecutorService` (Fake observaciones) + `ExternalMembershipService` + `ExternalConsentService`, o `overrideProvider(...)`.
 - **infrastructure**: Testcontainers Postgres — `uq_open_exam` parcial, round-trip + `parseVerdict()` corrupto.
 - **interfaces**: supertest (`POST examinations → 201; :id/examine → MATCH; standing/history`).
+
+---
+
+## Actualización v0.2.0 — Integración real (Azure AI Document Intelligence + AWS Rekognition)
+
+> Plan de ejecución: `docs/Plan/Sprint-05-OCR-Azure-Real.md`.
+> Guía completa con el código de los adaptadores: `docs/Guides/Guia-Integracion-AWS-Azure-Blockchain.md` §5, §6.
+
+### Qué cambió y por qué
+
+| # | Cambio | Motivo |
+|---|---|---|
+| U1 | **El OCR pasa a Azure AI Document Intelligence** (`prebuilt-read` + parser propio de DNI/CE) | El producto decidió Azure en lugar de Google Document AI. `prebuilt-idDocument` no sirve para el DNI/CE peruano (esquema US/EU) |
+| U2 | `EXECUTOR_PORT` **se ensancha**: `observeExtraction(evidence)` / `observeComparison(evidence)` | El puerto anterior (`examinationId`) era estructuralmente incapaz de transportar la evidencia |
+| U3 | Nuevo puerto `EVIDENCE_STORE` + `DocumentEvidence` (application, no dominio) | No existía ingesta. La evidencia es efímera (Redis con TTL), nunca Postgres |
+| U4 | `POST /api/v1/examinations` pasa a **multipart** (frente/reverso/selfie) | El vendor no recibía nada: no había bytes que analizar |
+| U5 | `recordComparison(holds, reference)` → `DocumentExamination` gana `reference_ref` | La referencia viva (rostro del documento) debe sembrar el perfil biométrico del BC Biometric |
+| U6 | `OCR_CONTEXT_FACADE.consumeMatch` → `{ consumed, reference }` | R7 entrega veredicto **y** handle opaco (nunca bytes) |
+| U7 | `RekognitionExecutorService` deja de ser un stub de OCR | Pasa a ser el comparador facial de **enrollment** (selfie ↔ retrato del documento) |
+
+### La cadena de confianza (por qué el handle del retrato se crea aquí)
+
+```
+P8  Subir documento (frente/reverso) + selfie
+      └─ OCR exam: Azure lee el DNI  → legible?
+                    Rekognition CompareFaces(selfie, retrato del DNI) → holds?
+                    Rekognition DetectFaces+IndexFaces(retrato del DNI) → reference_ref
+      └─ Veredicto: MATCH (single-use)
+
+P10 Crear referencia biométrica
+      └─ Biometric consume el MATCH + reference_ref → BiometricProfile(reference)
+      └─ P10 prueba persona viva (liveness) → la selfie se compara contra reference_ref
+```
+
+El **retrato del documento** es el ancla de confianza: es la única referencia que el usuario no
+puede fabricar con una selfie (la facialidad del documento la garantiza la autoridad que lo
+emitió). Por eso su handle nace en el examen —único momento en que el retrato existe en
+bytes— y viaja al BC Biometric como **handle opaco**. El retrato en sí **muere con el
+examen**; lo que sobrevive es el handle y el vector del proveedor, que el Biometric BC
+borrará en el erasure.
+
+### Refinamiento explícito de R7
+
+R7 dice *"nada image-like cruza"* y *"los retratos mueren con el examen"*. Con la integración
+real, lo que cruza de OCR a Biometric es:
+
+- el **veredicto** (`MATCH`, single-use) — como antes;
+- el **handle opaco** de la referencia viva (`reference_ref`) — nuevo.
+
+**No cruzan bytes, retratos, crops, scores ni identificadores del vendor.** El handle no es
+"image-like": es una dirección opaca dentro del proveedor, equivalente al
+`rekognitionFaceId` que el `VotoChain_Flujo_Biometrico_Wallet_ModeloB.md` ya anticipaba. El
+BC Biometric lo trata como `ReferenceRef` y no sabe qué proveedor lo emitió (por eso la
+columna `provider` en `biometric.profiles`).
+
+### Set cerrado: sin sextas razones
+
+`UnreadableReason` sigue con **5** miembros. El adapter de Azure mapea sus detecciones al
+más cercano (`BLURRY` / `GLARE` / `CROPPED` / `EXPIRED` / `MISMATCHED_TYPE`) y **no puede**
+inventar uno nuevo: si un caso no encaja, se registra y se mapea al más próximo. Un
+`tipo MIME` inválido **no** es `MISMATCHED_TYPE` (es un 400 de transporte): esa razón es
+para cuando el archivo es válido pero su contenido no corresponde al tipo declarado.
+
+### Veredicto = dos hechos
+
+`MATCH` exige **documento legible ∧ rostro coincidente**. `UNREADABLE` es terminal para ese
+intento (el usuario reintenta con `requestReexamination`, ID nuevo). `NO_MATCH` = legible pero
+el rostro no sostiene.
+
+### Costo
+
+Azure F0 = **500 páginas/mes sin vencimiento** (4 MB/archivo, 1 req/s, 2 primeras páginas).
+1 examen de DNI = 2 páginas ⇒ **~250 exámenes/mes en $0 real**.
+
+### Preguntas abiertas que esta actualización no cierra
+
+- ¿Se procesa el reverso del DNI con Azure (rechazo por tipo) o solo se archiva como prueba?
+- ¿El parser propio se entrena con muestras reales de DNI o se cubre con reglas fijas + fuzz?
+- ¿El `reference_ref` se indexa en el mismo examen que la comparación, o en un paso aparte
+  cuando el documento es legible pero el rostro no coincide (reintento)?

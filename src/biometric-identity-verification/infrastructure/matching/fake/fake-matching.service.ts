@@ -1,13 +1,17 @@
 import { Injectable } from "@nestjs/common";
-import type { FaceMatchingService } from "../../../application/internal/outboundservices/matching/face-matching.service.js";
+import type { FaceCapture, FaceMatchingService } from "../../../application/internal/outboundservices/matching/face-matching.service.js";
 
 /**
- * In-memory matcher for tests. Always judges a match; deterministic and
- * fast. Selected via `FACE_MATCHER=fake`.
+ * In-memory matcher for tests. Always reports a perfect score; deterministic
+ * and fast. The BC still applies its threshold. Selected via `FACE_MATCHER=fake`.
  */
 @Injectable()
 export class FakeMatchingService implements FaceMatchingService {
-  async judgesMatch(_attemptId: string): Promise<boolean> {
-    return true;
+  async observeSimilarity(_capture: FaceCapture): Promise<{ score: number }> {
+    return { score: 1 };
+  }
+
+  async forget(_reference: string): Promise<void> {
+    // No vendor state to delete.
   }
 }

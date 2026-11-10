@@ -114,7 +114,17 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
   }
 
   async recordVerdict(command: RecordVerdictCommand): Promise<void> {
-    const match = await this.matching.judgesMatch(command.attemptId.value);
+    // The vendor reports a score BEFORE the tx; the network never lives
+    // inside it. The BC judges the score against its OWN threshold (D4) —
+    // the bar never leaves this context.
+    const { score } = await this.matching.observeSimilarity({
+      attemptId: command.attemptId.value,
+      // Sprint-05 ingestion provides the selfie bytes; until then there is
+      // nothing to compare and the AWS adapter fails closed.
+      selfie: null,
+    });
+    const threshold = this.config.get<number>('biometric.matchThreshold', 0.82);
+    const match = score >= threshold;
     const updated = await this.uow.run(async () => {
       const a = await this.requireAttempt(command.attemptId);
       a.recordVerdict(match, command.now);

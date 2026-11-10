@@ -158,7 +158,7 @@ export class VerificationAttempt extends AggregateRoot {
 ```typescript
 export class EnrollBiometricCommand { constructor(public readonly personId: PersonId) {} }
 export class StartLivenessChallengeCommand { constructor(public readonly personId: PersonId) {} }
-export class CompleteLivenessCommand { constructor(public readonly attemptId: VerificationAttemptId, public readonly present: boolean) {} }
+export class CompleteLivenessCommand { constructor(public readonly attemptId: VerificationAttemptId, public readonly sessionId: string) {} }
 export class RequestComparisonCommand { constructor(public readonly attemptId: VerificationAttemptId) {} }
 export class RecordVerdictCommand { constructor(public readonly attemptId: VerificationAttemptId, public readonly now: Date) {} }
 export class RevokeBiometricProfileCommand { constructor(public readonly profileId: BiometricProfileId) {} }
@@ -214,7 +214,8 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     @Inject(MATCHING_PORT) private readonly matching: FaceMatchingService) {}
   async enrollBiometric(cmd: EnrollBiometricCommand): Promise<BiometricProfileId> {
     if (!(await this.consent.biometricConsentStands(cmd.personId.value))) throw new ConsentRequiredError('consent required');
-    if (!(await this.ocr.consumeUsableMatch(cmd.personId.value))) throw new ReferenceRequiredError('single-use MATCH required'); // R7
+    const ocr = await this.ocr.consumeUsableMatch(cmd.personId.value); // R7: veredicto + handle opaco de la referencia
+    if (!ocr.consumed || !ocr.reference) throw new ReferenceRequiredError('single-use MATCH required'); // R7
     const p = await this.uow.run(async () => {
       if (await this.profiles.findLiveByPerson(cmd.personId)) throw new ReferenceAlreadyExistsError('one live reference');
       const x = BiometricProfile.enroll({ id: BiometricProfileId.generate(), personId: cmd.personId });
@@ -250,7 +251,8 @@ export class BiometricCommandServiceImpl implements BiometricCommandService {
     this.publish(a);
   }
   async recordVerdict(cmd: RecordVerdictCommand): Promise<void> {
-    const match = await this.matching.judgesMatch(cmd.attemptId.value); // vendor ANTES del run: el tx solo agrupa DB (umbral propio del BC)
+    const { score } = await this.matching.observeSimilarity(cmd.capture); // vendor ANTES del run: el tx solo agrupa DB
+    const match = score >= this.config.get<number>('biometric.matchThreshold', 0.82); // EL BC juzga el listón (D4)
     const a = await this.uow.run(async () => {
       const x = await this.attempts.findByIdOrThrow(cmd.attemptId);
       x.recordVerdict(match, cmd.now); await this.attempts.save(x); return x;
@@ -290,7 +292,17 @@ export interface ExternalConsentService { biometricConsentStands(personId: strin
 export const OCR_PORT = Symbol('OCR_PORT');
 export interface ExternalOcrService { consumeUsableMatch(personId: string): Promise<boolean>; } // R7 single-use
 export const MATCHING_PORT = Symbol('MATCHING_PORT');
-export interface FaceMatchingService { judgesMatch(attemptId: string): Promise<boolean>; } // score→boolean, umbral del BC
+export interface FaceMatchingService {
+  /** El vendor observa la similitud; EL BC juzga el listón. 0..1 normalizado. */
+  observeSimilarity(capture: FaceCapture): Promise<{ score: number }>;
+  /** Borra la referencia viva en el proveedor (erasure, Ley 29733). */
+  forget(reference: string): Promise<void>;
+}
+export const LIVENESS_PORT = Symbol('LIVENESS_PORT');
+export interface LivenessService {
+  openSession(): Promise<{ sessionId: string; streamingUrl: string }>;
+  readDecision(sessionId: string): Promise<{ present: boolean; confidence: number }>;
+}
 ```
 
 ### 3.4 Handlers + 3.5 Facade ACL
@@ -331,7 +343,7 @@ Adaptadores con repo getter que traduce el EntityManager ambiente vía `manager.
     { provide: ATTEMPT_REPOSITORY, useClass: AttemptRepositoryImpl },
     { provide: BIOMETRIC_COMMAND_SERVICE, useClass: BiometricCommandServiceImpl },
     { provide: BIOMETRIC_QUERY_SERVICE, useClass: BiometricQueryServiceImpl },
-    { provide: MATCHING_PORT, useFactory: matchingFactory }, // FACE_MATCHER: vendor-a|vendor-b|fake
+    { provide: MATCHING_PORT, useFactory: matchingFactory }, // FACE_MATCHER: rekognition|vendor-a|vendor-b|fake
     { provide: UNIT_OF_WORK, useClass: TypeOrmUnitOfWork },
     { provide: BIOMETRIC_CONTEXT_FACADE, useClass: BiometricContextFacadeImpl },
     ExternalConsentService, ExternalOcrService], // ACL → CONSENT_CONTEXT_FACADE / OCR_CONTEXT_FACADE (módulos importados)
@@ -424,7 +436,8 @@ CREATE INDEX ix_attempt_person ON biometric.attempts (person_id, standing);
 |:--|:--|:--|
 | Consent | `ExternalConsentService` | Facade Consent (gate + erasure) |
 | OCR (R7) | `ExternalOcrService` | `OCR_CONTEXT_FACADE` (single-use MATCH) |
-| Matching vendor | `FaceMatchingService` | `VendorAMatchingService` (score→boolean, umbral BC) |
+| Matching vendor | `FaceMatchingService` | `RekognitionMatchingService` (score→score, el umbral lo juzga el BC) |
+| Liveness | `LivenessService` | `RekognitionLivenessService` (la sesión decide, no el cliente) |
 | Bus | `EventEmitter2` | `forRoot()` solo en `AppModule` |
 | Persistencia | `ProfileRepository`, `AttemptRepository`, `IUnitOfWork` | Impls + `TypeOrmUnitOfWork` |
 | Ciclo Biometric↔Consent | `forwardRef(() => ConsentModule)` en ambos módulos | Biometric consume Consent facade y Consent coordina revocación hacia Biometric |
@@ -452,7 +465,7 @@ CREATE INDEX ix_attempt_person ON biometric.attempts (person_id, standing);
 ```properties
 biometric.freshness.minutes=${FACE_FRESHNESS_MINUTES:15}
 biometric.match.threshold=${FACE_MATCH_THRESHOLD:0.82}
-biometric.match.matcher=${FACE_MATCHER:vendor-a}
+biometric.match.matcher=${FACE_MATCHER:rekognition}
 ```
 
 ## Testing (skill §Testing each layer)
@@ -461,3 +474,97 @@ biometric.match.matcher=${FACE_MATCHER:vendor-a}
 - **application**: mocks de repos + `CONSENT_PORT`/`OCR_PORT`/`MATCHING_PORT` (fakes), o `overrideProvider(...)`.
 - **infrastructure**: Testcontainers Postgres — `uq_live_profile`, `ix_attempt_person`, round-trip + parsers corruptos.
 - **interfaces**: supertest (`POST profiles → :id/liveness,comparison,verdict → standing`).
+---
+
+## Actualización v0.2.0 — Integración real (AWS Rekognition)
+
+> Plan de ejecución: `docs/Plan/Sprint-06-Biometric-AWS-Rekognition.md`.
+> Guía completa con el código de los adaptadores: `docs/Guides/Guia-Integracion-AWS-Azure-Blockchain.md` §7, §9.
+
+### Qué cambió y por qué
+
+| # | Cambio | Motivo |
+|---|---|---|
+| V1 | `MATCHING_PORT` pasa de `judgesMatch(attemptId): Promise<boolean>` a `observeSimilarity(capture): Promise<{ score }>` | El puerto anterior obligaba al **adapter** a comparar contra el umbral: violaba el audit **D4** ("el listón nunca sale del BC"). Ahora el vendor observa el score y **el BC juzga** |
+| V2 | `MATCHING_PORT.forget(reference)` | Sin esto, el vector facial sobrevive al erasure en el proveedor → el derecho de supresión (Ley 29733) no se cumple |
+| V3 | `BiometricProfile` gana `reference: ReferenceRef` (VO opaco) + `provider` | No existía dónde guardar la referencia viva. El dominio no sabe que es un `FaceId` de AWS |
+| V4 | Nuevo puerto `LIVENESS_PORT` (`openSession` / `readDecision`) | El liveness **lo afirmaba el cliente** (`present: boolean`): un `POST` forjado pasaba el control. Ahora lo decide AWS y el backend lo lee |
+| V5 | `CompleteLivenessCommand(attemptId, present)` → `CompleteLivenessCommand(attemptId, sessionId)` | El booleano del navegador deja de ser la verdad |
+| V6 | `VerificationAttempt` gana `livenessSessionId` (índice único) | El mismo `sessionId` no se puede reusar (replay) |
+| V7 | `FACE_MATCHER` = `rekognition \| vendor-a \| vendor-b \| fake` (default `rekognition`) | AWS Rekognition es el vendor principal |
+| V8 | Joi acota `FACE_MATCH_THRESHOLD` a `[0, 1]` | `Joi.number()` aceptaba `2` o `-1`: un listón no acotado no es un listón |
+| V9 | `vendor-a`/`vendor-b` pasan a ser adaptadores de **score fijo** (`0.95`/`0.97`) | Ya no aplican el umbral por su cuenta (dejan de ser el judge's job) |
+
+### El listón vuelve al BC (corrección de D4)
+
+```typescript
+// application: el umbral se lee SOLO aquí
+const { score } = await this.matching.observeSimilarity(cmd.capture); // red FUERA del tx
+const match = score >= this.config.get<number>('biometric.matchThreshold', 0.82);
+```
+
+Test que no debe faltar (documenta D4):
+
+```typescript
+it('the BC judges the threshold, not the vendor', async () => {
+  matching.observeSimilarity = vi.fn().mockResolvedValue({ score: 0.81 });
+  config.get = vi.fn().mockReturnValue(0.82);
+  await service.recordVerdict(new RecordVerdictCommand(attemptId, now, capture));
+  expect(attempt.standing).toBe(AttemptStanding.NOT_VERIFIED);
+});
+```
+
+### Liveness: el agujero de confianza que se cierra
+
+Antes, el flujo era `POST .../liveness { present: true }` → el backend aceptaba la afirmación.
+Un atacante sin cámara, un script, o un proxy que reescriba el JSON pasaban la prueba de
+vida. Con la sesión de AWS:
+
+```
+POST .../attempts/:id/liveness/session  → backend crea la sesión en AWS → { sessionId, streamingUrl }
+                                          (el frontend ejecuta el reto; no decide el resultado)
+POST .../attempts/:id/liveness/result   → backend consulta GetFaceLivenessSessionResults
+                                          → LivenessOutcome.PRESENT | ABSENT
+```
+
+`Status !== 'Completed'` ⇒ `ABSENT` (**fail-closed**). `Decision === 'Live'` ⇒ `PRESENT`;
+cualquier otro valor ⇒ `ABSENT`. Verificar el enum `Decision` contra la referencia de la API
+antes de mergear (AWS documenta `Live` / `NotLive` / `Unknown`).
+
+> **Deuda a documentar**: el SDK de UI de Face Liveness de AWS es el que captura los frames.
+> Si el frontend no puede integrarlo, se acepta el `present` del cliente — **como deuda de
+> seguridad explícita**, no como diseño final.
+
+### La referencia viva y su borrado
+
+La referencia se crea en el **examen documental** (BC OCR), que es el único momento en que
+el retrato del documento existe en bytes. De ahí viaja como **handle opaco** (`ReferenceRef`)
+por R7. Aquí el BC Biometric:
+
+- la guarda en `biometric.profiles.reference_ref` (columna nueva) + `provider`;
+- la usa para comparar cada selfie (`SearchFacesByImage`);
+- **la borra en el erasure** (`DeleteFaces`).
+
+**Invariante estructural**: un perfil `ENROLLED` **siempre** tiene `reference_ref`. Se
+refuerza con un `CHECK` en la base:
+
+```sql
+ALTER TABLE biometric.profiles
+  ADD CONSTRAINT ck_live_profile_has_reference
+  CHECK (standing <> 'ENROLLED' OR reference_ref IS NOT NULL);
+```
+
+> **Backfill**: sobre datos preexistentes `ENROLLED` sin `reference_ref`, la migración falla
+> el `CHECK`. Antes de correrla: marcar esos perfiles `REVOKED` (re-enrolment = nueva
+> identidad, según este mismo impl-guide) o backfillear el handle.
+
+**Orden del borrado**: commit local primero (fail-safe: el perfil queda revocado aunque el
+proveedor falle) y `forget()` después. `DeleteFaces` es idempotente ⇒ se puede reintentar.
+`biometric.profiles.reference_ref` entra en el **inventario de datos personales** de la Ley
+29733; tras el `revoke` el handle se **anula** (la fila se conserva por auditoría).
+
+### Costo
+
+Free tier (cuentas nuevas, 12 meses): 1.000 imágenes/mes + 1.000 vectores/mes + $200 de
+créditos. Después: $0.001/imagen y $0.00001/vector/mes. Un votante ≈ 3 imágenes/mes
+(enrollment + selfie por voto) ⇒ **~330 votos/mes en free tier**; más allá, ~$0.003/voto.

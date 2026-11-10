@@ -20,7 +20,7 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
   /** Standing: OPEN | CONCLUDED | EXPIRED. */
   @Column() standing: string;
   /** Verdict: MATCH | NO_MATCH | UNREADABLE, when concluded. */
-  @Column({ nullable: true }) verdict: string | null;
+  @Column({ type: 'varchar', length: 16, nullable: true }) verdict: string | null;
   /** Single-use flag for a concluded MATCH. */
   @Column({ default: false }) consumed: boolean;
   /** Window start. */
@@ -28,5 +28,5 @@ export class ExaminationOrmEntity extends AuditableOrmEntity {
   /** Window length in minutes. */
   @Column('int') ttlMinutes: number;
   /** Closed unreadable reason (5), when the read failed. */
-  @Column({ nullable: true }) unreadableReason: string | null;
+  @Column({ type: 'varchar', length: 32, nullable: true }) unreadableReason: string | null;
 }

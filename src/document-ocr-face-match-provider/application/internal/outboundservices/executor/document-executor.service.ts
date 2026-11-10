@@ -1,20 +1,19 @@
+import type { DocumentEvidence } from '../evidence/document-evidence.js';
+
 /**
  * Technology port: observes the document verdict from an interchangeable
- * executor (Rekognition / GDocAI). The domain never imports vendors — it
- * only observes the judgments `{readable, reason}` / `{holds}`.
+ * executor (Azure DI / Rekognition / GDocAI). The domain never imports
+ * vendors — it only observes the judgments `{readable, reason}` / `{holds}`.
+ *
+ * Evidence is the transient bytes (application layer, never domain). When
+ * called with a plain string `examinationId` (legacy/tests/CQRS without
+ * ingestion) the executor must degrade gracefully.
  */
 export const EXECUTOR_PORT = Symbol('EXECUTOR_PORT');
 
-export interface DocumentExecutorService {
-  /**
-   * Observes whether the document could be read; when not, a closed reason.
-   * @param examinationId Examination whose evidence is being judged.
-   */
-  observeExtraction(examinationId: string): Promise<{ readable: boolean; reason: string | null }>;
+export type EvidenceInput = DocumentEvidence | string;
 
-  /**
-   * Observes whether the presented face holds against the document portrait.
-   * @param examinationId Examination whose evidence is being judged.
-   */
-  observeComparison(examinationId: string): Promise<{ holds: boolean }>;
+export interface DocumentExecutorService {
+  observeExtraction(evidence: EvidenceInput): Promise<{ readable: boolean; reason: string | null }>;
+  observeComparison(evidence: EvidenceInput): Promise<{ holds: boolean }>;
 }

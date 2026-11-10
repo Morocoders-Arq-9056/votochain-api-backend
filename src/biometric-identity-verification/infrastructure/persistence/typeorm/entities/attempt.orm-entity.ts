@@ -18,5 +18,5 @@ export class AttemptOrmEntity extends AuditableOrmEntity {
   @Column() standing: string;
   @Column() freshnessStart: Date;
   @Column('int') freshnessMinutes: number;
-  @Column({ nullable: true }) failureReason: string | null;
+  @Column({ type: 'varchar', length: 32, nullable: true }) failureReason: string | null;
 }

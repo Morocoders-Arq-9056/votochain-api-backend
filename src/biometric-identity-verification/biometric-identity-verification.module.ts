@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { RekognitionClient } from "@aws-sdk/client-rekognition";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { TypeOrmModule } from "@nestjs/typeorm";
 import { DocumentOcrFaceMatchProviderModule } from "../document-ocr-face-match-provider/document-ocr-face-match-provider.module.js";
@@ -16,6 +17,9 @@ import { BIOMETRIC_QUERY_SERVICE } from "./domain/services/biometric-query.servi
 import { FakeMatchingService } from "./infrastructure/matching/fake/fake-matching.service.js";
 import { VendorAMatchingService } from "./infrastructure/matching/vendor-a/vendor-a-matching.service.js";
 import { VendorBMatchingService } from "./infrastructure/matching/vendor-b/vendor-b-matching.service.js";
+import { AWS_REKOGNITION_CLIENT } from "./infrastructure/matching/rekognition/aws-rekognition.tokens.js";
+import { RekognitionFaceCollectionService } from "./infrastructure/matching/rekognition/rekognition-face-collection.service.js";
+import { RekognitionMatchingService } from "./infrastructure/matching/rekognition/rekognition-matching.service.js";
 import { AttemptRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/attempt-repository.impl.js";
 import { ProfileRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/profile-repository.impl.js";
 import { AttemptPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/attempt-persistence.assembler.js";
@@ -52,20 +56,30 @@ import { ConsentComplianceModule } from "../consent-compliance/consent-complianc
     VendorAMatchingService,
     VendorBMatchingService,
     FakeMatchingService,
+    RekognitionMatchingService,
+    RekognitionFaceCollectionService,
+    {
+      provide: AWS_REKOGNITION_CLIENT,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        new RekognitionClient({ region: config.get<string>('aws.region', 'us-east-1') }),
+    },
     { provide: PROFILE_REPOSITORY, useClass: ProfileRepositoryImpl },
     { provide: ATTEMPT_REPOSITORY, useClass: AttemptRepositoryImpl },
     { provide: BIOMETRIC_COMMAND_SERVICE, useClass: BiometricCommandServiceImpl },
     { provide: BIOMETRIC_QUERY_SERVICE, useClass: BiometricQueryServiceImpl },
     {
       provide: MATCHING_PORT,
-      inject: [ConfigService, VendorAMatchingService, VendorBMatchingService, FakeMatchingService],
+      inject: [ConfigService, RekognitionMatchingService, VendorAMatchingService, VendorBMatchingService, FakeMatchingService],
       useFactory: (
         config: ConfigService,
+        rekognition: RekognitionMatchingService,
         vendorA: VendorAMatchingService,
         vendorB: VendorBMatchingService,
         fake: FakeMatchingService,
       ): FaceMatchingService => {
         const matcher = config.get<string>('biometric.matcher', 'vendor-a');
+        if (matcher === 'rekognition') return rekognition;
         if (matcher === 'vendor-b') return vendorB;
         if (matcher === 'fake') return fake;
         return vendorA;
