@@ -1,0 +1,11 @@
+{
+  "name": "votachain-ledger",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy:amoy": "hardhat run scripts/deploy.ts --network amoy",
+    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "node": "hardhat node"
+  }
+}

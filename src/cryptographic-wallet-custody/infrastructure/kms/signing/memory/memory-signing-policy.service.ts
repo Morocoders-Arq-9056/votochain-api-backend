@@ -1,5 +1,5 @@
 import { Injectable } from "@nestjs/common";
-import { Signature, SigningKey, getBytes, keccak256, toUtf8Bytes } from "ethers";
+import { Signature, SigningKey, computeAddress, getBytes, keccak256, toUtf8Bytes } from "ethers";
 import type { SigningPolicy } from "../../../../application/internal/outboundservices/signing-policy/signing-policy.service.js";
 
 /**
@@ -15,6 +15,10 @@ export class MemorySigningPolicyService implements SigningPolicy {
     const signature = Signature.from(signingKey.sign(getBytes(digest)));
     const wire = `${signature.v}:${signature.r}:${signature.s}`;
     return wire;
+  }
+
+  async address(path: string): Promise<string> {
+    return computeAddress(new SigningKey(this.keyFor(path))).toLowerCase();
   }
 
   private keyFor(path: string): string {

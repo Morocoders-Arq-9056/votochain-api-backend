@@ -10,6 +10,8 @@ import { WALLET_COMMAND_SERVICE } from "../../domain/services/wallet-command.ser
 import type { WalletCommandService } from "../../domain/services/wallet-command.service.js";
 import { WALLET_QUERY_SERVICE } from "../../domain/services/wallet-query.service.js";
 import type { WalletQueryService } from "../../domain/services/wallet-query.service.js";
+import { KEY_CUSTODY_SERVICE } from "../internal/outboundservices/kms/key-custody.service.js";
+import type { KeyCustodyService } from "../internal/outboundservices/kms/key-custody.service.js";
 import type { WalletContextFacade } from "../../interfaces/acl/wallet-context.facade.js";
 
 /**
@@ -25,6 +27,7 @@ export class WalletContextFacadeImpl implements WalletContextFacade {
   constructor(
     @Inject(WALLET_COMMAND_SERVICE) private readonly commands: WalletCommandService,
     @Inject(WALLET_QUERY_SERVICE) private readonly queries: WalletQueryService,
+    @Inject(KEY_CUSTODY_SERVICE) private readonly custody: KeyCustodyService,
   ) {}
 
   async sign(personId: string, contentRef: string): Promise<string> {
@@ -54,5 +57,14 @@ export class WalletContextFacadeImpl implements WalletContextFacade {
     return this.commands.retireWalletByPerson(
       new RetireWalletByPersonCommand(PersonId.of(personId)),
     );
+  }
+
+  async addressFor(personId: string): Promise<string> {
+    const capability = await this.queries.getSigningCapabilityByPerson(
+      new GetSigningCapabilityByPersonQuery(PersonId.of(personId)),
+    );
+    if (!capability.maySign || !capability.walletId || capability.position === null)
+      throw new CapabilityNotFoundError('no signing capability');
+    return this.custody.addressFor(personId, capability.position);
   }
 }

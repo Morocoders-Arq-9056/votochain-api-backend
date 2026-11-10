@@ -20,6 +20,7 @@ import { TestKeyDerivationService } from "./infrastructure/kms/derivation/test/t
 import { HdKeyCustodyService } from "./infrastructure/kms/hd-wallet/hd-key-custody.service.js";
 import { HsmSigningPolicyService } from "./infrastructure/kms/signing/hsm/hsm-signing-policy.service.js";
 import { MemorySigningPolicyService } from "./infrastructure/kms/signing/memory/memory-signing-policy.service.js";
+import { SeededSigningPolicyService } from "./infrastructure/kms/signing/seeded/seeded-signing-policy.service.js";
 import { WalletRepositoryImpl } from "./infrastructure/persistence/typeorm/adapters/wallet-repository.impl.js";
 import { WalletPersistenceAssembler } from "./infrastructure/persistence/typeorm/assemblers/wallet-persistence.assembler.js";
 import { WalletEventOrmEntity } from "./infrastructure/persistence/typeorm/entities/wallet-event.orm-entity.js";
@@ -55,6 +56,7 @@ import { WalletController } from "./interfaces/rest/controllers/wallet.controlle
     TestKeyDerivationService,
     MemorySigningPolicyService,
     HsmSigningPolicyService,
+    SeededSigningPolicyService,
     { provide: WALLET_REPOSITORY, useClass: WalletRepositoryImpl },
     { provide: WALLET_COMMAND_SERVICE, useClass: WalletCommandServiceImpl },
     { provide: WALLET_QUERY_SERVICE, useClass: WalletQueryServiceImpl },
@@ -70,13 +72,18 @@ import { WalletController } from "./interfaces/rest/controllers/wallet.controlle
     },
     {
       provide: WALLET_SIGNING_POLICY,
-      inject: [ConfigService, HsmSigningPolicyService, MemorySigningPolicyService],
+      inject: [ConfigService, HsmSigningPolicyService, SeededSigningPolicyService, MemorySigningPolicyService],
       useFactory: (
         config: ConfigService,
         hsm: HsmSigningPolicyService,
+        seeded: SeededSigningPolicyService,
         memory: MemorySigningPolicyService,
-      ): SigningPolicy =>
-        config.get<string>('wallet.signingPolicy', 'memory') === 'hsm' ? hsm : memory,
+      ): SigningPolicy => {
+        const policy = config.get<string>('wallet.signingPolicy', 'memory');
+        if (policy === 'hsm') return hsm;
+        if (policy === 'seeded') return seeded;
+        return memory;
+      },
     },
     { provide: KEY_CUSTODY_SERVICE, useClass: HdKeyCustodyService },
     { provide: WALLET_CONTEXT_FACADE, useClass: WalletContextFacadeImpl },

@@ -23,6 +23,14 @@ export interface WalletContextFacade {
   answerCapability(personId: string): Promise<{ maySign: boolean; walletId: string | null; position: number | null }>;
 
   /**
+   * Answers the Ethereum address of the person's live capability without
+   * signing. Voting freezes it into authorizations so the later ecrecover
+   * check compares against custody's own key.
+   * @param personId Person id (`per-` prefixed string).
+   */
+  addressFor(personId: string): Promise<string>;
+
+  /**
    * Erasure execution (R12): retires every non-retired capability of one
    * person. Idempotent.
    * @param personId Person id (`per-` prefixed string).

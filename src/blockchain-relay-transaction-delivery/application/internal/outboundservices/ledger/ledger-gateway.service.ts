@@ -2,6 +2,8 @@ export interface LedgerOutcome {
   confirmed: boolean;
   reason: string | null;
   retryable: boolean;
+  txHash?: string | null;
+  blockNumber?: number | null;
 }
 
 export const LEDGER_GATEWAY = Symbol('LEDGER_GATEWAY');

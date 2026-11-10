@@ -1,4 +1,4 @@
-export const FAILURE_REASONS = ['LEDGER_REJECTED', 'COST_EXHAUSTED', 'RETRY_LIMIT_REACHED', 'ORDER_SUPERSEDED'] as const;
+export const FAILURE_REASONS = ['LEDGER_REJECTED', 'COST_EXHAUSTED', 'RETRY_LIMIT_REACHED', 'ORDER_SUPERSEDED', 'MINING_TIMEOUT'] as const;
 export type FailureReasonValue = (typeof FAILURE_REASONS)[number];
 
 /**
@@ -15,7 +15,7 @@ export class FailureReason {
   }
 
   isRetryable(): boolean {
-    return this.value === 'LEDGER_REJECTED' || this.value === 'ORDER_SUPERSEDED';
+    return this.value === 'LEDGER_REJECTED' || this.value === 'ORDER_SUPERSEDED' || this.value === 'MINING_TIMEOUT';
   }
 
   equals(o: FailureReason): boolean { return this.value === o.value; }

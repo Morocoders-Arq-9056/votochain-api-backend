@@ -16,4 +16,12 @@ export interface KeyCustodyService {
    * @param contentRef Vote content, EIP-712 enveloped.
    */
   signTransient(personId: string, position: number, contentRef: string): Promise<string>;
+
+  /**
+   * Answers the Ethereum address of the key at the given position without
+   * signing. Public by design; key material never leaves.
+   * @param personId Person holding the capability (auditing).
+   * @param position Allocated derivation position.
+   */
+  addressFor(personId: string, position: number): Promise<string>;
 }

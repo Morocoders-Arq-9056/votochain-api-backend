@@ -30,8 +30,7 @@ describe('Wallet custody → Voting recovery round-trip', () => {
     expect(() => VoterAddress.of(recovered)).not.toThrow();
   });
 
-  it('never reuses material: two signs of the same content agree (deterministic), different positions differ', async () => {
-    const custody = new HdKeyCustodyService(
+  it('never reuses material: two signs of the same content agree (deterministic), different positions differ', async () => {    const custody = new HdKeyCustodyService(
       new TestKeyDerivationService(),
       new MemorySigningPolicyService(),
       testConfig(),
@@ -45,5 +44,20 @@ describe('Wallet custody → Voting recovery round-trip', () => {
     expect(await verifier.recoverSigner(contentRef, first)).not.toBe(
       await verifier.recoverSigner(contentRef, second),
     );
+  });
+
+  it('addressFor answers the same address the signer recovers', async () => {
+    const custody = new HdKeyCustodyService(
+      new TestKeyDerivationService(),
+      new MemorySigningPolicyService(),
+      testConfig(),
+    );
+    const verifier = new EthersSignatureVerificationService(testConfig());
+    const contentRef = 'vote:prop-1:0xvoter:yes:nonce-1';
+
+    const sigRaw = await custody.signTransient('per-test', 0, contentRef);
+    const recovered = await verifier.recoverSigner(contentRef, sigRaw);
+
+    await expect(custody.addressFor('per-test', 0)).resolves.toBe(recovered);
   });
 });

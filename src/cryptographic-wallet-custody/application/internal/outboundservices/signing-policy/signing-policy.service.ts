@@ -12,4 +12,12 @@ export interface SigningPolicy {
    * @param path Derivation path whose key signs.
    */
   sign(digest: Buffer, path: string): Promise<string>;
+
+  /**
+   * Answers the Ethereum address of the key at the path without signing.
+   * Public by design (it lands on-chain with every vote); key material
+   * never leaves.
+   * @param path Derivation path whose address is answered.
+   */
+  address(path: string): Promise<string>;
 }

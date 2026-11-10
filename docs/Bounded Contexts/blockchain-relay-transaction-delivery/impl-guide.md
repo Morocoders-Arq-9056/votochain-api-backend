@@ -318,7 +318,7 @@ Hija en tabla propia (no `jsonb`): los intentos tienen identidad y se consultan 
 
 ### 4.2 Cola BullMQ + Redis y RPC Polygon Amoy
 
-`bullmq-delivery-queue.ts`: `enqueue()` publica `{ orderId }` al topic `delivery.send`; un worker del modulo consume y llama `deliver()`. Reintentos de transporte (BullMQ) != reintentos de dominio (`retry()`): la cola re-ejecuta, el agregado decide el efecto at-most-once. `polygon-amoy-ledger-gateway.ts`: envia la transaccion firmada via RPC Amoy y observa confirmacion/fallo; solo traduce outcome, el significado lo decide Voting.
+`bullmq-delivery-queue.ts`: `enqueue()` publica `{ orderId }` al topic `delivery.send`; un worker del modulo consume y llama `deliver()`. Reintentos de transporte (BullMQ) != reintentos de dominio (`retry()`): la cola re-ejecuta, el agregado decide el efecto at-most-once. `polygon-amoy-ledger-gateway.ts`: envia la transaccion firmada via RPC Amoy y observa confirmacion/fallo; solo traduce outcome, el significado lo decide Voting. **Distincion critica (ver actualizacion v0.2.0)**: `receipt.status === 0` (revert) es NO reintentable; un timeout de minado SI es reintentable y reintenta LA MISMA orden.**
 
 ### 4.3 Strategy: `RetryPolicy` + `FeePolicy` (puertos application, sin hardcode)
 
@@ -379,6 +379,7 @@ CREATE TABLE relay.orders (
   id TEXT PRIMARY KEY, content_ref TEXT NOT NULL, payer_ref TEXT NOT NULL,
   order_position INT NOT NULL, standing TEXT NOT NULL
     CHECK (standing IN ('ACCEPTED','ORDERED','SENT','CONFIRMED','FAILED','RETRIED','ABANDONED')),
+  tx_hash VARCHAR(80) NULL, block_number BIGINT NULL, gas_used VARCHAR(40) NULL, chain_id INT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (payer_ref, order_position)
 );
@@ -445,10 +446,12 @@ Solo `CONFIRMED` cuenta para el tally (R5: intent vs fact).
 |:--|:--|:--|:--|
 | BullMQ + Redis (cola) | `DeliveryQueueService` | `bullmq-delivery-queue.ts` | Requiere Redis en dev/prod |
 | Polygon Amoy RPC | `LedgerGatewayService` | `polygon-amoy-ledger-gateway.ts` | RPC URL + clave pagadora como secretos |
+| Contrato Votachain | `LedgerGatewayService` | ABI embebido + `AMOY_LEDGER_ADDRESS` | Sin costo en Amoy |
+| Cola | `DeliveryQueueService` | `bullmq-delivery-queue.ts` (BullMQ + Redis) / `in-process` (dev/test) | `concurrency: 1` (una sola secuencia de nonces) |
 | Postgres (`relay.*`) | `DeliveryOrderRepository` | Adapter + `TransactionContext` | Correcto |
 | Voting facade | `ExternalVotingService` | ACL en proceso | Consumida (out) |
 
-`relay.amoy.rpc-url=${AMOY_RPC_URL}`, `relay.amoy.payer-key=${AMOY_PAYER_KEY}` (secreto, nunca en log), `relay.queue.redis-url=${REDIS_URL}`, `relay.retry.max=${RELAY_MAX_RETRIES:5}`.
+`relay.amoy.rpc-url=${AMOY_RPC_URL}`, `relay.amoy.payer-key=${AMOY_PAYER_KEY}` (secreto, nunca en log), `relay.amoy.payer-address=${AMOY_PAYER_ADDRESS}`, `relay.amoy.chain-id=${AMOY_CHAIN_ID:80002}`, `relay.amoy.ledger-address=${AMOY_LEDGER_ADDRESS}`, `relay.amoy.confirm-timeout-ms=${AMOY_CONFIRM_TIMEOUT_MS:60000}`, `relay.queue.driver=${QUEUE_DRIVER:in-process}`, `relay.queue.redis-url=${REDIS_URL}`, `relay.retry.max=${RELAY_MAX_RETRIES:5}`.
 
 ---
 
@@ -487,3 +490,94 @@ OQ1 cota de reintentos · OQ2 costo incobrable: esperar/abandonar/pedir mas · O
 - **application**: mocks de repo + `LEDGER_GATEWAY`/`DELIVERY_QUEUE`/`RETRY_POLICY`/`FEE_POLICY` (fakes), o `overrideProvider(...)`.
 - **infrastructure**: Testcontainers Postgres — `UNIQUE(payer,position)`, `uq_orders_open_content` parcial, 23505 → `OrderAlreadyAccepted`.
 - **interfaces**: supertest (intake 202 + `Location`; standing/order/attempts GETs).
+---
+
+## Actualización v0.2.0 — Blockchain real en Polygon Amoy ($0)
+
+> Plan de ejecución: `docs/Plan/Sprint-07-Blockchain-Real-Amoy.md`.
+> Guía completa con el contrato, el gateway y el CI: `docs/Guides/Guia-Integracion-AWS-Azure-Blockchain.md` §8.
+
+### Qué cambia
+
+| # | Cambio | Motivo |
+|---|---|---|
+| L1 | **Contrato `VotoChainLedger.sol`** desplegado en Amoy (chainId 80002) | Hoy no existe ningún contrato: el ledger es una simulación |
+| L2 | `PolygonAmoyGateway` **envía una transacción real** (`JsonRpcSigner.sendTransaction`) | Hoy solo hace `getBlockNumber()` y fabrica un hash |
+| L3 | `observe()` **lee el recibo real** y distingue revert (no reintentable) de timeout (reintentable) | Hoy `observe()` devuelve `confirmed: true` siempre: la garantía "confirmado en blockchain" es **vacua** |
+| L4 | `TransactionRef` (VO) + columnas `tx_hash` / `block_number` / `gas_used` / `chain_id` | El voto guardaba `relay:{orderId}` y `block_number = 1` hardcodeados |
+| L5 | `ExternalVotingService` **notifica de verdad** y `VoteCastEventHandler` **deja de marcar `CONFIRMED` en línea** | Con el gateway real, la transición inline y la del evento se duplican → `IllegalProposalTransitionError` |
+| L6 | `SignedVoteEnvelope` (Shared Kernel) + tipo EIP-712 **estructurado** | `contentRef` no transportaba `choice`/`nonce` ni el mensaje firmado: el Relay no podía verificar ni enviar la tx |
+| L7 | `FailureReason` gana `MINING_TIMEOUT` (reintentable) | "Pendiente" no encajaba en el set cerrado de 4. No requiere migración (`reason` es `TEXT` sin `CHECK`) |
+| L8 | Cola **BullMQ real** con `concurrency: 1` | El relayer es **una** wallet con **una** secuencia de nonces: en paralelo hay `nonce too low` |
+| L9 | `BalanceFeePolicy` real (`getBalance` vs `estimateGas × gasPrice`) | `canAfford()` devolvía `true` siempre |
+| L10 | `closeProposal(proposalId, merkleRoot)` — 1 tx por propuesta | Ancla el escrutinio sin revelar nada: el third party recalcula la raíz y el tally |
+
+### El tipo firmado cambia (obligatorio)
+
+De `Vote(bytes content)` a:
+
+```
+Vote(bytes32 proposalId, address voter, bytes32 choiceCommitment, bytes32 nonce)
+```
+
+El contrato necesita los campos estructurados para validar `voter`, `choice` y `nonce`. La
+**opción no viaja en claro**: viaja como **compromiso**
+`choiceCommitment = keccak256(abi.encodePacked(uint8(choice), bytes32(salt)))`, revelado
+después del cierre con `revealChoice`.
+
+**Consecuencia operativa**: `VOTE_TYPED_DATA_TYPES` y `votocoinEip712Domain` pasan al
+módulo compartido `src/shared/infrastructure/signing/vote-typed-data.ts`, lo que **elimina la
+duplicación actual** (Voting y Wallet hardcodeaban el mismo dominio EIP-712 en dos archivos).
+
+> **Test obligatorio**: un *test vector* que compruebe que el digest que calcula Solidity
+> **coincide** con el de `ethers` para un dominio y un tipo fijos. Un desajuste de un byte
+> hace que **todos los votos fallen en la cadena** sin romper ningún test unitario.
+
+### El bug de la doble transición (se cierra)
+
+```
+ANTES (gateway fake):
+  VoteCastEventHandler → markVoteQueued → acceptSigned(confirmed=true) → markVoteSent → markVoteConfirmed
+  (el ledger no participa; la verdad no existe)
+
+DESPUÉS (gateway real):
+  VoteCastEventHandler → markVoteQueued → acceptSigned → markVoteSent(referencia provisional)
+  ... el worker envía la tx, se mina ...
+  DeliveryConfirmedEvent → ExternalVotingService.notifyConfirmed → VOTE_CONTEXT_FACADE → markVoteConfirmed
+```
+
+La referencia del voto es **provisional** en `SENT` (`pending:{orderId}` — el hash aún no
+existe) y **real** en `CONFIRMED` (`0x…` + bloque). Verificar que `markVoteConfirmed`
+sobrescribe la referencia.
+
+### Secreto de la voto: qué se puede y qué no
+
+- La cadena **nunca** muestra la opción antes del cierre (solo el compromiso).
+- El **operador sí puede** conocerla: en el modelo actual (wallet custodiada, firma
+  server-side) el backend conoce `choice` y `salt` ⇒ secreto frente al público, **no** frente
+  al operador. El secreto real exige wallet no custodiada o umbral (MPC) → **decisión de
+  producto** (pregunta abierta O3 del `context-mapping.md`).
+- Consignarlo en el texto de consentimiento: *"el voto permanece oculto en la cadena hasta
+  el cierre; tras el cierre es público y verificable"*.
+
+### Costo
+
+| Ítem | Amoy | Mainnet (futuro) |
+|---|---|---|
+| Gas por voto (`submitVote`) | **$0** | ~$0.005–0.01 |
+| Gas por cierre (`closeProposal`) | **$0** | ~$0.005 |
+| RPC | $0 (público) | $0 (free tier) |
+| Contrato | $0 (testnet) | ~$0.10 (una vez) |
+
+Una propuesta de 50 votos en Amoy = **$0 real**.
+
+### Preguntas abiertas que esta actualización no cierra
+
+- ¿Quién publica la lista de opciones y la ventana de la propuesta (`openProposal`, owner =
+  relayer)? ¿Con qué autoridad?
+- ¿El anclaje (`closeProposal`) lo dispara el admin vía el Relay, o un cron? (Hoy el Relay
+  transporta contenido firmado; el anclaje es un contenido distinto → OQ5.)
+- ¿La raíz Merkle cubre solo los votos confirmados o también los fallidos (para poder probar
+  que no se ocultaron)?
+- ¿El `revealChoice` lo pide el votante (1 tx por votante) o el backend lo hace en lote tras
+  el cierre? (Coste en mainnet.)

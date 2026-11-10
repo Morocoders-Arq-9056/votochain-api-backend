@@ -27,4 +27,8 @@ export class HdKeyCustodyService implements KeyCustodyService {
     });
     return this.policy.sign(Buffer.from(getBytes(digest)), path);
   }
+
+  async addressFor(personId: string, position: number): Promise<string> {
+    return this.policy.address(this.derivation.derivePath(personId, position));
+  }
 }

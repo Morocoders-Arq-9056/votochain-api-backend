@@ -20,5 +20,5 @@ export class WalletOrmEntity extends AuditableOrmEntity {
   /** Standing: PROVISIONED | SIGNING_OPEN | ROTATED | SUSPENDED | RETIRED. */
   @Column() standing: string;
   /** Opaque open-for reference, never a secret. */
-  @Column({ nullable: true }) openFor: string | null;
+  @Column({ type: 'text', nullable: true }) openFor: string | null;
 }

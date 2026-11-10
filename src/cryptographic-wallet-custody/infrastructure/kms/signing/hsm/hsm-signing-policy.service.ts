@@ -1,6 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { Signature, SigningKey, getBytes, keccak256, toUtf8Bytes } from "ethers";
+import { Signature, SigningKey, computeAddress, getBytes, keccak256, toUtf8Bytes } from "ethers";
 import type { SigningPolicy } from "../../../../application/internal/outboundservices/signing-policy/signing-policy.service.js";
 
 /**
@@ -24,5 +24,15 @@ export class HsmSigningPolicyService implements SigningPolicy {
     const signingKey = new SigningKey(keccak256(toUtf8Bytes(`votachain-hsm:${seed}:${path}`)));
     const signature = Signature.from(signingKey.sign(getBytes(digest)));
     return `${signature.v}:${signature.r}:${signature.s}`;
+  }
+
+  async address(path: string): Promise<string> {
+    // Real KMS wiring answers this via GetPublicKey; the local derivation
+    // below mirrors sign() until that seam is swapped.
+    const seed = this.config.get<string>('wallet.masterSeed', '');
+    if (!seed) throw new Error('KMS seed unavailable: set WALLET_MASTER_SEED or wire WALLET_KMS_KEY_ID');
+    return computeAddress(
+      new SigningKey(keccak256(toUtf8Bytes(`votachain-hsm:${seed}:${path}`))),
+    ).toLowerCase();
   }
 }
