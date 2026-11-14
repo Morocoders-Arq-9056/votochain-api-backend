@@ -4,6 +4,8 @@ import { DataSource } from 'typeorm';
 
 dotenv.config({ path: ['.env.local', '.env'] });
 
+const useCompiledArtifacts = process.env['TYPEORM_USE_COMPILED_ARTIFACTS'] === 'true';
+
 export default new DataSource({
   type: 'postgres',
   host: process.env['DB_HOST'] ?? 'localhost',
@@ -12,6 +14,8 @@ export default new DataSource({
   password: process.env['DB_PASSWORD'] ?? 'changeme',
   database: process.env['DB_NAME'] ?? 'votachain',
   synchronize: false,
-  entities: ['src/**/infrastructure/persistence/typeorm/entities/*.orm-entity.ts'],
-  migrations: ['src/migrations/*.ts'],
+  entities: useCompiledArtifacts
+    ? ['dist/**/infrastructure/persistence/typeorm/entities/*.orm-entity.js']
+    : ['src/**/infrastructure/persistence/typeorm/entities/*.orm-entity.ts'],
+  migrations: useCompiledArtifacts ? ['dist/migrations/*.js'] : ['src/migrations/*.ts'],
 });

@@ -19,12 +19,19 @@ function state(world) {
 
 function tableToObject(dataTable) {
   return Object.fromEntries(
-    dataTable.raw().map(([key, value]) => [key, value]),
+    dataTable.raw().map(([key, value]) => [key, resolveFixture(value)]),
   );
 }
 
+function resolveFixture(value) {
+  return value.replace(/\$\{(BDD_[A-Z_]+)\}/g, (_, name) => {
+    assert.ok(process.env[name], `Missing test fixture: ${name}`);
+    return process.env[name];
+  });
+}
+
 function requestUrl(api, path) {
-  return new URL(path, `${api.baseUrl.replace(/\/$/, '')}/`).toString();
+  return new URL(resolveFixture(path), `${api.baseUrl.replace(/\/$/, '')}/`).toString();
 }
 
 async function sendRequest(api) {
@@ -58,12 +65,62 @@ Given('the API is configured with the prefix {string}', function (prefix) {
 });
 
 Given('a registered user exists with email {string}', function (email) {
-  state(this).registeredUser = { email };
+  state(this).registeredUser = { email: resolveFixture(email) };
 });
 
-Given('the user has an open session', function () {
+Given('the user has an open session', async function () {
   state(this).sessionOpen = true;
+  const email = state(this).registeredUser?.email ?? process.env.BDD_USER_EMAIL;
+  const response = await fetch(`${state(this).baseUrl}/api/v1/auth/sign-in`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ email, password: process.env.BDD_USER_PASSWORD, proofKind: 'LOCAL' }),
+  });
+  assert.equal(response.status, 200, `Could not open fixture session for ${email}`);
 });
+
+Given('a registered user is available in the test environment', function () {
+  assert.ok(process.env.BDD_USER_EMAIL, 'Missing test fixture: BDD_USER_EMAIL');
+  assert.ok(process.env.BDD_USER_ID, 'Missing test fixture: BDD_USER_ID');
+});
+
+Given('a registered user with valid local credentials is available in the test environment', function () {
+  assert.ok(process.env.BDD_USER_EMAIL, 'Missing test fixture: BDD_USER_EMAIL');
+  assert.ok(process.env.BDD_USER_PASSWORD, 'Missing test fixture: BDD_USER_PASSWORD');
+});
+
+Given('a consenting registered person is available in the test environment', function () {
+  assert.ok(process.env.BDD_PERSON_ID, 'Missing test fixture: BDD_PERSON_ID');
+});
+
+Given('a registered person who revoked contact consent is available in the test environment', function () {
+  assert.ok(process.env.BDD_NO_CONSENT_PERSON_ID, 'Missing test fixture: BDD_NO_CONSENT_PERSON_ID');
+});
+
+Given('an open email-verification challenge is available in the test environment', function () {
+  assert.ok(process.env.BDD_CHALLENGE_ID, 'Missing test fixture: BDD_CHALLENGE_ID');
+});
+
+Given('an expired challenge is available in the test environment', function () {
+  assert.ok(process.env.BDD_EXPIRED_CHALLENGE_ID, 'Missing test fixture: BDD_EXPIRED_CHALLENGE_ID');
+});
+
+Given('a confirmed password-reset challenge is available in the test environment', function () {
+  assert.ok(process.env.BDD_RESET_CHALLENGE_ID, 'Missing test fixture: BDD_RESET_CHALLENGE_ID');
+});
+
+Given('an open password-reset challenge is available in the test environment', function () {
+  assert.ok(process.env.BDD_OPEN_RESET_CHALLENGE_ID, 'Missing test fixture: BDD_OPEN_RESET_CHALLENGE_ID');
+});
+
+Given('a registered community with an administrator and policy is available in the test environment', function () {
+  assert.ok(process.env.BDD_READY_COMMUNITY_ID, 'Missing test fixture: BDD_READY_COMMUNITY_ID');
+});
+
+Given('a registered community without a policy is available in the test environment', function () {
+  assert.ok(process.env.BDD_UNREADY_COMMUNITY_ID, 'Missing test fixture: BDD_UNREADY_COMMUNITY_ID');
+});
+
 
 Given('a community exists with identifier {string}', function (communityId) {
   state(this).communityId = communityId;
@@ -109,6 +166,23 @@ When('I send a POST request to {string} with:', async function (path, dataTable)
     headers: {},
     body: tableToObject(dataTable),
   };
+  await sendRequest(api);
+});
+
+When('I send a PATCH request to {string} with:', async function (path, dataTable) {
+  const api = state(this);
+  api.request = { method: 'PATCH', path, headers: {}, body: tableToObject(dataTable) };
+  await sendRequest(api);
+});
+
+When('I sign in twice with the configured local credentials', async function () {
+  const api = state(this);
+  api.request = {
+    method: 'POST', path: '/api/v1/auth/sign-in', headers: {},
+    body: { email: process.env.BDD_USER_EMAIL, password: process.env.BDD_USER_PASSWORD, proofKind: 'LOCAL' },
+  };
+  await sendRequest(api);
+  api.firstSignInStatus = api.response.status;
   await sendRequest(api);
 });
 
@@ -161,6 +235,32 @@ When('I send a GET request to {string} with query parameters:', async function (
 Then('the response status should be {int}', function (expectedStatus) {
   assert.equal(state(this).response?.status, expectedStatus);
 });
+
+Then('the response should have standing {string}', function (standing) {
+  assert.equal(state(this).response?.body?.standing, standing);
+});
+
+Then('the response should have session {string}', function (session) {
+  assert.equal(state(this).response?.body?.session, session);
+});
+
+Then('both sign-in responses should have status {int}', function (status) {
+  assert.equal(state(this).firstSignInStatus, status);
+  assert.equal(state(this).response?.status, status);
+});
+
+Then('the response should have email {string}', function (email) {
+  assert.equal(state(this).response?.body?.email, resolveFixture(email));
+});
+
+Then('the response should indicate the email is unverified', function () {
+  assert.equal(state(this).response?.body?.emailVerified, false);
+});
+
+Then('the response should not contain an OTP code', function () {
+  assert.equal(Object.hasOwn(state(this).response?.body ?? {}, 'code'), false);
+});
+
 
 Then('the response should not contain the password', function () {
   assert.equal(responseText(state(this)).includes('s3gura-2026'), false);
