@@ -18,6 +18,12 @@ export class RekognitionFaceCollectionService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
+    const matcher = this.config.get<string>('biometric.matcher', 'vendor-a');
+    if (matcher !== 'rekognition') {
+      this.logger.debug(`skipping Rekognition collection setup; FACE_MATCHER=${matcher}`);
+      return;
+    }
+
     const collectionId = this.config.get<string>('aws.rekognition.collectionId', 'votachain-biometric');
     try {
       await this.rekognition.send(new DescribeCollectionCommand({ CollectionId: collectionId }));

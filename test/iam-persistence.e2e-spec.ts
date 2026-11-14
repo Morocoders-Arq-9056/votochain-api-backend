@@ -9,6 +9,7 @@ describe('IAM persistence (compose postgres)', () => {
   let ds: DataSource | undefined;
   let repo: Repository<UserOrmEntity> | undefined;
   const assembler = new UserPersistenceAssembler();
+  const createdUserIds = new Set<string>();
 
   const mail = (tag: string) => `${tag}-${Date.now()}@votachain.dev`;
 
@@ -22,19 +23,29 @@ describe('IAM persistence (compose postgres)', () => {
       database: process.env.DB_NAME ?? 'votachain',
       entities: [UserOrmEntity],
       namingStrategy: new SnakeNamingStrategy(),
-      synchronize: true,
+      // The schema is prepared by the project's migrations. Synchronizing this
+      // partial entity set can attempt to rewrite the shared IAM table.
+      synchronize: false,
     });
     await ds.initialize();
     repo = ds.getRepository(UserOrmEntity);
   }, 180000);
 
   afterAll(async () => {
-    await ds?.destroy();
+    if (ds?.isInitialized) await ds.destroy();
+  });
+
+  afterEach(async () => {
+    if (repo && createdUserIds.size > 0) {
+      await repo.delete([...createdUserIds]);
+      createdUserIds.clear();
+    }
   });
 
   it('round-trips a user with roles, preserving the granted set', async () => {
     if (!repo) throw new Error('repository missing');
     const user = User.signUp({ contact: ContactAddress.create(mail('roundtrip')), secretHash: 'scrypt$test' });
+    createdUserIds.add(user.id.value);
 
     await repo.save(assembler.toOrmFromDomain(user));
     const found = await repo.findOne({ where: { id: user.id.value } });
@@ -50,6 +61,7 @@ describe('IAM persistence (compose postgres)', () => {
   it('parseAccessStanding throws on a corrupt row instead of casting', async () => {
     if (!repo || !ds) throw new Error('database missing');
     const user = User.signUp({ contact: ContactAddress.create(mail('corrupt')), secretHash: 'scrypt$test' });
+    createdUserIds.add(user.id.value);
     await repo.save(assembler.toOrmFromDomain(user));
 
     await ds.query(`update iam.users set standing = 'BOGUS' where id = $1`, [user.id.value]);
@@ -62,10 +74,14 @@ describe('IAM persistence (compose postgres)', () => {
   it('enforces unique email at the database level', async () => {
     if (!repo) throw new Error('repository missing');
     const address = mail('dupe');
+    const first = User.signUp({ contact: ContactAddress.create(address), secretHash: 'scrypt$test' });
+    const duplicate = User.signUp({ contact: ContactAddress.create(address), secretHash: 'scrypt$test' });
+    createdUserIds.add(first.id.value);
+    createdUserIds.add(duplicate.id.value);
 
-    await repo.save(assembler.toOrmFromDomain(User.signUp({ contact: ContactAddress.create(address), secretHash: 'scrypt$test' })));
+    await repo.save(assembler.toOrmFromDomain(first));
     await expect(
-      repo.save(assembler.toOrmFromDomain(User.signUp({ contact: ContactAddress.create(address), secretHash: 'scrypt$test' }))),
+      repo.save(assembler.toOrmFromDomain(duplicate)),
     ).rejects.toThrow();
   });
 });
